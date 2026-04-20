@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ETL Studio — Color Scheme Preview</title>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Press Start 2P', monospace; font-size: 10px; line-height: 1.6; }
+
+  .schemes { display: flex; min-height: 100vh; }
+  .scheme { flex: 1; padding: 24px; min-width: 0; overflow: hidden; }
+
+  .label { text-align: center; font-size: 11px; letter-spacing: 2px; margin-bottom: 20px; padding: 8px; border-width: 4px 0; border-style: solid; }
+
+  /* ── Shared component styles ───────────────────── */
+  .card { border-width: 6px 0; border-style: solid; margin-bottom: 12px; position: relative; }
+  .card::before, .card::after {
+    content: ''; position: absolute; top: 0; bottom: 0; width: 6px;
+  }
+  .card::before { left: -6px; }
+  .card::after { right: -6px; }
+  .card-inner { padding: 12px; }
+  .card-title { font-size: 9px; letter-spacing: 1px; margin-bottom: 8px; text-transform: uppercase; }
+
+  .btn { display: inline-block; padding: 8px 16px; font-family: inherit; font-size: 9px; border: none; cursor: pointer; position: relative; margin: 4px; }
+  .btn::before, .btn::after {
+    content: ''; position: absolute; width: 50%; height: 6px;
+  }
+  .btn::before { top: -6px; left: 6px; }
+  .btn::after { bottom: -6px; left: 6px; }
+
+  .badge { display: inline-block; padding: 3px 8px; font-family: inherit; font-size: 8px; margin: 2px; position: relative; }
+  .badge::before, .badge::after {
+    content: ''; position: absolute; top: 4px; bottom: 4px; width: 6px;
+  }
+  .badge::before { left: -6px; }
+  .badge::after { right: -6px; }
+
+  .progress-bar { height: 12px; position: relative; border-width: 4px; border-style: solid; margin: 8px 0; }
+  .progress-fill { height: 100%; display: flex; }
+  .progress-fill span { flex: 1; margin: 0 1px; }
+
+  .stat { text-align: center; padding: 12px; border-width: 6px 0; border-style: solid; position: relative; margin-bottom: 8px; }
+  .stat::before, .stat::after {
+    content: ''; position: absolute; top: 0; bottom: 0; width: 6px;
+  }
+  .stat::before { left: -6px; }
+  .stat::after { right: -6px; }
+  .stat-value { font-size: 20px; margin-bottom: 4px; }
+  .stat-label { font-size: 8px; text-transform: uppercase; letter-spacing: 1px; }
+
+  .table-row { padding: 6px 8px; border-bottom: 3px dashed; font-size: 9px; display: flex; justify-content: space-between; }
+
+  .glow { text-shadow: 0 0 8px currentColor, 0 0 20px currentColor; }
+
+  .mini-bar { display: inline-block; width: 48px; height: 6px; margin-left: 6px; vertical-align: middle; }
+  .mini-bar-fill { height: 100%; }
+
+  .terminal { padding: 8px; margin: 8px 0; font-size: 8px; border-width: 6px 0; border-style: solid; position: relative; }
+  .terminal::before, .terminal::after {
+    content: ''; position: absolute; top: 0; bottom: 0; width: 6px;
+  }
+  .terminal::before { left: -6px; }
+  .terminal::after { right: -6px; }
+  .terminal-line { padding: 2px 0; }
+
+  .scanlines {
+    pointer-events: none; position: absolute; inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.05) 2px, rgba(0,0,0,0.05) 4px);
+  }
+
+  .grid-bg {
+    position: relative;
+  }
+
+  .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; }
+
+  .score-block { text-align: center; padding: 16px; }
+  .score-num { font-size: 32px; }
+  .score-label { font-size: 8px; text-transform: uppercase; letter-spacing: 2px; margin-top: 6px; }
+
+  .ascii-art { font-size: 8px; line-height: 1.3; margin: 8px 0; text-align: center; white-space: pre; }
+
+  .separator { height: 2px; margin: 16px 0; background-size: 16px 2px; }
+</style>
+</head>
+<body>
+<div class="schemes">
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SCHEME 1: Cyberpunk Neon                                      -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="scheme grid-bg" style="
+  background-color: #0a0a12;
+  background-image:
+    linear-gradient(rgba(0,255,136,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,255,136,0.04) 1px, transparent 1px);
+  background-size: 24px 24px;
+  color: #e0e0f0;
+">
+  <div class="scanlines"></div>
+
+  <div class="label" style="color: #00ff88; border-color: #00ff88;">
+    1. CYBERPUNK NEON
+  </div>
+
+  <!-- Header -->
+  <div style="margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
+    <span style="color: #00ff88; opacity: 0.4;">&gt;_</span>
+    <span class="glow" style="color: #00ff88; font-size: 12px;">ETL Studio</span>
+    <span style="color: #484870; font-size: 8px; margin-left: auto;">session: a1b2c3d4</span>
+  </div>
+
+  <!-- Progress -->
+  <div class="progress-bar" style="border-color: #00ff88; background: rgba(0,255,136,0.1);">
+    <div class="progress-fill">
+      <span style="background: #00ff88;"></span><span style="background: #00ff88;"></span><span style="background: #00ff88;"></span>
+      <span style="background: #00ff88;"></span><span style="background: #00ff88;"></span><span style="background: #00ff88;"></span>
+      <span style="background: #00ff88;"></span><span style="background: #00ff88;"></span><span style="background: #00ff88;"></span>
+      <span style="background: #00ff88;"></span><span style="background: #00ff88;"></span><span style="background: #00ff88;"></span>
+      <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+    </div>
+  </div>
+
+  <div class="separator" style="background: repeating-linear-gradient(90deg, #00ff88 0, #00ff88 12px, transparent 12px, transparent 16px);"></div>
+
+  <!-- Buttons -->
+  <div style="margin: 12px 0;">
+    <div class="btn" style="background: #00ff88; color: #0a0a12;">
+      <span style="position:absolute;top:-6px;left:6px;right:6px;height:6px;background:#00ff88;"></span>
+      <span style="position:absolute;bottom:-6px;left:6px;right:6px;height:6px;background:#00ff88;"></span>
+      RUN TRANSFORM
+    </div>
+    <div class="btn" style="background: #1a1a30; color: #e0e0f0; outline: 2px solid #00ff88;">
+      <span style="position:absolute;top:-6px;left:6px;right:6px;height:6px;background:#1a1a30;border:2px solid #00ff88;"></span>
+      START OVER
+    </div>
+  </div>
+
+  <!-- Badges -->
+  <div style="margin: 12px 0;">
+    <span class="badge" style="background: #00ff88; color: #0a0a12;">
+      <span style="position:absolute;left:-6px;top:4px;bottom:4px;width:6px;background:#00ff88;"></span>
+      <span style="position:absolute;right:-6px;top:4px;bottom:4px;width:6px;background:#00ff88;"></span>
+      PASSED
+    </span>
+    <span class="badge" style="background: #ff2d7b; color: #fff;">
+      <span style="position:absolute;left:-6px;top:4px;bottom:4px;width:6px;background:#ff2d7b;"></span>
+      <span style="position:absolute;right:-6px;top:4px;bottom:4px;width:6px;background:#ff2d7b;"></span>
+      3 ERRORS
+    </span>
+    <span class="badge" style="background: #ffb800; color: #0a0a12;">
+      <span style="position:absolute;left:-6px;top:4px;bottom:4px;width:6px;background:#ffb800;"></span>
+      <span style="position:absolute;right:-6px;top:4px;bottom:4px;width:6px;background:#ffb800;"></span>
+      WARNING
+    </span>
+    <span class="badge" style="background: #00d4ff; color: #0a0a12;">
+      <span style="position:absolute;left:-6px;top:4px;bottom:4px;width:6px;background:#00d4ff;"></span>
+      <span style="position:absolute;right:-6px;top:4px;bottom:4px;width:6px;background:#00d4ff;"></span>
+      INFO
+    </span>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-grid">
+    <div class="stat" style="border-color: #00ff88; background: #0f0f20;">
+      <div style="position:absolute;left:-6px;top:0;bottom:0;width:6px;background:#00ff88;"></div>
+      <div style="position:absolute;right:-6px;top:0;bottom:0;width:6px;background:#00ff88;"></div>
+      <div class="stat-value glow" style="color: #00ff88;">1,247</div>
+      <div class="stat-label" style="color: #7878a8;">Records In</div>
+    </div>
+    <div class="stat" style="border-color: #00ff88; background: #0f0f20;">
+      <div style="position:absolute;left:-6px;top:0;bottom:0;width:6px;background:#00ff88;"></div>
+      <div style="position:absolute;right:-6px;top:0;bottom:0;width:6px;background:#00ff88;"></div>
+      <div class="stat-value glow" style="color: #00ff88;">1,190</div>
+      <div class="stat-label" style="color: #7878a8;">Records Out</div>
+    </div>
+  </div>
+
+  <!-- Quality Score -->
+  <div class="card" style="border-color: #00ff88; background: #0f0f20;">
+    <div style="position:absolute;left:-6px;top:0;bottom:0;width:6px;background:#00ff88;"></div>
+    <div style="position:absolute;right:-6px;top:0;bottom:0;width:6px;background:#00ff88;"></div>
+    <div class="score-block">
+      <div class="score-num glow" style="color: #00ff88;">85</div>
+      <div class="score-label" style="color: #7878a8;">Quality Score</div>
+      <div class="progress-bar" style="border-color: #00ff88; background: rgba(0,255,136,0.1); margin-top: 12px;">
+        <div class="progress-fill">
+          <span style="background:#00ff88"></span><span style="background:#00ff88"></span><span style="background:#00ff88"></span>
+          <span style="background:#00ff88"></span><span style="background:#00ff88"></span><span style="background:#00ff88"></span>
+          <span style="background:#00ff88"></span><span style="background:#00ff88"></span><span style="background:#00ff88"></span>
+          <span style="background:#00ff88"></span><span style="background:#00ff88"></span><span style="background:#00ff88"></span>
+          <span style="background:#00ff88"></span><span style="background:#00ff88"></span><span style="background:#00ff88"></span>
+          <span style="background:#00ff88"></span><span style="background:#00ff88"></span>
+          <span></span><span></span><span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="card" style="border-color: #00ff88; background: #0f0f20;">
+    <div style="position:absolute;left:-6px;top:0;bottom:0;width:6px;background:#00ff88;"></div>
+    <div style="position:absolute;right:-6px;top:0;bottom:0;width:6px;background:#00ff88;"></div>
+    <div class="card-inner">
+      <div class="card-title" style="color: #00ff88;">Per-Table Breakdown</div>
+      <div class="table-row" style="border-color: rgba(0,255,136,0.2); color: #7878a8;">
+        <span>TABLE</span><span>IN</span><span>OUT</span>
+      </div>
+      <div class="table-row" style="border-color: rgba(0,255,136,0.1);">
+        <span><span style="color:#00ff88;opacity:0.3;">&gt;</span> customers</span>
+        <span style="color:#7878a8;">52</span>
+        <span style="color:#00ff88;" class="glow">50</span>
+      </div>
+      <div class="table-row" style="border-color: rgba(0,255,136,0.1);">
+        <span><span style="color:#00ff88;opacity:0.3;">&gt;</span> orders</span>
+        <span style="color:#7878a8;">200</span>
+        <span style="color:#00ff88;" class="glow">200</span>
+      </div>
+      <div class="table-row" style="border-color: rgba(0,255,136,0.1);">
+        <span><span style="color:#00ff88;opacity:0.3;">&gt;</span> products</span>
+        <span style="color:#7878a8;">30</span>
+        <span style="color:#00ff88;" class="glow">30</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Terminal -->
+  <div class="terminal" style="border-color: #00ff88; background: #060610;">
+    <div style="position:absolute;left:-6px;top:0;bottom:0;width:6px;background:#00ff88;"></div>
+    <div style="position:absolute;right:-6px;top:0;bottom:0;width:6px;background:#00ff88;"></div>
+    <div class="terminal-line"><span style="color:#7878a8;">&gt;</span> <span style="color:#00ff88cc;">Loading extracted tables...</span></div>
+    <div class="terminal-line"><span style="color:#7878a8;">&gt;</span> <span style="color:#00ff88cc;">Checking for duplicates...</span></div>
+    <div class="terminal-line"><span style="color:#7878a8;">&gt;</span> <span style="color:#00ff88cc;">Scanning truncation risks...</span></div>
+    <div class="terminal-line"><span style="color:#ffb800;">&gt;</span> <span style="color:#ffb800;">2 warnings found</span></div>
+  </div>
+
+  <div class="ascii-art" style="color: rgba(0,255,136,0.2);">
+  ╔══════════════════╗
+  ║  PIPELINE DONE!  ║
+  ╚══════════════════╝
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SCHEME 2: Synthwave                                           -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="scheme grid-bg" style="
+  background-color: #0d0821;
+  background-image:
+    linear-gradient(rgba(179,71,255,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(179,71,255,0.04) 1px, transparent 1px);
+  background-size: 24px 24px;
+  color: #e8d8f8;
+">
+  <div class="scanlines"></div>
+
+  <div class="label" style="color: #b347ff; border-color: #b347ff;">
+    2. SYNTHWAVE
+  </div>
+
+  <!-- Header -->
+  <div style="margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
+    <span style="color: #b347ff; opacity: 0.4;">&gt;_</span>
+    <span class="glow" style="color: #b347ff; font-size: 12px;">ETL Studio</span>
+    <span style="color: #6848a0; font-size: 8px; margin-left: auto;">session: a1b2c3d4</span>
+  </div>
+
+  <!-- Progress -->
+  <div class="progress-bar" style="border-color: #b347ff; background: rgba(179,71,255,0.1);">
+    <div class="progress-fill">
+      <span style="background: #b347ff;"></span><span style="background: #b347ff;"></span><span style="background: #b347ff;"></span>
+      <span style="background: #b347ff;"></span><span style="background: #b347ff;"></span><span style="background: #b347ff;"></span>
+      <span style="background: #b347ff;"></span><span style="background: #b347ff;"></span><span style="background: #b347ff;"></span>
+      <span style="background: #b347ff;"></span><span style="background: #b347ff;"></span><span style="background: #b347ff;"></span>
+      <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+    </div>
+  </div>
+
+  <div class="separator" style="background: repeating-linear-gradient(90deg, #b347ff 0, #b347ff 12px, transparent 12px, transparent 16px);"></div>
+
+  <!-- Buttons -->
+  <div style="margin: 12px 0;">
+    <div class="btn" style="background: #b347ff; color: #0d0821;">
+      <span style="position:absolute;top:-6px;left:6px;right:6px;height:6px;background:#b347ff;"></span>
+      <span style="position:absolute;bottom:-6px;left:6px;right:6px;height:6px;background:#b347ff;"></span>
+      RUN TRANSFORM
+    </div>
+    <div class="btn" style="background: #1a1035; color: #e8d8f8; outline: 2px solid #b347ff;">
+      <span style="position:absolute;top:-6px;left:6px;right:6px;height:6px;background:#1a1035;border:2px solid #b347ff;"></span>
+      START OVER
+    </div>
+  </div>
+
+  <!-- Badges -->
+  <div style="margin: 12px 0;">
+    <span class="badge" style="background: #00fff5; color: #0d0821;">
+      <span style="position:absolute;left:-6px;top:4px;bottom:4px;width:6px;background:#00fff5;"></span>
+      <span style="position:absolute;right:-6px;top:4px;bottom:4px;width:6px;background:#00fff5;"></span>
+      PASSED
+    </span>
+    <span class="badge" style="background: #ff6ec7; color: #0d0821;">
+      <span style="position:absolute;left:-6px;top:4px;bottom:4px;width:6px;background:#ff6ec7;"></span>
+      <span style="position:absolute;right:-6px;top:4px;bottom:4px;width:6px;background:#ff6ec7;"></span>
+      3 ERRORS
+    </span>
+    <span class="badge" style="background: #ff9f43; color: #0d0821;">
+      <span style="position:absolute;left:-6px;top:4px;bottom:4px;width:6px;background:#ff9f43;"></span>
+      <span style="position:absolute;right:-6px;top:4px;bottom:4px;width:6px;background:#ff9f43;"></span>
+      WARNING
+    </span>
+    <span class="badge" style="background: #b347ff; color: #fff;">
+      <span style="position:absolute;left:-6px;top:4px;bottom:4px;width:6px;background:#b347ff;"></span>
+      <span style="position:absolute;right:-6px;top:4px;bottom:4px;width:6px;background:#b347ff;"></span>
+      INFO
+    </span>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-grid">
+    <div class="stat" style="border-color: #b347ff; background: #130d28;">
+      <div style="position:absolute;left:-6px;top:0;bottom:0;width:6px;background:#b347ff;"></div>
+      <div style="position:absolute;right:-6px;top:0;bottom:0;width:6px;background:#b347ff;"></div>
+      <div class="stat-value glow" style="color: #00fff5;">1,247</div>
+      <div class="stat-label" style="color: #8868b8;">Records In</div>
+    </div>
+    <div class="stat" style="border-color: #b347ff; background: #130d28;">
+      <div style="position:absolute;left:-6px;top:0;bottom:0;width:6px;background:#b347ff;"></div>
+      <div style="position:absolute;right:-6px;top:0;bottom:0;width:6px;background:#b347ff;"></div>
+      <div class="stat-value glow" style="color: #00fff5;">1,190</div>
+      <div class="stat-label" style="color: #8868b8;">Records Out</div>
+    </div>
+  </div>
+
+  <!-- Quality Score -->
+  <div class="card" style="border-color: #b347ff; background: #130d28;">
+    <div style="position:absolute;left:-6px;top:0;bottom:0;width:6px;background:#b347ff;"></div>
+    <div style="position:absolute;right:-6px;top:0;bottom:0;width:6px;background:#b347ff;"></div>
+    <div class="score-block">
+      <div class="score-num glow" style="color: #00fff5;">85</div>
+      <div class="score-label" style="color: #8868b8;">Quality Score</div>
+      <div class="progress-bar" style="border-color: #b347ff; background: rgba(179,71,255,0.1); margin-top: 12px;">
+        <div class="progress-fill">
+          <span style="background:#00fff5"></span><span style="background:#00fff5"></span><span style="background:#00fff5"></span>
+          <span style="background:#00fff5"></span><span style="background:#00fff5"></span><span style="background:#00fff5"></span>
+          <span style="background:#00fff5"></span><span style="background:#00fff5"></span><span style="background:#00fff5"></span>
+          <span style="background:#00fff5"></span><span style="background:#00fff5"></span><span style="background:#00fff5"></span>
+          <span style="background:#00fff5"></span><span style="background:#00fff5"></span><span style="background:#00fff5"></span>
+          <span style="background:#00fff5"></span><span style="background:#00fff5"></span>
+          <span></span><span></span><span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="card" style="border-color: #b347ff; background: #130d28;">
+    <div style="position:absolute;left:-6px;top:0;bottom:0;width:6px;background:#b347ff;"></div>
+    <div style="position:absolute;right:-6px;top:0;bottom:0;width:6px;background:#b347ff;"></div>
+    <div class="card-inner">
+      <div class="card-title" style="color: #b347ff;">Per-Table Breakdown</div>
+      <div class="table-row" style="border-color: rgba(179,71,255,0.2); color: #8868b8;">
+        <span>TABLE</span><span>IN</span><span>OUT</span>
+      </div>
+      <div class="table-row" style="border-color: rgba(179,71,255,0.1);">
+        <span><span style="color:#b347ff;opacity:0.3;">&gt;</span> customers</span>
+        <span style="color:#8868b8;">52</span>
+        <span style="color:#00fff5;" class="glow">50</span>
+      </div>
+      <div class="table-row" style="border-color: rgba(179,71,255,0.1);">
+        <span><span style="color:#b347ff;opacity:0.3;">&gt;</span> orders</span>
+        <span style="color:#8868b8;">200</span>
+        <span style="color:#00fff5;" class="glow">200</span>
+      </div>
+      <div class="table-row" style="border-color: rgba(179,71,255,0.1);">
+        <span><span style="color:#b347ff;opacity:0.3;">&gt;</span> products</span>
+        <span style="color:#8868b8;">30</span>
+        <span style="color:#00fff5;" class="glow">30</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Terminal -->
+  <div class="terminal" style="border-color: #b347ff; background: #08041a;">
+    <div style="position:absolute;left:-6px;top:0;bottom:0;width:6px;background:#b347ff;"></div>
+    <div style="position:absolute;right:-6px;top:0;bottom:0;width:6px;background:#b347ff;"></div>
+    <div class="terminal-line"><span style="color:#8868b8;">&gt;</span> <span style="color:#b347ffcc;">Loading extracted tables...</span></div>
+    <div class="terminal-line"><span style="color:#8868b8;">&gt;</span> <span style="color:#b347ffcc;">Checking for duplicates...</span></div>
+    <div class="terminal-line"><span style="color:#8868b8;">&gt;</span> <span style="color:#b347ffcc;">Scanning truncation risks...</span></div>
+    <div class="terminal-line"><span style="color:#ff9f43;">&gt;</span> <span style="color:#ff9f43;">2 warnings found</span></div>
+  </div>
+
+  <div class="ascii-art" style="color: rgba(179,71,255,0.2);">
+  ╔══════════════════╗
+  ║  PIPELINE DONE!  ║
+  ╚══════════════════╝
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SCHEME 3: Retro Arcade                                        -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="scheme grid-bg" style="
+  background-color: #0a0a0a;
+  background-image:
+    linear-gradient(rgba(57,255,20,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(57,255,20,0.04) 1px, transparent 1px);
+  background-size: 24px 24px;
+  color: #e8e8e0;
+">
+  <div class="scanlines"></div>
+
+  <div class="label" style="color: #39ff14; border-color: #39ff14;">
+    3. RETRO ARCADE
+  </div>
+
+  <!-- Header -->
+  <div style="margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
+    <span style="color: #39ff14; opacity: 0.4;">&gt;_</span>
+    <span class="glow" style="color: #39ff14; font-size: 12px;">ETL Studio</span>
+    <span style="color: #555; font-size: 8px; margin-left: auto;">session: a1b2c3d4</span>
+  </div>
+
+  <!-- Progress -->
+  <div class="progress-bar" style="border-color: #39ff14; background: rgba(57,255,20,0.1);">
+    <div class="progress-fill">
+      <span style="background: #39ff14;"></span><span style="background: #39ff14;"></span><span style="background: #39ff14;"></span>
+      <span style="background: #39ff14;"></span><span style="background: #39ff14;"></span><span style="background: #39ff14;"></span>
+      <span style="background: #39ff14;"></span><span style="background: #39ff14;"></span><span style="background: #39ff14;"></span>
+      <span style="background: #39ff14;"></span><span style="background: #39ff14;"></span><span style="background: #39ff14;"></span>
+      <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+    </div>
+  </div>
+
+  <div class="separator" style="background: repeating-linear-gradient(90deg, #39ff14 0, #39ff14 12px, transparent 12px, transparent 16px);"></div>
+
+  <!-- Buttons -->
+  <div style="margin: 12px 0;">
+    <div class="btn" style="background: #39ff14; color: #0a0a0a;">
+      <span style="position:absolute;top:-6px;left:6px;right:6px;height:6px;background:#39ff14;"></span>
+      <span style="position:absolute;bottom:-6px;left:6px;right:6px;height:6px;background:#39ff14;"></span>
+      RUN TRANSFORM
+    </div>
+    <div class="btn" style="background: #1a1a1a; color: #e8e8e0; outline: 2px solid #39ff14;">
+      <span style="position:absolute;top:-6px;left:6px;right:6px;height:6px;background:#1a1a1a;border:2px solid #39ff14;"></span>
+      START OVER
+    </div>
+  </div>
+
+  <!-- Badges -->
+  <div style="margin: 12px 0;">
+    <span class="badge" style="background: #39ff14; color: #0a0a0a;">
+      <span style="position:absolute;left:-6px;top:4px;bottom:4px;width:6px;background:#39ff14;"></span>
+      <span style="position:absolute;right:-6px;top:4px;bottom:4px;width:6px;background:#39ff14;"></span>
+      PASSED
+    </span>
+    <span class="badge" style="background: #ff3333; color: #fff;">
+      <span style="position:absolute;left:-6px;top:4px;bottom:4px;width:6px;background:#ff3333;"></span>
+      <span style="position:absolute;right:-6px;top:4px;bottom:4px;width:6px;background:#ff3333;"></span>
+      3 ERRORS
+    </span>
+    <span class="badge" style="background: #ffe600; color: #0a0a0a;">
+      <span style="position:absolute;left:-6px;top:4px;bottom:4px;width:6px;background:#ffe600;"></span>
+      <span style="position:absolute;right:-6px;top:4px;bottom:4px;width:6px;background:#ffe600;"></span>
+      WARNING
+    </span>
+    <span class="badge" style="background: #3399ff; color: #fff;">
+      <span style="position:absolute;left:-6px;top:4px;bottom:4px;width:6px;background:#3399ff;"></span>
+      <span style="position:absolute;right:-6px;top:4px;bottom:4px;width:6px;background:#3399ff;"></span>
+      INFO
+    </span>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-grid">
+    <div class="stat" style="border-color: #39ff14; background: #111;">
+      <div style="position:absolute;left:-6px;top:0;bottom:0;width:6px;background:#39ff14;"></div>
+      <div style="position:absolute;right:-6px;top:0;bottom:0;width:6px;background:#39ff14;"></div>
+      <div class="stat-value glow" style="color: #39ff14;">1,247</div>
+      <div class="stat-label" style="color: #777;">Records In</div>
+    </div>
+    <div class="stat" style="border-color: #39ff14; background: #111;">
+      <div style="position:absolute;left:-6px;top:0;bottom:0;width:6px;background:#39ff14;"></div>
+      <div style="position:absolute;right:-6px;top:0;bottom:0;width:6px;background:#39ff14;"></div>
+      <div class="stat-value glow" style="color: #39ff14;">1,190</div>
+      <div class="stat-label" style="color: #777;">Records Out</div>
+    </div>
+  </div>
+
+  <!-- Quality Score -->
+  <div class="card" style="border-color: #39ff14; background: #111;">
+    <div style="position:absolute;left:-6px;top:0;bottom:0;width:6px;background:#39ff14;"></div>
+    <div style="position:absolute;right:-6px;top:0;bottom:0;width:6px;background:#39ff14;"></div>
+    <div class="score-block">
+      <div class="score-num glow" style="color: #39ff14;">85</div>
+      <div class="score-label" style="color: #777;">Quality Score</div>
+      <div class="progress-bar" style="border-color: #39ff14; background: rgba(57,255,20,0.1); margin-top: 12px;">
+        <div class="progress-fill">
+          <span style="background:#39ff14"></span><span style="background:#39ff14"></span><span style="background:#39ff14"></span>
+          <span style="background:#39ff14"></span><span style="background:#39ff14"></span><span style="background:#39ff14"></span>
+          <span style="background:#39ff14"></span><span style="background:#39ff14"></span><span style="background:#39ff14"></span>
+          <span style="background:#39ff14"></span><span style="background:#39ff14"></span><span style="background:#39ff14"></span>
+          <span style="background:#39ff14"></span><span style="background:#39ff14"></span><span style="background:#39ff14"></span>
+          <span style="background:#39ff14"></span><span style="background:#39ff14"></span>
+          <span></span><span></span><span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="card" style="border-color: #39ff14; background: #111;">
+    <div style="position:absolute;left:-6px;top:0;bottom:0;width:6px;background:#39ff14;"></div>
+    <div style="position:absolute;right:-6px;top:0;bottom:0;width:6px;background:#39ff14;"></div>
+    <div class="card-inner">
+      <div class="card-title" style="color: #ffe600;">Per-Table Breakdown</div>
+      <div class="table-row" style="border-color: rgba(57,255,20,0.2); color: #777;">
+        <span>TABLE</span><span>IN</span><span>OUT</span>
+      </div>
+      <div class="table-row" style="border-color: rgba(57,255,20,0.1);">
+        <span><span style="color:#39ff14;opacity:0.3;">&gt;</span> customers</span>
+        <span style="color:#777;">52</span>
+        <span style="color:#39ff14;" class="glow">50</span>
+      </div>
+      <div class="table-row" style="border-color: rgba(57,255,20,0.1);">
+        <span><span style="color:#39ff14;opacity:0.3;">&gt;</span> orders</span>
+        <span style="color:#777;">200</span>
+        <span style="color:#39ff14;" class="glow">200</span>
+      </div>
+      <div class="table-row" style="border-color: rgba(57,255,20,0.1);">
+        <span><span style="color:#39ff14;opacity:0.3;">&gt;</span> products</span>
+        <span style="color:#777;">30</span>
+        <span style="color:#39ff14;" class="glow">30</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Terminal -->
+  <div class="terminal" style="border-color: #39ff14; background: #050505;">
+    <div style="position:absolute;left:-6px;top:0;bottom:0;width:6px;background:#39ff14;"></div>
+    <div style="position:absolute;right:-6px;top:0;bottom:0;width:6px;background:#39ff14;"></div>
+    <div class="terminal-line"><span style="color:#555;">&gt;</span> <span style="color:#39ff14cc;">Loading extracted tables...</span></div>
+    <div class="terminal-line"><span style="color:#555;">&gt;</span> <span style="color:#39ff14cc;">Checking for duplicates...</span></div>
+    <div class="terminal-line"><span style="color:#555;">&gt;</span> <span style="color:#39ff14cc;">Scanning truncation risks...</span></div>
+    <div class="terminal-line"><span style="color:#ffe600;">&gt;</span> <span style="color:#ffe600;">2 warnings found</span></div>
+  </div>
+
+  <div class="ascii-art" style="color: rgba(57,255,20,0.2);">
+  ╔══════════════════╗
+  ║  PIPELINE DONE!  ║
+  ╚══════════════════╝
+  </div>
+</div>
+
+</div>
+</body>
+</html>

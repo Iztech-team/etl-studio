@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build output
+frontend/dist/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.ruff_cache/
+venv/
+.venv/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Backend runtime
+backend/uploads/
+backend/outputs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code
+.claude/
+
+# Logs
+*.log

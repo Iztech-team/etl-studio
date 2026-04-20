@@ -1,0 +1,53 @@
+id,first_name,last_name,email,city,signup_date,lifetime_value,status
+1,David,Smith,user1@example.com,São Paulo,2025-08-13,1154.89,active
+2,Rosa,Johnson,user2@example.com,Stockholm,2025-02-12,207.32,active
+3,Gina,Müller,user3@example.com,Toronto,2024-08-12,181.35,inactive
+4,Rosa,Öztürk,user4@example.com,Istanbul,2025-01-16,2966.87,active
+5,Fadi,Fernández,user5@example.com,Dubai,2025-05-07,1425.46,inactive
+6,Kara,Johnson,user6@example.com,Berlin,2025-03-27,528.75,N/A
+7,Tina,Tanaka,user7@example.com,New York,2024-04-03,2324.15,active
+8,Mona,Johnson,user8@example.com,Toronto,2025-06-24,4155.55,
+9,Liam,Kowalski,user9@example.com,Istanbul,2024-04-29,394.30,inactive
+10,James,Johnson,user10@example.com,Istanbul,2026-01-07,1931.62,NULL
+11,Liam,García,user11@example.com,London,2025-04-22,1087.06,N/A
+12,Carla,Kowalski,user12@example.com,Tokyo,2024-10-21,3659.18,inactive
+13,Oscar,Öztürk,user13@example.com,São Paulo,2024-07-04,3456.40,inactive
+14,Kara,Kim,user14@example.com,New York,2025-08-29,4117.92,N/A
+15,Mona,Tanaka,user15@example.com,Berlin,2025-09-16,4570.02,
+16,Kara,Müller,user16@example.com,Sydney,2025-03-11,4429.18,NULL
+17,Elena,Tanaka,user17@example.com,Tokyo,2025-08-11,3737.70,
+18,Ivy,Fernández,user18@example.com,Stockholm,2025-02-06,4494.22,NULL
+19,Liam,Müller,user19@example.com,Tokyo,2024-11-15,2492.90,active
+20,David,García,user20@example.com,Tokyo,2024-05-24,2139.69,active
+21,Mona,Öztürk,user21@example.com,Stockholm,2024-12-27,2669.12,
+22,Alice,Chen,user22@example.com,Berlin,2024-05-22,4429.70,N/A
+23,Kara,Johnson,user23@example.com,São Paulo,2025-01-30,832.88,active
+24,Ivy,Nguyen,user24@example.com,Tokyo,2024-11-17,4567.51,N/A
+25,Qasim,Kowalski,user25@example.com,Istanbul,2025-11-15,1900.87,inactive
+26,Rosa,Ivanov,user26@example.com,Toronto,2026-04-20,3014.78,NULL
+27,Alice,Johnson,user27@example.com,London,2025-06-10,1235.29,inactive
+28,Sami,Johnson,user28@example.com,Berlin,2024-04-01,2455.65,active
+29,Rosa,Ivanov,user29@example.com,Tokyo,2025-12-10,3315.77,
+30,Fadi,Tanaka,user30@example.com,Toronto,2024-08-07,2144.53,inactive
+31,Rosa,Ivanov,user31@example.com,Istanbul,2024-04-20,1593.00,N/A
+32,Oscar,Santos,user32@example.com,Toronto,2025-01-13,648.97,inactive
+33,Carla,Al-Rashid,user33@example.com,New York,2024-08-26,2791.91,
+34,Hassan,Smith,user34@example.com,Berlin,2024-04-26,3173.96,inactive
+35,Carla,Santos,user35@example.com,New York,2025-05-17,400.74,inactive
+36,Ivy,Chen,user36@example.com,Sydney,2025-09-13,2719.21,
+37,Sami,Björk,user37@example.com,Istanbul,2024-12-22,4047.11,inactive
+38,David,Johnson,user38@example.com,Dubai,2025-04-23,2146.71,NULL
+39,Bob,Chen,user39@example.com,Berlin,2026-02-17,2042.98,N/A
+40,David,Müller,user40@example.com,Istanbul,2025-10-08,2704.61,inactive
+41,Nour,García,user41@example.com,São Paulo,2025-01-02,1286.54,active
+42,Oscar,Ivanov,user42@example.com,Toronto,2026-01-10,300.41,
+43,Alice,Johnson,user43@example.com,Istanbul,2025-11-01,2061.75,NULL
+44,Gina,Kim,user44@example.com,Dubai,2026-02-19,864.95,active
+45,Mona,Tanaka,user45@example.com,Sydney,2025-07-02,2143.89,
+46,Petra,García,user46@example.com,Istanbul,2025-06-21,1127.62,active
+47,Sami,Fernández,user47@example.com,Toronto,2026-02-17,3752.48,active
+48,Bob,Kowalski,user48@example.com,Sydney,2024-11-22,4600.97,
+49,Fadi,Smith,user49@example.com,Toronto,2026-01-28,4264.15,active
+50,Tina,Johnson,user50@example.com,Istanbul,2025-03-03,643.44,
+3,Gina,Müller,user3@example.com,Toronto,2024-08-12,181.35,inactive
+7,Tina,Tanaka,user7@example.com,New York,2024-04-03,2324.15,active
