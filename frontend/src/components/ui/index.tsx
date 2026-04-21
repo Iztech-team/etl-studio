@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { Loader2, Upload, Settings2, ShieldCheck, Wand2, Download, BarChart3 } from 'lucide-react'
+import { Loader2, Database, Upload, Pencil, Settings2, ShieldCheck, Wand2, Download, BarChart3 } from 'lucide-react'
 import { PHASES, type Phase } from '../../store/pipeline'
 import { Progress } from '@/components/ui/progress'
 
 const PHASE_ICONS: Record<Phase, typeof Upload> = {
+  'pre-extract': Database,
   upload: Upload,
+  edit: Pencil,
   configure: Settings2,
   validate: ShieldCheck,
   transform: Wand2,
@@ -13,7 +15,9 @@ const PHASE_ICONS: Record<Phase, typeof Upload> = {
 }
 
 const PHASE_LABELS: Record<Phase, string> = {
+  'pre-extract': 'DB Import',
   upload: 'Upload',
+  edit: 'Edit Data',
   configure: 'Configure',
   validate: 'Validate',
   transform: 'Transform',

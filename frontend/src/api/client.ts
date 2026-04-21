@@ -10,6 +10,9 @@ import type {
   StatsResponse,
   DDLUploadResponse,
   ApplyDDLResponse,
+  PreExtractResponse,
+  TableDataResponse,
+  EditDataResponse,
 } from '../types/api'
 
 const api = axios.create({ baseURL: '/api' })
@@ -21,6 +24,41 @@ api.interceptors.response.use(
     return Promise.reject(new Error(message))
   },
 )
+
+export async function preExtract(
+  file: File,
+  password?: string,
+  onProgress?: (percent: number) => void,
+): Promise<PreExtractResponse> {
+  const form = new FormData()
+  form.append('file', file)
+  if (password) form.append('password', password)
+  const { data } = await api.post<PreExtractResponse>('/pre-extract', form, {
+    onUploadProgress: (e) => {
+      if (onProgress && e.total) {
+        onProgress(Math.round((e.loaded / e.total) * 100))
+      }
+    },
+  })
+  return data
+}
+
+export async function preExtractSelect(sessionId: string, tables: string[]): Promise<void> {
+  await api.post(`/pre-extract-select/${sessionId}`, { tables })
+}
+
+export async function fetchTableData(sessionId: string): Promise<TableDataResponse> {
+  const { data } = await api.get<TableDataResponse>(`/table-data/${sessionId}`)
+  return data
+}
+
+export async function saveTableData(
+  sessionId: string,
+  tables: Record<string, Record<string, unknown>[]>,
+): Promise<EditDataResponse> {
+  const { data } = await api.post<EditDataResponse>(`/table-data/${sessionId}`, { tables })
+  return data
+}
 
 export async function uploadFiles(files: File[]): Promise<UploadResponse> {
   const form = new FormData()

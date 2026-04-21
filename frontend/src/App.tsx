@@ -2,7 +2,9 @@ import { PipelineProvider, usePipeline } from "./store/pipeline";
 import { ProgressSteps } from "./components/ui";
 import LiquidEther from "./components/ui/LiquidEther";
 import { Separator } from "@/components/ui/separator";
+import PreExtractPhase from "./components/PreExtractPhase";
 import UploadPhase from "./components/UploadPhase";
+import EditPhase from "./components/EditPhase";
 import ConfigurePhase from "./components/ConfigurePhase";
 import ValidatePhase from "./components/ValidatePhase";
 import TransformPhase from "./components/TransformPhase";
@@ -11,7 +13,9 @@ import StatsPhase from "./components/StatsPhase";
 import type { Phase } from "./store/pipeline";
 
 const PHASE_COMPONENTS: Record<Phase, () => JSX.Element> = {
+	"pre-extract": PreExtractPhase,
 	upload: UploadPhase,
+	edit: EditPhase,
 	configure: ConfigurePhase,
 	validate: ValidatePhase,
 	transform: TransformPhase,

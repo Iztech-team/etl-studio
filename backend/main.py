@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import os, shutil, uuid
@@ -19,6 +19,11 @@ from models.schemas import (
     ApplyDDLRequest,
     ApplyDDLResponse,
     ApplyDDLTableResult,
+    PreExtractResponse,
+    PreExtractFileInfo,
+    DB_TYPE_EXTENSIONS,
+    EditDataRequest,
+    EditDataResponse,
 )
 
 app = FastAPI(title="ETL Studio", version="1.0.0")
@@ -42,6 +47,134 @@ sessions: dict = {}
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+def _detect_db_type(filename: str) -> str | None:
+    ext = os.path.splitext(filename)[1].lower()
+    for db_type, extensions in DB_TYPE_EXTENSIONS.items():
+        if ext in extensions:
+            return db_type
+    return None
+
+
+@app.post("/api/pre-extract", response_model=PreExtractResponse)
+async def pre_extract(
+    file: UploadFile = File(...),
+    password: str | None = Form(None),
+):
+    db_type = _detect_db_type(file.filename or "")
+    if not db_type:
+        raise HTTPException(
+            400,
+            f"Unsupported database file type. Supported: "
+            + ", ".join(ext for exts in DB_TYPE_EXTENSIONS.values() for ext in exts),
+        )
+
+    session_id = str(uuid.uuid4())
+    session_dir = os.path.join(UPLOAD_DIR, session_id)
+    os.makedirs(session_dir, exist_ok=True)
+
+    dest = os.path.join(session_dir, file.filename)
+    with open(dest, "wb") as out:
+        while chunk := await file.read(8 * 1024 * 1024):  # 8 MB chunks
+            out.write(chunk)
+
+    file_size = os.path.getsize(dest)
+    file_info = PreExtractFileInfo(
+        name=file.filename,
+        path=dest,
+        size=file_size,
+        db_type=db_type,
+    )
+
+    # Extract tables from DB into CSVs
+    from core.db_extractor import extract_db_to_csvs
+
+    try:
+        csv_files = extract_db_to_csvs(dest, db_type, session_dir, password)
+    except ImportError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(400, f"Failed to extract database: {e}")
+
+    if not csv_files:
+        raise HTTPException(400, "No tables found in the database file")
+
+    # Remove the original DB file so Extractor only sees CSVs
+    os.remove(dest)
+
+    # Run the standard Extractor on the generated CSVs
+    extractor = Extractor(session_dir)
+    result = extractor.extract_all()
+
+    saved_files = [
+        {
+            "name": f,
+            "path": os.path.join(session_dir, f),
+            "size": os.path.getsize(os.path.join(session_dir, f)),
+        }
+        for f in csv_files
+    ]
+
+    sessions[session_id] = {
+        "pre_extract": {
+            "file": file_info.dict(),
+            "password": password is not None,
+            "db_type": db_type,
+        },
+        "extractor": extractor,
+        "raw": result,
+        "files": saved_files,
+        "ddl_schema": result.get("ddl_schema", {}),
+        "applied_ddl": [],
+    }
+
+    return PreExtractResponse(
+        ok=True,
+        session_id=session_id,
+        file=file_info,
+        tables_extracted=list(result.get("tables", {}).keys()),
+        csv_files=csv_files,
+        preview=result.get("preview", {}),
+        inferred_schema=result.get("schema", {}),
+        stats=result.get("stats", {}),
+        ddl_schema=result.get("ddl_schema", {}),
+    )
+
+
+@app.post("/api/pre-extract-select/{session_id}")
+async def pre_extract_select(session_id: str, body: ApplyDDLRequest):
+    """Keep only selected tables in the session, remove the rest."""
+    if session_id not in sessions:
+        raise HTTPException(404, "Session not found")
+    s = sessions[session_id]
+    raw = s.get("raw", {})
+    selected = set(body.tables)
+    all_tables = set(raw.get("tables", {}).keys())
+    removed = all_tables - selected
+
+    # Remove from raw tables, schema, stats, preview
+    for table in removed:
+        raw.get("tables", {}).pop(table, None)
+        raw.get("schema", {}).pop(table, None)
+        raw.get("stats", {}).pop(table, None)
+        raw.get("preview", {}).pop(table, None)
+
+    # Remove CSV files for deselected tables
+    session_dir = os.path.join(UPLOAD_DIR, session_id)
+    s["files"] = [
+        f for f in s.get("files", []) if f["name"].rsplit(".", 1)[0] in selected
+    ]
+    for table in removed:
+        csv_path = os.path.join(session_dir, f"{table}.csv")
+        if os.path.exists(csv_path):
+            os.remove(csv_path)
+
+    return {
+        "ok": True,
+        "kept": sorted(selected & all_tables),
+        "removed": sorted(removed),
+    }
 
 
 @app.post("/api/upload")
@@ -75,6 +208,51 @@ async def upload_files(files: List[UploadFile] = File(...)):
         "stats": result.get("stats", {}),
         "ddl_schema": result.get("ddl_schema", {}),
     }
+
+
+@app.get("/api/table-data/{session_id}")
+async def get_table_data(session_id: str):
+    """Return all rows for all tables in the session."""
+    if session_id not in sessions:
+        raise HTTPException(404, "Session not found")
+    s = sessions[session_id]
+    raw = s.get("raw", {})
+    return {
+        "tables": raw.get("tables", {}),
+        "schema": raw.get("schema", {}),
+    }
+
+
+@app.post("/api/table-data/{session_id}", response_model=EditDataResponse)
+async def save_table_data(session_id: str, body: EditDataRequest):
+    """Replace table rows with edited data and recompute schema/stats."""
+    if session_id not in sessions:
+        raise HTTPException(404, "Session not found")
+    s = sessions[session_id]
+    raw = s.get("raw", {})
+
+    # Replace rows for each table
+    for table, rows in body.tables.items():
+        if table not in raw.get("tables", {}):
+            continue
+        raw["tables"][table] = rows
+
+    # Recompute stats
+    stats = {}
+    for table, rows in raw.get("tables", {}).items():
+        stats[table] = {"row_count": len(rows)}
+    raw["stats"] = stats
+
+    # Recompute preview
+    raw["preview"] = {t: rows[:5] for t, rows in raw.get("tables", {}).items()}
+
+    # Re-run schema inference on the extractor
+    extractor: Extractor = s["extractor"]
+    extractor._raw_tables = raw["tables"]
+    extractor._infer_schema()
+    raw["schema"] = extractor._schema
+
+    return EditDataResponse(ok=True, stats=stats)
 
 
 @app.post("/api/configure/{session_id}", response_model=ConfigureResponse)

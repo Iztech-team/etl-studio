@@ -107,6 +107,35 @@ export interface StatsResponse {
   quality_score: number
 }
 
+export interface PreExtractFileInfo {
+  name: string
+  path: string
+  size: number
+  db_type: string
+}
+
+export interface PreExtractResponse {
+  ok: boolean
+  session_id: string
+  file: PreExtractFileInfo
+  tables_extracted: string[]
+  csv_files: string[]
+  preview: Record<string, Record<string, unknown>[]>
+  inferred_schema: Record<string, Record<string, ColumnSchema>>
+  stats: Record<string, { row_count: number }>
+  ddl_schema?: Record<string, Record<string, ColumnSchema>>
+}
+
+export interface TableDataResponse {
+  tables: Record<string, Record<string, unknown>[]>
+  schema: Record<string, Record<string, ColumnSchema>>
+}
+
+export interface EditDataResponse {
+  ok: boolean
+  stats: Record<string, { row_count: number }>
+}
+
 export interface DDLUploadResponse {
   ok: boolean
   ddl_schema: Record<string, Record<string, ColumnSchema>>

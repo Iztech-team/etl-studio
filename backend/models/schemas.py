@@ -85,6 +85,42 @@ class StatsResponse(BaseModel):
     quality_score: float
 
 
+DB_TYPE_EXTENSIONS = {
+    "sqlite": [".sqlite", ".sqlite3", ".db"],
+    "firebird": [".fdb", ".gdb", ".ib"],
+    "access": [".mdb", ".accdb"],
+    "dbase": [".dbf"],
+}
+
+
+class PreExtractFileInfo(BaseModel):
+    name: str
+    path: str
+    size: int
+    db_type: str
+
+
+class PreExtractResponse(BaseModel):
+    ok: bool
+    session_id: str
+    file: PreExtractFileInfo
+    tables_extracted: List[str]
+    csv_files: List[str]
+    preview: Dict[str, Any]
+    inferred_schema: Dict[str, Any]
+    stats: Dict[str, Any]
+    ddl_schema: Dict[str, Any] = {}
+
+
+class EditDataRequest(BaseModel):
+    tables: Dict[str, List[Dict[str, Any]]]
+
+
+class EditDataResponse(BaseModel):
+    ok: bool
+    stats: Dict[str, Any]
+
+
 class DDLColumnSchema(BaseModel):
     inferred_type: str
     original_type: str
