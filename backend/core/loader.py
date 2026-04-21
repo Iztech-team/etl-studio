@@ -6,10 +6,17 @@ from typing import Any, Dict, List
 class Loader:
     """Writes transformed data to JSON or SQL dump files. No destructive DB ops."""
 
-    def __init__(self, transformed: Dict[str, Any], config: Dict[str, Any], out_dir: str):
+    def __init__(
+        self,
+        transformed: Dict[str, Any],
+        config: Dict[str, Any],
+        out_dir: str,
+        ddl_schema: Dict[str, Any] | None = None,
+    ):
         self.tables: Dict[str, List[Dict]] = transformed.get("tables", {})
         self.config = config
         self.out_dir = out_dir
+        self.ddl_schema = ddl_schema or {}
 
     # ------------------------------------------------------------------
     def run(self) -> Dict[str, Any]:
@@ -57,9 +64,13 @@ class Loader:
                 cols = list(rows[0].keys())
                 col_list = ", ".join(f'"{c}"' for c in cols)
                 sql_lines.append(f"-- Table: {table}")
+                create_stmts = self._create_table_sql(table, cols)
+                sql_lines.extend(create_stmts)
                 for row in rows:
                     vals = ", ".join(self._sql_val(row.get(c)) for c in cols)
-                    sql_lines.append(f'INSERT INTO "{table}" ({col_list}) VALUES ({vals});')
+                    sql_lines.append(
+                        f'INSERT INTO "{table}" ({col_list}) VALUES ({vals});'
+                    )
                 sql_lines.append("")
                 rows_written[table] = len(rows)
 
@@ -80,6 +91,23 @@ class Loader:
         }
 
     # ------------------------------------------------------------------
+    def _create_table_sql(self, table: str, cols: List[str]) -> List[str]:
+        """Generate CREATE TABLE statement using original DDL types if available."""
+        if table not in self.ddl_schema:
+            return []
+        schema = self.ddl_schema[table]
+        lines = [f'CREATE TABLE IF NOT EXISTS "{table}" (']
+        col_defs = []
+        for col in cols:
+            col_info = schema.get(col, {})
+            col_type = col_info.get("original_type", "TEXT")
+            nullable = col_info.get("nullable", True)
+            null_str = "" if nullable else " NOT NULL"
+            col_defs.append(f'  "{col}" {col_type}{null_str}')
+        lines.append(",\n".join(col_defs))
+        lines.append(");")
+        return ["\n".join(lines), ""]
+
     @staticmethod
     def _sql_val(v: Any) -> str:
         if v is None:

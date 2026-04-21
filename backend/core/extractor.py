@@ -14,6 +14,7 @@ class Extractor:
         self._raw_tables: Dict[str, List[Dict]] = {}
         self._schema: Dict[str, Any] = {}
         self._stats: Dict[str, Any] = {}
+        self._ddl_schema: Dict[str, Any] = {}
 
     # ------------------------------------------------------------------
     def extract_all(self) -> Dict[str, Any]:
@@ -36,6 +37,7 @@ class Extractor:
             "schema": self._schema,
             "stats": self._stats,
             "preview": {t: rows[:5] for t, rows in self._raw_tables.items()},
+            "ddl_schema": self._ddl_schema,
         }
 
     # ------------------------------------------------------------------
@@ -57,11 +59,17 @@ class Extractor:
             rows = list(ws.iter_rows(values_only=True))
             if not rows:
                 continue
-            headers = [str(h) if h is not None else f"col_{i}" for i, h in enumerate(rows[0])]
+            headers = [
+                str(h) if h is not None else f"col_{i}" for i, h in enumerate(rows[0])
+            ]
             data = []
             for row in rows[1:]:
                 data.append({headers[i]: row[i] for i in range(len(headers))})
-            key = f"{fname.rsplit('.', 1)[0]}_{sheet}" if len(wb.sheetnames) > 1 else sheet
+            key = (
+                f"{fname.rsplit('.', 1)[0]}_{sheet}"
+                if len(wb.sheetnames) > 1
+                else sheet
+            )
             self._raw_tables[key] = data
 
     def _extract_sql(self, path: str, fname: str):
@@ -69,6 +77,12 @@ class Extractor:
         parser = SQLParser(content)
         tables = parser.parse()
         self._raw_tables.update(tables)
+        # Also extract DDL schemas from CREATE TABLE statements
+        ddl = parser.parse_ddl()
+        # Only keep DDL for tables that have no data rows (DDL-only files)
+        for table_name, columns in ddl.items():
+            if table_name not in self._raw_tables or not self._raw_tables[table_name]:
+                self._ddl_schema[table_name] = columns
 
     # ------------------------------------------------------------------
     def _infer_schema(self):
@@ -78,8 +92,13 @@ class Extractor:
                 continue
             cols = {}
             for col in rows[0].keys():
-                sample_vals = [r[col] for r in rows[:50] if r.get(col) not in (None, "")]
-                cols[col] = {"inferred_type": self._guess_type(sample_vals), "nullable": True}
+                sample_vals = [
+                    r[col] for r in rows[:50] if r.get(col) not in (None, "")
+                ]
+                cols[col] = {
+                    "inferred_type": self._guess_type(sample_vals),
+                    "nullable": True,
+                }
             self._schema[table] = cols
 
     def _guess_type(self, vals: list) -> str:
@@ -91,11 +110,14 @@ class Extractor:
         float_ok = all(self._is_float(v) for v in vals)
         if float_ok:
             return "float"
-        bool_ok = all(str(v).lower() in ("true", "false", "0", "1", "yes", "no") for v in vals)
+        bool_ok = all(
+            str(v).lower() in ("true", "false", "0", "1", "yes", "no") for v in vals
+        )
         if bool_ok:
             return "boolean"
         # date heuristic
         import re
+
         date_re = re.compile(r"\d{4}-\d{2}-\d{2}")
         if all(date_re.search(str(v)) for v in vals):
             return "date"
@@ -104,14 +126,16 @@ class Extractor:
     @staticmethod
     def _is_int(v) -> bool:
         try:
-            int(str(v)); return True
+            int(str(v))
+            return True
         except Exception:
             return False
 
     @staticmethod
     def _is_float(v) -> bool:
         try:
-            float(str(v)); return True
+            float(str(v))
+            return True
         except Exception:
             return False
 
@@ -134,8 +158,15 @@ class Extractor:
 
         for table, rows in self._raw_tables.items():
             if not rows:
-                issues.append({"level": "warning", "table": table, "column": None,
-                                "message": "Table is empty", "count": 0})
+                issues.append(
+                    {
+                        "level": "warning",
+                        "table": table,
+                        "column": None,
+                        "message": "Table is empty",
+                        "count": 0,
+                    }
+                )
                 continue
 
             cols = list(rows[0].keys())
@@ -150,8 +181,15 @@ class Extractor:
                 seen.add(key)
             duplicate_counts[table] = dups
             if dups:
-                issues.append({"level": "warning", "table": table, "column": None,
-                                "message": f"{dups} duplicate row(s) detected", "count": dups})
+                issues.append(
+                    {
+                        "level": "warning",
+                        "table": table,
+                        "column": None,
+                        "message": f"{dups} duplicate row(s) detected",
+                        "count": dups,
+                    }
+                )
 
             # --- financial totals for numeric columns
             for col in cols:
@@ -169,14 +207,23 @@ class Extractor:
                 str_vals = [str(v) for v in vals if v not in (None, "")]
                 long_vals = [v for v in str_vals if len(v) > 255]
                 if long_vals:
-                    truncation_risks.append({
-                        "table": table, "column": col,
-                        "max_length": max(len(v) for v in str_vals),
-                        "count": len(long_vals),
-                    })
-                    issues.append({"level": "warning", "table": table, "column": col,
-                                   "message": f"{len(long_vals)} value(s) exceed 255 chars",
-                                   "count": len(long_vals)})
+                    truncation_risks.append(
+                        {
+                            "table": table,
+                            "column": col,
+                            "max_length": max(len(v) for v in str_vals),
+                            "count": len(long_vals),
+                        }
+                    )
+                    issues.append(
+                        {
+                            "level": "warning",
+                            "table": table,
+                            "column": col,
+                            "message": f"{len(long_vals)} value(s) exceed 255 chars",
+                            "count": len(long_vals),
+                        }
+                    )
 
             # --- spot check: first 3 rows
             spot_checks.append({"table": table, "rows": rows[:3]})

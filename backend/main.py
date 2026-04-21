@@ -15,6 +15,10 @@ from models.schemas import (
     LoadRequest,
     LoadResponse,
     StatsResponse,
+    DDLUploadResponse,
+    ApplyDDLRequest,
+    ApplyDDLResponse,
+    ApplyDDLTableResult,
 )
 
 app = FastAPI(title="ETL Studio", version="1.0.0")
@@ -55,7 +59,13 @@ async def upload_files(files: List[UploadFile] = File(...)):
 
     extractor = Extractor(session_dir)
     result = extractor.extract_all()
-    sessions[session_id] = {"extractor": extractor, "raw": result, "files": saved}
+    sessions[session_id] = {
+        "extractor": extractor,
+        "raw": result,
+        "files": saved,
+        "ddl_schema": result.get("ddl_schema", {}),
+        "applied_ddl": [],
+    }
 
     return {
         "session_id": session_id,
@@ -63,6 +73,7 @@ async def upload_files(files: List[UploadFile] = File(...)):
         "preview": result.get("preview", {}),
         "inferred_schema": result.get("schema", {}),
         "stats": result.get("stats", {}),
+        "ddl_schema": result.get("ddl_schema", {}),
     }
 
 
@@ -72,6 +83,93 @@ async def configure(session_id: str, body: ConfigureRequest):
         raise HTTPException(404, "Session not found")
     sessions[session_id]["config"] = body.dict()
     return ConfigureResponse(ok=True, message="Configuration saved")
+
+
+@app.post("/api/upload-ddl/{session_id}", response_model=DDLUploadResponse)
+async def upload_ddl(session_id: str, files: List[UploadFile] = File(...)):
+    if session_id not in sessions:
+        raise HTTPException(404, "Session not found")
+
+    from utils.sql_parser import SQLParser
+
+    s = sessions[session_id]
+    ddl_schema = s.get("ddl_schema", {})
+    data_tables = set(s["raw"].get("tables", {}).keys())
+
+    for f in files:
+        content = (await f.read()).decode("utf-8", errors="replace")
+        parser = SQLParser(content)
+        parsed = parser.parse_ddl()
+        ddl_schema.update(parsed)
+
+    s["ddl_schema"] = ddl_schema
+    matching = [t for t in ddl_schema if t in data_tables]
+
+    return DDLUploadResponse(
+        ok=True,
+        ddl_schema=ddl_schema,
+        matching_tables=matching,
+    )
+
+
+@app.post("/api/apply-ddl/{session_id}", response_model=ApplyDDLResponse)
+async def apply_ddl(session_id: str, body: ApplyDDLRequest):
+    if session_id not in sessions:
+        raise HTTPException(404, "Session not found")
+
+    s = sessions[session_id]
+    ddl_schema = s.get("ddl_schema", {})
+    data_tables = s["raw"].get("tables", {})
+    inferred_schema = s["raw"].get("schema", {})
+    results = []
+
+    for table in body.tables:
+        errors = []
+
+        if table not in ddl_schema:
+            errors.append(f"No DDL definition found for table '{table}'")
+            results.append(
+                ApplyDDLTableResult(table=table, applied=False, errors=errors)
+            )
+            continue
+
+        if table not in data_tables or not data_tables[table]:
+            errors.append(f"No data found for table '{table}'")
+            results.append(
+                ApplyDDLTableResult(table=table, applied=False, errors=errors)
+            )
+            continue
+
+        # Strict column match (case-insensitive)
+        ddl_cols = {c.lower() for c in ddl_schema[table]}
+        data_cols = {c.lower() for c in data_tables[table][0].keys()}
+
+        ddl_only = ddl_cols - data_cols
+        data_only = data_cols - ddl_cols
+
+        if ddl_only or data_only:
+            if ddl_only:
+                errors.append(
+                    f"Columns in DDL but not in data: {', '.join(sorted(ddl_only))}"
+                )
+            if data_only:
+                errors.append(
+                    f"Columns in data but not in DDL: {', '.join(sorted(data_only))}"
+                )
+            results.append(
+                ApplyDDLTableResult(table=table, applied=False, errors=errors)
+            )
+            continue
+
+        # Apply DDL schema — overwrite inferred schema for this table
+        inferred_schema[table] = ddl_schema[table]
+        if table not in s.get("applied_ddl", []):
+            s.setdefault("applied_ddl", []).append(table)
+
+        results.append(ApplyDDLTableResult(table=table, applied=True, errors=[]))
+
+    all_ok = all(r.applied for r in results)
+    return ApplyDDLResponse(ok=all_ok, results=results)
 
 
 @app.get("/api/validate/{session_id}", response_model=ValidateResponse)
@@ -109,7 +207,12 @@ async def load(session_id: str, body: LoadRequest):
     out_dir = os.path.join(OUTPUT_DIR, session_id)
     os.makedirs(out_dir, exist_ok=True)
 
-    loader = Loader(s["transformed"], body.dict(), out_dir)
+    ddl_schema = {
+        t: s["raw"]["schema"].get(t, {})
+        for t in s["raw"].get("tables", {})
+        if t in s.get("applied_ddl", [])
+    }
+    loader = Loader(s["transformed"], body.dict(), out_dir, ddl_schema=ddl_schema)
     result = loader.run()
     sessions[session_id]["load_result"] = result
     return LoadResponse(**result)

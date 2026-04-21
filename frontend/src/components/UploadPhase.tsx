@@ -1,8 +1,9 @@
 import { useCallback } from 'react'
 import { useDropzone } from 'react-dropzone'
+import { UploadCloud } from 'lucide-react'
 import { usePipeline } from '../store/pipeline'
 import { uploadFiles } from '../api/client'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/8bit/card'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { PhaseHeader, Spinner, DataTable } from './ui'
 
 export default function UploadPhase() {
@@ -40,73 +41,87 @@ export default function UploadPhase() {
 
       <div
         {...getRootProps()}
-        className={`relative border-y-6 border-foreground dark:border-ring p-12 text-center cursor-pointer transition-all bg-card group
-          ${isDragActive ? 'border-primary bg-primary/5' : 'hover:bg-primary/5'}
+        className={`rounded-lg border-2 border-dashed p-12 text-center cursor-pointer transition-all bg-card
+          ${isDragActive ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/60 hover:bg-accent/5'}
         `}
       >
-        <div
-          className="absolute inset-0 border-x-6 -mx-1.5 border-foreground dark:border-ring pointer-events-none"
-          aria-hidden="true"
-        />
         <input {...getInputProps()} />
         {state.loading ? (
           <Spinner size="lg" label="Extracting data" />
         ) : (
-          <div className="space-y-3 pixel-in">
-            <pre className="text-primary/30 text-xs retro leading-tight mx-auto w-fit select-none group-hover:text-primary/50 transition-colors">
-{`  ┌─────────┐
-  │  ↑ ↑ ↑  │
-  │  UPLOAD  │
-  └─────────┘`}
-            </pre>
-            <p className="text-muted-foreground retro text-xs">
-              {isDragActive ? '>> Drop files here <<' : 'Drag & drop files here, or click to browse'}
+          <div className="space-y-3">
+            <UploadCloud className="mx-auto h-12 w-12 text-primary/70" />
+            <p className="text-foreground font-medium">
+              {isDragActive ? 'Drop files here' : 'Drag & drop files here, or click to browse'}
             </p>
-            <p className="text-muted-foreground/40 text-[10px] retro">.csv .xlsx .xls .sql</p>
+            <p className="text-xs text-muted-foreground">.csv · .xlsx · .xls · .sql</p>
           </div>
         )}
       </div>
 
       {state.error && (
-        <Card>
-          <CardContent>
-            <p className="text-destructive text-sm retro pixel-in">! ERROR: {state.error}</p>
+        <Card className="border-destructive/50">
+          <CardContent className="pt-6">
+            <p className="text-destructive text-sm">{state.error}</p>
           </CardContent>
         </Card>
       )}
 
       {state.uploadResult && (
-        <div className="space-y-4 stagger">
+        <div className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-xs">
+              <CardTitle className="text-sm">
                 Uploaded Files
-                <span className="text-primary/40 ml-2">[{state.uploadResult.files.length}]</span>
+                <span className="text-accent ml-2 font-mono">[{state.uploadResult.files.length}]</span>
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-1">
                 {state.uploadResult.files.map((f) => (
-                  <div key={f.name} className="flex items-center justify-between text-xs retro py-1.5 hover:bg-primary/5 px-1 transition-colors">
-                    <span className="text-foreground">
-                      <span className="text-primary/40 mr-2">{'>'}</span>
-                      {f.name}
-                    </span>
-                    <span className="text-muted-foreground">{(f.size / 1024).toFixed(1)} KB</span>
+                  <div key={f.name} className="flex items-center justify-between text-sm py-1.5 hover:bg-accent/5 px-2 rounded transition-colors">
+                    <span className="text-foreground font-mono">{f.name}</span>
+                    <span className="text-muted-foreground text-xs">{(f.size / 1024).toFixed(1)} KB</span>
                   </div>
                 ))}
               </div>
             </CardContent>
           </Card>
 
+          {state.uploadResult.ddl_schema && Object.keys(state.uploadResult.ddl_schema).length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm">
+                  DDL Definitions Detected
+                  <span className="text-accent ml-2 font-mono text-xs">
+                    [{Object.keys(state.uploadResult.ddl_schema).length} tables]
+                  </span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Schema definitions found. You can apply them in the Configure step.
+                </p>
+                <div className="space-y-1">
+                  {Object.keys(state.uploadResult.ddl_schema).map((table) => (
+                    <div key={table} className="text-sm font-mono py-1 px-2">
+                      <span className="text-primary/40 mr-2">{'>'}</span>
+                      {table}
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {Object.entries(state.uploadResult.preview).map(([table, rows]) => {
             const cols = rows.length > 0 ? Object.keys(rows[0]) : []
             return (
               <Card key={table}>
                 <CardHeader>
-                  <CardTitle className="text-xs">
-                    Preview: {table}
-                    <span className="text-primary/40 ml-2">
+                  <CardTitle className="text-sm">
+                    Preview: <span className="text-primary">{table}</span>
+                    <span className="text-accent ml-2 font-mono text-xs">
                       [{state.uploadResult!.stats[table]?.row_count ?? 0} rows]
                     </span>
                   </CardTitle>

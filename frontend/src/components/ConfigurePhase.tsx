@@ -1,15 +1,16 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
+import { useDropzone } from 'react-dropzone'
 import { usePipeline } from '../store/pipeline'
-import { configure } from '../api/client'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/8bit/card'
-import { Button } from '@/components/ui/8bit/button'
-import { Input } from '@/components/ui/8bit/input'
-import { Checkbox } from '@/components/ui/8bit/checkbox'
+import { configure, uploadDDL, applyDDL } from '../api/client'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
-} from '@/components/ui/8bit/select'
+} from '@/components/ui/select'
 import { PhaseHeader } from './ui'
-import type { TableConfig, ColumnConfig } from '../types/api'
+import type { TableConfig, ColumnConfig, ColumnSchema } from '../types/api'
 
 const DATA_TYPES = ['string', 'integer', 'float', 'boolean', 'date'] as const
 
@@ -31,6 +32,87 @@ export default function ConfigurePhase() {
     }
     return configs
   })
+
+  const [ddlSchema, setDdlSchema] = useState<Record<string, Record<string, ColumnSchema>>>(
+    () => state.uploadResult?.ddl_schema ?? {}
+  )
+  const [matchingTables, setMatchingTables] = useState<string[]>(() => {
+    const ddl = state.uploadResult?.ddl_schema ?? {}
+    return Object.keys(ddl).filter((t) => t in schema)
+  })
+  const [selectedDdlTables, setSelectedDdlTables] = useState<Set<string>>(new Set())
+  const [appliedDdlTables, setAppliedDdlTables] = useState<Set<string>>(new Set())
+  const [ddlError, setDdlError] = useState<string | null>(null)
+  const [ddlApplyResults, setDdlApplyResults] = useState<{ table: string; applied: boolean; errors: string[] }[]>([])
+
+  const onDdlDrop = useCallback(async (accepted: File[]) => {
+    if (accepted.length === 0 || !state.sessionId) return
+    setDdlError(null)
+    try {
+      const result = await uploadDDL(state.sessionId, accepted)
+      setDdlSchema(result.ddl_schema)
+      setMatchingTables(result.matching_tables)
+      setSelectedDdlTables(new Set())
+      setDdlApplyResults([])
+    } catch (e: unknown) {
+      setDdlError(e instanceof Error ? e.message : 'DDL upload failed')
+    }
+  }, [state.sessionId])
+
+  const { getRootProps: getDdlRootProps, getInputProps: getDdlInputProps, isDragActive: isDdlDragActive } = useDropzone({
+    onDrop: onDdlDrop,
+    accept: {
+      'application/sql': ['.sql'],
+      'text/plain': ['.sql'],
+    },
+  })
+
+  const toggleDdlTable = (table: string) => {
+    setSelectedDdlTables((prev) => {
+      const next = new Set(prev)
+      if (next.has(table)) next.delete(table)
+      else next.add(table)
+      return next
+    })
+  }
+
+  const handleApplyDdl = async () => {
+    if (!state.sessionId || selectedDdlTables.size === 0) return
+    setDdlError(null)
+    try {
+      const result = await applyDDL(state.sessionId, [...selectedDdlTables])
+      setDdlApplyResults(result.results)
+      const applied = new Set(appliedDdlTables)
+      for (const r of result.results) {
+        if (r.applied) {
+          applied.add(r.table)
+          const ddlCols = ddlSchema[r.table]
+          if (ddlCols) {
+            setTableConfigs((prev) => ({
+              ...prev,
+              [r.table]: prev[r.table].map((col) => {
+                const ddlCol = Object.entries(ddlCols).find(
+                  ([name]) => name.toLowerCase() === col.name.toLowerCase()
+                )
+                if (ddlCol) {
+                  return {
+                    ...col,
+                    data_type: ddlCol[1].inferred_type,
+                    nullable: ddlCol[1].nullable,
+                  }
+                }
+                return col
+              }),
+            }))
+          }
+        }
+      }
+      setAppliedDdlTables(applied)
+      setSelectedDdlTables(new Set())
+    } catch (e: unknown) {
+      setDdlError(e instanceof Error ? e.message : 'Apply DDL failed')
+    }
+  }
 
   const totalCols = Object.values(tableConfigs).reduce((a, cols) => a + cols.length, 0)
   const includedCols = Object.values(tableConfigs).reduce((a, cols) => a + cols.filter(c => c.include).length, 0)
@@ -70,14 +152,14 @@ export default function ConfigurePhase() {
           title="Configure Mappings"
           description="Set column mappings, types, and null value handling."
         />
-        <span className="text-[10px] retro text-muted-foreground hidden sm:inline">
-          {includedCols}/{totalCols} columns
+        <span className="text-xs text-muted-foreground hidden sm:inline">
+          <span className="text-accent font-mono">{includedCols}</span>/{totalCols} columns
         </span>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-xs">Null Values</CardTitle>
+          <CardTitle className="text-sm">Null Values</CardTitle>
         </CardHeader>
         <CardContent>
           <Input
@@ -86,29 +168,110 @@ export default function ConfigurePhase() {
             onChange={(e) => setNullValues(e.target.value)}
             placeholder="Comma-separated null values"
           />
-          <p className="text-[10px] text-muted-foreground mt-2 retro">
-            <span className="text-primary/40">// </span>
-            Comma-separated values to treat as null
+          <p className="text-xs text-muted-foreground mt-2">
+            Comma-separated values to treat as null.
           </p>
         </CardContent>
       </Card>
 
-      <div className="space-y-4 stagger">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">
+            DDL Schema
+            {appliedDdlTables.size > 0 && (
+              <span className="text-accent ml-2 font-mono text-xs">[{appliedDdlTables.size} applied]</span>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div
+            {...getDdlRootProps()}
+            className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-all
+              ${isDdlDragActive ? 'border-primary bg-primary/5' : 'border-border hover:bg-accent/5'}
+            `}
+          >
+            <input {...getDdlInputProps()} />
+            <p className="text-muted-foreground text-xs">
+              {isDdlDragActive ? 'Drop DDL files here...' : 'Drop .sql DDL files here, or click to browse'}
+            </p>
+          </div>
+
+          {ddlError && (
+            <p className="text-destructive text-xs">{ddlError}</p>
+          )}
+
+          {matchingTables.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                DDL definitions match these data tables. Select which to apply:
+              </p>
+              {matchingTables.map((table) => (
+                <div key={table} className="flex items-center gap-2 text-sm py-1">
+                  <Checkbox
+                    checked={selectedDdlTables.has(table) || appliedDdlTables.has(table)}
+                    disabled={appliedDdlTables.has(table)}
+                    onCheckedChange={() => toggleDdlTable(table)}
+                  />
+                  <span className="font-mono text-xs">{table}</span>
+                  {appliedDdlTables.has(table) && (
+                    <span className="text-xs text-primary/60 ml-1">[DDL applied]</span>
+                  )}
+                </div>
+              ))}
+              {selectedDdlTables.size > 0 && (
+                <Button onClick={handleApplyDdl} size="sm" className="mt-2">
+                  Apply DDL ({selectedDdlTables.size})
+                </Button>
+              )}
+            </div>
+          )}
+
+          {Object.keys(ddlSchema).length > 0 && matchingTables.length === 0 && (
+            <p className="text-xs text-muted-foreground">
+              DDL loaded but no table names match the uploaded data.
+            </p>
+          )}
+
+          {ddlApplyResults.length > 0 && (
+            <div className="space-y-1">
+              {ddlApplyResults.map((r) => (
+                <div key={r.table} className="text-xs">
+                  {r.applied ? (
+                    <span className="text-primary">{`> ${r.table}: DDL schema applied`}</span>
+                  ) : (
+                    <div>
+                      <span className="text-destructive">{`! ${r.table}: failed`}</span>
+                      {r.errors.map((err, i) => (
+                        <p key={i} className="text-destructive/70 ml-4">{err}</p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <div className="space-y-4">
         {Object.entries(tableConfigs).map(([table, columns]) => {
           const included = columns.filter(c => c.include).length
           return (
             <Card key={table}>
               <CardHeader>
-                <CardTitle className="text-xs">
-                  {table}
-                  <span className="text-primary/40 ml-2">[{included}/{columns.length} cols]</span>
+                <CardTitle className="text-sm">
+                  <span className="text-primary">{table}</span>
+                  <span className="text-accent ml-2 font-mono text-xs">[{included}/{columns.length}]</span>
+                  {appliedDdlTables.has(table) && (
+                    <span className="text-xs text-primary/60 ml-2">[DDL]</span>
+                  )}
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-xs retro">
+                  <table className="w-full text-sm">
                     <thead>
-                      <tr className="text-[10px] text-muted-foreground uppercase tracking-wider border-b-4 border-dashed border-foreground/20">
+                      <tr className="text-xs text-muted-foreground uppercase tracking-wider border-b border-border">
                         <th className="text-left py-2 px-2">Inc</th>
                         <th className="text-left py-2 px-2">Source</th>
                         <th className="text-left py-2 px-2">Target</th>
@@ -117,15 +280,14 @@ export default function ConfigurePhase() {
                     </thead>
                     <tbody>
                       {columns.map((col, i) => (
-                        <tr key={col.name} className={`border-b border-dashed border-foreground/10 hover:bg-primary/5 transition-colors ${!col.include ? 'opacity-40' : ''}`}>
+                        <tr key={col.name} className={`border-b border-border/40 last:border-0 hover:bg-accent/5 transition-colors ${!col.include ? 'opacity-40' : ''}`}>
                           <td className="py-2 px-2">
                             <Checkbox
                               checked={col.include}
                               onCheckedChange={(checked) => updateColumn(table, i, { include: !!checked })}
                             />
                           </td>
-                          <td className="py-2 px-2 text-muted-foreground">
-                            <span className="text-primary/20 mr-1">{'>'}</span>
+                          <td className="py-2 px-2 text-muted-foreground font-mono text-xs">
                             {col.name}
                           </td>
                           <td className="py-2 px-2">
@@ -133,23 +295,30 @@ export default function ConfigurePhase() {
                               type="text"
                               value={col.target_name ?? col.name}
                               onChange={(e) => updateColumn(table, i, { target_name: e.target.value })}
-                              className="text-[10px]"
+                              className="h-8 text-xs"
                             />
                           </td>
                           <td className="py-2 px-2">
-                            <Select
-                              value={col.data_type}
-                              onValueChange={(val) => updateColumn(table, i, { data_type: val })}
-                            >
-                              <SelectTrigger className="w-[120px]">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {DATA_TYPES.map((t) => (
-                                  <SelectItem key={t} value={t}>{t}</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            <div className="flex items-center gap-2">
+                              <Select
+                                value={col.data_type}
+                                onValueChange={(val) => updateColumn(table, i, { data_type: val })}
+                              >
+                                <SelectTrigger className="w-[120px] h-8 text-xs">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {DATA_TYPES.map((t) => (
+                                    <SelectItem key={t} value={t}>{t}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              {appliedDdlTables.has(table) && ddlSchema[table]?.[col.name]?.original_type && (
+                                <span className="text-[10px] text-muted-foreground">
+                                  ({ddlSchema[table][col.name].original_type})
+                                </span>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -169,7 +338,7 @@ export default function ConfigurePhase() {
       </div>
 
       {state.error && (
-        <p className="text-destructive text-sm retro pixel-in">! {state.error}</p>
+        <p className="text-destructive text-sm">{state.error}</p>
       )}
     </div>
   )

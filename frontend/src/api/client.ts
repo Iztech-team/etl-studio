@@ -8,6 +8,8 @@ import type {
   LoadRequest,
   LoadResponse,
   StatsResponse,
+  DDLUploadResponse,
+  ApplyDDLResponse,
 } from '../types/api'
 
 const api = axios.create({ baseURL: '/api' })
@@ -54,4 +56,16 @@ export async function fetchStats(sessionId: string): Promise<StatsResponse> {
 
 export function downloadUrl(sessionId: string, filename: string): string {
   return `/api/download/${sessionId}/${encodeURIComponent(filename)}`
+}
+
+export async function uploadDDL(sessionId: string, files: File[]): Promise<DDLUploadResponse> {
+  const form = new FormData()
+  for (const f of files) form.append('files', f)
+  const { data } = await api.post<DDLUploadResponse>(`/upload-ddl/${sessionId}`, form)
+  return data
+}
+
+export async function applyDDL(sessionId: string, tables: string[]): Promise<ApplyDDLResponse> {
+  const { data } = await api.post<ApplyDDLResponse>(`/apply-ddl/${sessionId}`, { tables })
+  return data
 }

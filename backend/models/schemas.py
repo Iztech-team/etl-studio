@@ -83,3 +83,30 @@ class StatsResponse(BaseModel):
     tables: Dict[str, Any]
     timing: Dict[str, Any]
     quality_score: float
+
+
+class DDLColumnSchema(BaseModel):
+    inferred_type: str
+    original_type: str
+    nullable: bool
+
+
+class DDLUploadResponse(BaseModel):
+    ok: bool
+    ddl_schema: Dict[str, Dict[str, DDLColumnSchema]]
+    matching_tables: List[str]
+
+
+class ApplyDDLRequest(BaseModel):
+    tables: List[str]
+
+
+class ApplyDDLTableResult(BaseModel):
+    table: str
+    applied: bool
+    errors: List[str] = []
+
+
+class ApplyDDLResponse(BaseModel):
+    ok: bool
+    results: List[ApplyDDLTableResult]

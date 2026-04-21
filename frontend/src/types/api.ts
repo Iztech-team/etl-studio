@@ -6,6 +6,7 @@ export interface UploadedFile {
 
 export interface ColumnSchema {
   inferred_type: string
+  original_type?: string
   nullable: boolean
 }
 
@@ -15,6 +16,7 @@ export interface UploadResponse {
   preview: Record<string, Record<string, unknown>[]>
   inferred_schema: Record<string, Record<string, ColumnSchema>>
   stats: Record<string, { row_count: number }>
+  ddl_schema?: Record<string, Record<string, ColumnSchema>>
 }
 
 export interface ColumnConfig {
@@ -103,4 +105,21 @@ export interface StatsResponse {
   }>
   timing: Record<string, unknown>
   quality_score: number
+}
+
+export interface DDLUploadResponse {
+  ok: boolean
+  ddl_schema: Record<string, Record<string, ColumnSchema>>
+  matching_tables: string[]
+}
+
+export interface ApplyDDLTableResult {
+  table: string
+  applied: boolean
+  errors: string[]
+}
+
+export interface ApplyDDLResponse {
+  ok: boolean
+  results: ApplyDDLTableResult[]
 }
