@@ -1,9 +1,10 @@
 import { useState } from 'react'
+import { Hash, Rows, Languages, Type, ArrowRightLeft, CircleSlash } from 'lucide-react'
 import { usePipeline } from '../store/pipeline'
 import { transform } from '../api/client'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/8bit/card'
-import { Button } from '@/components/ui/8bit/button'
-import { Badge } from '@/components/ui/8bit/badge'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { PhaseHeader, StatCard, Spinner, DataTable, LiveTerminal } from './ui'
 
 export default function TransformPhase() {
@@ -59,28 +60,28 @@ export default function TransformPhase() {
         </div>
       )}
 
-      {state.error && <p className="text-destructive text-sm retro pixel-in">! {state.error}</p>}
+      {state.error && <p className="text-destructive text-sm">{state.error}</p>}
 
       {result && !loading && (
-        <div className="space-y-4 stagger">
+        <div className="space-y-4">
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            <StatCard label="Tables" value={result.tables_transformed} icon="[ # ]" />
-            <StatCard label="Total Rows" value={result.total_rows} icon="[ = ]" />
-            <StatCard label="Encoding Fixes" value={result.encoding_conversions} icon="[ A ]" />
-            <StatCard label="Type Conversions" value={result.type_conversions} icon="[1.0]" />
-            <StatCard label="Ref Mappings" value={result.reference_mappings} icon="[ → ]" />
-            <StatCard label="Null Fills" value={result.null_normalizations} icon="[ ø ]" />
+            <StatCard label="Tables" value={result.tables_transformed} icon={<Hash className="h-5 w-5" />} />
+            <StatCard label="Total Rows" value={result.total_rows} icon={<Rows className="h-5 w-5" />} />
+            <StatCard label="Encoding Fixes" value={result.encoding_conversions} icon={<Languages className="h-5 w-5" />} />
+            <StatCard label="Type Conversions" value={result.type_conversions} icon={<Type className="h-5 w-5" />} />
+            <StatCard label="Ref Mappings" value={result.reference_mappings} icon={<ArrowRightLeft className="h-5 w-5" />} />
+            <StatCard label="Null Fills" value={result.null_normalizations} icon={<CircleSlash className="h-5 w-5" />} />
           </div>
 
           {result.warnings.length > 0 && (
             <Card>
               <CardHeader>
-                <CardTitle className="text-xs">Warnings</CardTitle>
+                <CardTitle className="text-sm">Warnings</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-1">
                   {result.warnings.map((w, i) => (
-                    <div key={i} className="flex items-center gap-2 text-xs retro">
+                    <div key={i} className="flex items-center gap-2 text-xs">
                       <Badge variant="secondary">warn</Badge>
                       <span className="text-foreground">{w}</span>
                     </div>
@@ -95,9 +96,9 @@ export default function TransformPhase() {
             return (
               <Card key={table}>
                 <CardHeader>
-                  <CardTitle className="text-xs">
-                    Preview: {table}
-                    <span className="text-primary/40 ml-2">[{rows.length} rows shown]</span>
+                  <CardTitle className="text-sm">
+                    Preview: <span className="text-primary">{table}</span>
+                    <span className="text-accent ml-2 font-mono text-xs">[{rows.length} shown]</span>
                   </CardTitle>
                 </CardHeader>
                 <CardContent>

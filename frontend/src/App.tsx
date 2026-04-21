@@ -1,7 +1,7 @@
 import { PipelineProvider, usePipeline } from "./store/pipeline";
-import { ProgressSteps, FloatingPixels } from "./components/ui";
-import BackgroundBoxes from "./components/ui/BackgroundBoxes";
-import { Separator } from "@/components/ui/8bit/separator";
+import { ProgressSteps } from "./components/ui";
+import LiquidEther from "./components/ui/LiquidEther";
+import { Separator } from "@/components/ui/separator";
 import UploadPhase from "./components/UploadPhase";
 import ConfigurePhase from "./components/ConfigurePhase";
 import ValidatePhase from "./components/ValidatePhase";
@@ -25,38 +25,41 @@ function PipelineApp() {
 
 	return (
 		<div className="min-h-screen flex flex-col relative">
-			{/* Background: canvas grid + vignette */}
-			<BackgroundBoxes />
-
-			{/* Decorative overlays — all pointer-events-none */}
-			<div className="crt-overlay" />
-			<div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
-				<div className="background-arcade-lines" />
-				<div className="background-arcade-orb background-arcade-orb-1" />
-				<div className="background-arcade-orb background-arcade-orb-2" />
-				<div className="background-arcade-orb background-arcade-orb-3" />
+			<div className="pointer-events-none fixed inset-0 z-[1]">
+				<LiquidEther
+					colors={["#1E3A8A", "#3B82F6", "#60A5FA"]}
+					mouseForce={50}
+					cursorSize={150}
+					resolution={0.5}
+					isBounce={true}
+					autoDemo={true}
+					autoSpeed={1.4}
+					autoIntensity={5.0}
+					takeoverDuration={0.2}
+					autoResumeDelay={1500}
+					autoRampDuration={0.4}
+				/>
 			</div>
-			<FloatingPixels />
+			<div className="pointer-events-none fixed inset-0 z-[2] bg-background/50" />
 
-			{/* Content — above all background layers */}
-			<header className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm">
+			<header className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm border-b border-border">
 				<div className="max-w-5xl mx-auto px-6 py-4">
 					<div className="flex items-center justify-between mb-4">
 						<div className="flex items-center gap-3">
-							<span className="text-primary retro text-xs opacity-40 hidden sm:inline">
-								{">"}_
+							<span className="inline-flex items-center justify-center w-8 h-8 rounded-md bg-primary text-primary-foreground text-sm font-bold">
+								E
 							</span>
-							<h1 className="text-lg retro text-primary tracking-tight glow">
+							<h1 className="text-lg font-bold text-foreground tracking-tight">
 								ETL Studio
 							</h1>
-							<span className="text-[9px] retro text-muted-foreground/40 hidden sm:inline">
+							<span className="text-xs text-muted-foreground hidden sm:inline">
 								v1.0
 							</span>
 						</div>
 						{state.sessionId && (
-							<span className="text-[10px] retro text-muted-foreground">
+							<span className="text-xs text-muted-foreground">
 								session:{" "}
-								<span className="text-primary/60">
+								<span className="text-accent font-mono">
 									{state.sessionId.slice(0, 8)}
 								</span>
 							</span>
@@ -67,7 +70,6 @@ function PipelineApp() {
 						onNavigate={(phase) => dispatch({ type: "GO_TO_PHASE", phase })}
 					/>
 				</div>
-				<Separator />
 			</header>
 
 			<main className="flex-1 max-w-5xl mx-auto w-full px-6 py-8 relative z-[5]">
@@ -76,8 +78,8 @@ function PipelineApp() {
 
 			<Separator />
 			<footer className="py-3 text-center relative z-[5]">
-				<span className="text-[10px] text-muted-foreground/40 retro">
-					{"// "}ETL Studio{" // "}Data Pipeline Toolkit{" //"}
+				<span className="text-xs text-muted-foreground">
+					ETL Studio · Data Pipeline Toolkit
 				</span>
 			</footer>
 		</div>

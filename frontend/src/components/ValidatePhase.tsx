@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { usePipeline } from '../store/pipeline'
 import { validate } from '../api/client'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/8bit/card'
-import { Button } from '@/components/ui/8bit/button'
-import { Badge } from '@/components/ui/8bit/badge'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { PhaseHeader, Spinner, LiveTerminal, MiniBar } from './ui'
 
 export default function ValidatePhase() {
@@ -60,10 +60,10 @@ export default function ValidatePhase() {
         </div>
       )}
 
-      {state.error && <p className="text-destructive text-sm retro pixel-in">! {state.error}</p>}
+      {state.error && <p className="text-destructive text-sm">{state.error}</p>}
 
       {result && !loading && (
-        <div className="space-y-4 stagger">
+        <div className="space-y-4">
           <Card>
             <CardContent className="pt-4">
               <div className="flex items-center justify-between">
@@ -71,12 +71,12 @@ export default function ValidatePhase() {
                   <Badge variant={result.passed ? 'default' : 'destructive'}>
                     {result.passed ? 'PASSED' : 'FAILED'}
                   </Badge>
-                  <span className="text-xs text-muted-foreground retro">
+                  <span className="text-xs text-muted-foreground">
                     {result.issues.length} issue{result.issues.length !== 1 ? 's' : ''} found
                   </span>
                 </div>
-                <span className="text-[10px] retro text-muted-foreground">
-                  {totalRecords.toLocaleString()} total records
+                <span className="text-xs text-muted-foreground">
+                  <span className="text-accent font-mono">{totalRecords.toLocaleString()}</span> total records
                 </span>
               </div>
             </CardContent>
@@ -86,8 +86,8 @@ export default function ValidatePhase() {
             {Object.entries(result.record_counts).map(([table, count]) => (
               <Card key={table}>
                 <CardContent className="pt-4">
-                  <div className="text-lg retro text-primary font-bold glow">{count.toLocaleString()}</div>
-                  <div className="text-[10px] text-muted-foreground retro mt-1">
+                  <div className="text-2xl font-bold text-primary">{count.toLocaleString()}</div>
+                  <div className="text-xs text-muted-foreground mt-1 flex items-center">
                     {table}
                     <MiniBar value={count} max={totalRecords} />
                   </div>
@@ -104,21 +104,21 @@ export default function ValidatePhase() {
           {result.issues.length > 0 && (
             <Card>
               <CardHeader>
-                <CardTitle className="text-xs">
+                <CardTitle className="text-sm">
                   Issues
-                  <span className="text-destructive/60 ml-2">[{result.issues.length}]</span>
+                  <span className="text-destructive ml-2 font-mono text-xs">[{result.issues.length}]</span>
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">
                   {result.issues.map((issue, i) => (
-                    <div key={i} className="flex items-start gap-2 py-1.5 border-b border-dashed border-foreground/10 last:border-0 hover:bg-primary/5 px-1 transition-colors">
+                    <div key={i} className="flex items-start gap-2 py-1.5 border-b border-border/40 last:border-0 hover:bg-accent/5 px-2 rounded transition-colors">
                       <Badge variant={issue.level === 'error' ? 'destructive' : 'secondary'}>
                         {issue.level}
                       </Badge>
-                      <div className="text-xs text-foreground retro">
-                        <span className="text-muted-foreground">{issue.table}{issue.column ? `.${issue.column}` : ''}</span>
-                        <span className="text-primary/30 mx-1">{'//'}</span>
+                      <div className="text-xs text-foreground">
+                        <span className="text-muted-foreground font-mono">{issue.table}{issue.column ? `.${issue.column}` : ''}</span>
+                        <span className="text-accent mx-2">—</span>
                         {issue.message}
                       </div>
                     </div>
@@ -131,14 +131,14 @@ export default function ValidatePhase() {
           {result.truncation_risks.length > 0 && (
             <Card>
               <CardHeader>
-                <CardTitle className="text-xs">Truncation Risks</CardTitle>
+                <CardTitle className="text-sm">Truncation Risks</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-1">
                   {result.truncation_risks.map((r, i) => (
-                    <div key={i} className="text-xs retro text-foreground py-1 hover:bg-primary/5 px-1 transition-colors">
-                      <span className="text-destructive">{r.table}.{r.column}</span>
-                      <span className="text-primary/30 mx-1">{'//'}</span>
+                    <div key={i} className="text-xs text-foreground py-1 hover:bg-accent/5 px-2 rounded transition-colors">
+                      <span className="text-destructive font-mono">{r.table}.{r.column}</span>
+                      <span className="text-accent mx-2">—</span>
                       {r.count} value(s), max {r.max_length} chars
                     </div>
                   ))}

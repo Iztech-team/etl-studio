@@ -1,10 +1,11 @@
 import { useState } from 'react'
+import { Download } from 'lucide-react'
 import { usePipeline } from '../store/pipeline'
 import { load, downloadUrl } from '../api/client'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/8bit/card'
-import { Button } from '@/components/ui/8bit/button'
-import { Badge } from '@/components/ui/8bit/badge'
-import { Checkbox } from '@/components/ui/8bit/checkbox'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
 import { PhaseHeader, Spinner, LiveTerminal } from './ui'
 import type { LoadRequest } from '../types/api'
 
@@ -48,12 +49,12 @@ export default function LoadPhase() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-xs">Output Settings</CardTitle>
+          <CardTitle className="text-sm">Output Settings</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
             <div>
-              <label className="text-[10px] text-muted-foreground retro uppercase tracking-wider block mb-2">Format</label>
+              <label className="text-xs text-muted-foreground uppercase tracking-wider block mb-2">Format</label>
               <div className="flex gap-3">
                 {(['json', 'sql'] as const).map((f) => (
                   <Button
@@ -67,7 +68,7 @@ export default function LoadPhase() {
               </div>
             </div>
 
-            <label className="flex items-center gap-3 text-xs retro text-foreground cursor-pointer">
+            <label className="flex items-center gap-3 text-sm text-foreground cursor-pointer">
               <Checkbox
                 checked={fkOrder}
                 onCheckedChange={(checked) => setFkOrder(!!checked)}
@@ -97,10 +98,10 @@ export default function LoadPhase() {
         </div>
       )}
 
-      {state.error && <p className="text-destructive text-sm retro pixel-in">! {state.error}</p>}
+      {state.error && <p className="text-destructive text-sm">{state.error}</p>}
 
       {result && !loading && (
-        <div className="space-y-4 stagger">
+        <div className="space-y-4">
           <Card>
             <CardContent className="pt-4">
               <div className="flex items-center gap-3 mb-4">
@@ -108,7 +109,7 @@ export default function LoadPhase() {
                   {result.ok ? 'SUCCESS' : 'ERRORS'}
                 </Badge>
                 {result.transaction_wrapped && <Badge variant="secondary">TX Wrapped</Badge>}
-                <span className="text-[10px] retro text-muted-foreground ml-auto">
+                <span className="text-xs text-muted-foreground ml-auto">
                   {result.output_files.length} file{result.output_files.length !== 1 ? 's' : ''} generated
                 </span>
               </div>
@@ -116,24 +117,23 @@ export default function LoadPhase() {
               {result.errors.length > 0 && (
                 <div className="mb-4 space-y-1">
                   {result.errors.map((err, i) => (
-                    <p key={i} className="text-destructive text-xs retro">! {err}</p>
+                    <p key={i} className="text-destructive text-xs">{err}</p>
                   ))}
                 </div>
               )}
 
               <div className="space-y-2">
                 {result.output_files.map((fname) => (
-                  <div key={fname} className="flex items-center justify-between py-2 border-b border-dashed border-foreground/10 last:border-0 hover:bg-primary/5 px-1 transition-colors">
-                    <span className="text-xs retro text-foreground">
-                      <span className="text-primary/40 mr-2">{'>'}</span>
+                  <div key={fname} className="flex items-center justify-between py-2 border-b border-border/40 last:border-0 hover:bg-accent/5 px-2 rounded transition-colors">
+                    <span className="text-sm text-foreground font-mono">
                       {fname}
                     </span>
                     <a
                       href={downloadUrl(state.sessionId!, fname)}
                       download
-                      className="text-primary text-xs retro hover:underline glow"
+                      className="inline-flex items-center gap-1 text-primary text-xs font-semibold hover:underline"
                     >
-                      [DOWNLOAD]
+                      <Download className="h-3 w-3" /> Download
                     </a>
                   </div>
                 ))}
@@ -144,14 +144,14 @@ export default function LoadPhase() {
           {Object.keys(result.rows_written).length > 0 && (
             <Card>
               <CardHeader>
-                <CardTitle className="text-xs">Rows Written</CardTitle>
+                <CardTitle className="text-sm">Rows Written</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                   {Object.entries(result.rows_written).map(([table, count]) => (
-                    <div key={table} className="text-xs retro py-1">
-                      <span className="text-muted-foreground">{table}:</span>{' '}
-                      <span className="text-primary glow">{count.toLocaleString()}</span>
+                    <div key={table} className="text-xs py-1">
+                      <span className="text-muted-foreground font-mono">{table}:</span>{' '}
+                      <span className="text-primary font-semibold">{count.toLocaleString()}</span>
                     </div>
                   ))}
                 </div>
