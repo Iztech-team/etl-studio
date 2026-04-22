@@ -2,6 +2,22 @@ from pydantic import BaseModel
 from typing import Optional
 
 
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    display_name: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AuthResponse(BaseModel):
+    username: str
+    display_name: str
+
+
 class CreateProjectRequest(BaseModel):
     name: str
     username: str

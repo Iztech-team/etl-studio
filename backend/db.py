@@ -1,3 +1,5 @@
+import hashlib
+import secrets
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -17,6 +19,15 @@ def _get_conn() -> sqlite3.Connection:
 
 def init_db() -> None:
     with _get_conn() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                username      TEXT PRIMARY KEY,
+                password_hash TEXT NOT NULL,
+                salt          TEXT NOT NULL,
+                display_name  TEXT NOT NULL,
+                created_at    TEXT NOT NULL
+            )
+        """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS projects (
                 id          TEXT PRIMARY KEY,
@@ -104,3 +115,37 @@ def check_username_exists(username: str) -> bool:
             "SELECT 1 FROM projects WHERE username = ? LIMIT 1", (username,)
         ).fetchone()
         return row is not None
+
+
+def _hash_password(password: str, salt: str) -> str:
+    return hashlib.pbkdf2_hmac(
+        "sha256", password.encode(), salt.encode(), iterations=100_000
+    ).hex()
+
+
+def register_user(username: str, password: str, display_name: str) -> dict:
+    salt = secrets.token_hex(16)
+    password_hash = _hash_password(password, salt)
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        with _get_conn() as conn:
+            conn.execute(
+                "INSERT INTO users (username, password_hash, salt, display_name, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (username, password_hash, salt, display_name, now),
+            )
+            return {"username": username, "display_name": display_name}
+    except sqlite3.IntegrityError:
+        raise ValueError(f"Username '{username}' is already taken")
+
+
+def login_user(username: str, password: str) -> dict:
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE username = ?", (username,)
+        ).fetchone()
+    if not row:
+        raise ValueError("Invalid username or password")
+    if _hash_password(password, row["salt"]) != row["password_hash"]:
+        raise ValueError("Invalid username or password")
+    return {"username": row["username"], "display_name": row["display_name"]}

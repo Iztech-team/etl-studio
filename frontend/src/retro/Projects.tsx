@@ -1,7 +1,46 @@
-import { RL_PROJECTS, RL_STAGES, type Project } from "./data";
-import { IArrow, ICheck, IDisk, IDot, IPlus, IX } from "./icons";
+import { useEffect, useState } from "react";
+import { RL_STAGES, type Project } from "./data";
+import { useAuth } from "./Auth";
+import { IArrow, IDisk, IPlus, IX } from "./icons";
 import { SpriteMonitor, Sparkles } from "./Sprites";
+import { RlPromptModal } from "./PromptModal";
 import { RlTopbar } from "./Topbar";
+
+const PHASE_TO_STAGE: Record<string, number> = {
+	upload: 1,
+	"pre-extract": 1,
+	edit: 2,
+	configure: 3,
+	transform: 4,
+	map: 5,
+	load: 6,
+	stats: 6,
+};
+
+function phaseStageIndex(phase: string): number {
+	return PHASE_TO_STAGE[phase] ?? 0;
+}
+
+function phaseLabel(phase: string): string {
+	const idx = phaseStageIndex(phase);
+	return RL_STAGES[Math.max(0, idx - 1)]?.label ?? phase.toUpperCase();
+}
+
+function timeAgo(iso: string): string {
+	try {
+		const d = new Date(iso);
+		const diff = Date.now() - d.getTime();
+		const mins = Math.floor(diff / 60000);
+		if (mins < 1) return "JUST NOW";
+		if (mins < 60) return `${mins}M AGO`;
+		const hrs = Math.floor(mins / 60);
+		if (hrs < 24) return `${hrs}H AGO`;
+		const days = Math.floor(hrs / 24);
+		return `${days}D AGO`;
+	} catch {
+		return iso;
+	}
+}
 
 export function RlProjects({
 	onOpen,
@@ -10,16 +49,95 @@ export function RlProjects({
 	onOpen: (p: Project) => void;
 	onNew: () => void;
 }) {
-	const running = RL_PROJECTS.filter((p) => p.status === "running").length;
-	const done = RL_PROJECTS.filter((p) => p.status === "done").length;
-	const errors = RL_PROJECTS.filter((p) => p.status === "error").length;
-	const isEmpty = RL_PROJECTS.length === 0;
+	const { user } = useAuth();
+	const [projects, setProjects] = useState<Project[]>([]);
+	const [loading, setLoading] = useState(true);
+	const [error, setError] = useState<string | null>(null);
+	const [dashStats, setDashStats] = useState<{
+		total_rows_migrated: number;
+		avg_quality_score: number;
+	} | null>(null);
+
+	const isGuest = user?.username === "__guest__";
+
+	useEffect(() => {
+		if (!user || isGuest) {
+			setProjects([]);
+			setLoading(false);
+			return;
+		}
+		setLoading(true);
+		fetch(`/api/projects?username=${encodeURIComponent(user.username)}`)
+			.then((r) => r.json())
+			.then((data) => {
+				setProjects(data.projects ?? []);
+				setLoading(false);
+			})
+			.catch(() => {
+				setError("FAILED TO LOAD PROJECTS");
+				setLoading(false);
+			});
+		fetch(`/api/dashboard-stats?username=${encodeURIComponent(user.username)}`)
+			.then((r) => r.json())
+			.then((data) => setDashStats(data))
+			.catch(() => {});
+	}, [user, isGuest]);
+
+	const [renameTarget, setRenameTarget] = useState<string | null>(null);
+
+	const handleRename = (e: React.MouseEvent, projectId: string) => {
+		e.stopPropagation();
+		setRenameTarget(projectId);
+	};
+
+	const submitRename = async (newName: string) => {
+		if (!renameTarget) return;
+		const projectId = renameTarget;
+		setRenameTarget(null);
+		try {
+			const res = await fetch(`/api/projects/${projectId}`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ name: newName }),
+			});
+			if (res.ok) {
+				const updated = await res.json();
+				setProjects((prev) =>
+					prev.map((p) => (p.id === projectId ? { ...p, name: updated.name } : p)),
+				);
+			}
+		} catch {
+			// ignore
+		}
+	};
+
+	const handleDelete = async (e: React.MouseEvent, projectId: string) => {
+		e.stopPropagation();
+		if (!confirm("Delete this project? This cannot be undone.")) return;
+		try {
+			const res = await fetch(`/api/projects/${projectId}`, {
+				method: "DELETE",
+			});
+			if (res.ok) {
+				setProjects((prev) => prev.filter((p) => p.id !== projectId));
+			}
+		} catch {
+			// ignore
+		}
+	};
+
+	const isEmpty = projects.length === 0;
+	const doneCount = projects.filter((p) => p.phase === "stats").length;
 
 	return (
 		<div className="rl-page">
 			<RlTopbar
 				title="PROJECTS"
-				sub="ONE LEGACY DATABASE PER PROJECT · ONE PIPELINE EACH"
+				sub={
+					isGuest
+						? "GUEST SESSION · NOTHING IS SAVED"
+						: "ONE LEGACY DATABASE PER PROJECT · ONE PIPELINE EACH"
+				}
 				right={
 					<button className="btn btn-primary" onClick={onNew}>
 						<IPlus size={10} /> NEW PROJECT
@@ -29,35 +147,36 @@ export function RlProjects({
 
 			<div className="rl-stats">
 				<div className="panel rl-stat">
-					<div className="rl-stat-label pixel">RUNNING</div>
+					<div className="rl-stat-label pixel">PROJECTS</div>
 					<div
 						className="rl-stat-value pixel"
 						style={{ color: "var(--lg-amber)" }}
 					>
-						{String(running).padStart(2, "0")}
+						{String(projects.length).padStart(2, "0")}
 					</div>
 					<div className="rl-stat-sub">
-						{done} DONE · {RL_PROJECTS.length} TOTAL
+						{doneCount} DONE · {projects.length} TOTAL
 					</div>
 				</div>
 				<div className="panel rl-stat">
 					<div className="rl-stat-label pixel">ROWS MIGRATED</div>
-					<div className="rl-stat-value pixel" style={{ color: "var(--lg-ink)" }}>
-						0
+					<div
+						className="rl-stat-value pixel"
+						style={{ color: "var(--lg-ink)" }}
+					>
+						{(dashStats?.total_rows_migrated ?? 0).toLocaleString()}
 					</div>
 					<div className="rl-stat-sub">ACROSS ALL PROJECTS</div>
 				</div>
 				<div className="panel rl-stat">
-					<div className="rl-stat-label pixel">ERRORS</div>
+					<div className="rl-stat-label pixel">QUALITY</div>
 					<div
 						className="rl-stat-value pixel"
-						style={{ color: errors ? "var(--lg-coral)" : "var(--lg-ink-mute)" }}
+						style={{ color: (dashStats?.avg_quality_score ?? 0) >= 80 ? "var(--lg-ink)" : "var(--lg-coral)" }}
 					>
-						{String(errors).padStart(2, "0")}
+						{dashStats?.avg_quality_score ?? "—"}
 					</div>
-					<div className="rl-stat-sub">
-						{errors ? "NEEDS ATTENTION" : "ALL CLEAR"}
-					</div>
+					<div className="rl-stat-sub">AVG SCORE</div>
 				</div>
 				<div className="panel rl-stat rl-stat-cta" onClick={onNew}>
 					<div className="rl-stat-label pixel">NEW</div>
@@ -70,7 +189,7 @@ export function RlProjects({
 							marginTop: 4,
 						}}
 					>
-						UPLOAD .IB
+						UPLOAD FILE
 						<br />
 						TO CREATE
 					</div>
@@ -80,34 +199,50 @@ export function RlProjects({
 				</div>
 			</div>
 
-			<div className="rl-section-head">
-				<div
-					className="pixel"
-					style={{
-						fontSize: 10,
-						color: "var(--lg-ink-dim)",
-						letterSpacing: "0.1em",
-					}}
-				>
-					* YOUR PROJECTS *
+			{!isGuest && (
+				<div className="rl-section-head">
+					<div
+						className="pixel"
+						style={{
+							fontSize: 10,
+							color: "var(--lg-ink-dim)",
+							letterSpacing: "0.1em",
+						}}
+					>
+						* YOUR PROJECTS *
+					</div>
 				</div>
-				<div className="rl-filters">
-					<select className="select" style={{ width: 160 }} disabled={isEmpty}>
-						<option>ALL STATUSES</option>
-						<option>RUNNING</option>
-						<option>DONE</option>
-						<option>ERROR</option>
-						<option>DRAFT</option>
-					</select>
-					<select className="select" style={{ width: 140 }} disabled={isEmpty}>
-						<option>RECENT</option>
-						<option>NAME A–Z</option>
-						<option>SIZE</option>
-					</select>
-				</div>
-			</div>
+			)}
 
-			{isEmpty ? (
+			{loading ? (
+				<div
+					className="panel"
+					style={{ padding: 40, textAlign: "center" }}
+				>
+					<div
+						className="pixel"
+						style={{
+							fontSize: 11,
+							color: "var(--lg-amber)",
+							letterSpacing: "0.1em",
+						}}
+					>
+						LOADING…
+					</div>
+				</div>
+			) : error ? (
+				<div
+					className="panel"
+					style={{ padding: 40, textAlign: "center" }}
+				>
+					<div
+						className="mono"
+						style={{ fontSize: 11, color: "var(--lg-coral)" }}
+					>
+						{error}
+					</div>
+				</div>
+			) : isEmpty && !isGuest ? (
 				<div className="panel">
 					<div className="rl-empty">
 						<Sparkles />
@@ -116,20 +251,37 @@ export function RlProjects({
 						</div>
 						<div className="rl-empty-title">NO PROJECTS YET</div>
 						<div className="rl-empty-sub">
-							Your legacy data awakens when you upload an .IB file. Each project
-							runs one pipeline from extract to export.
+							Your legacy data awakens when you upload a database file. Each
+							project runs one pipeline from extract to export.
 						</div>
 						<button className="btn btn-primary" onClick={onNew}>
 							<IPlus size={10} /> CREATE FIRST PROJECT
 						</button>
 					</div>
 				</div>
-			) : (
+			) : !isGuest ? (
 				<div className="rl-proj-grid">
-					{RL_PROJECTS.map((p) => (
-						<RlProjectCard key={p.id} p={p} onOpen={onOpen} />
+					{projects.map((p) => (
+						<RlProjectCard
+							key={p.id}
+							p={p}
+							onOpen={onOpen}
+							onDelete={handleDelete}
+							onRename={handleRename}
+						/>
 					))}
 				</div>
+			) : null}
+
+			{renameTarget && (
+				<RlPromptModal
+					title="RENAME PROJECT"
+					label="NEW PROJECT NAME"
+					placeholder="new-name"
+					confirmText="RENAME"
+					onConfirm={submitRename}
+					onCancel={() => setRenameTarget(null)}
+				/>
 			)}
 		</div>
 	);
@@ -138,28 +290,16 @@ export function RlProjects({
 function RlProjectCard({
 	p,
 	onOpen,
+	onDelete,
+	onRename,
 }: {
 	p: Project;
 	onOpen: (p: Project) => void;
+	onDelete: (e: React.MouseEvent, id: string) => void;
+	onRename: (e: React.MouseEvent, id: string) => void;
 }) {
-	const status = {
-		running: (
-			<span className="badge badge-ok">
-				<IDot size={6} /> RUNNING
-			</span>
-		),
-		done: (
-			<span className="badge badge-solid">
-				<ICheck size={8} /> DONE
-			</span>
-		),
-		error: (
-			<span className="badge badge-err">
-				<IX size={8} /> ERROR
-			</span>
-		),
-		draft: <span className="badge badge-mute">DRAFT</span>,
-	}[p.status];
+	const stageIdx = phaseStageIndex(p.phase);
+	const progress = Math.round((stageIdx / 6) * 100);
 
 	return (
 		<div className="rl-proj corners" onClick={() => onOpen(p)}>
@@ -184,20 +324,10 @@ function RlProjectCard({
 							color: "var(--lg-ink)",
 						}}
 					>
-						{p.name}
-					</div>
-					<div
-						className="mono"
-						style={{
-							fontSize: 11,
-							color: "var(--lg-ink-mute)",
-							marginTop: 4,
-						}}
-					>
-						{p.desc}
+						{p.name.toUpperCase()}
 					</div>
 				</div>
-				{status}
+				<span className="badge badge-mute">{phaseLabel(p.phase)}</span>
 			</div>
 
 			<div className="rl-proj-path">
@@ -210,7 +340,7 @@ function RlProjectCard({
 						whiteSpace: "nowrap",
 					}}
 				>
-					{p.source}
+					{p.phase.toUpperCase()}
 				</span>
 				<IArrow size={10} />
 				<span
@@ -221,25 +351,9 @@ function RlProjectCard({
 						whiteSpace: "nowrap",
 					}}
 				>
-					{p.target}
+					STEP {stageIdx}/6
 				</span>
 			</div>
-
-			{p.error && (
-				<div
-					style={{
-						fontSize: 10,
-						color: "var(--lg-coral)",
-						fontFamily: "var(--lg-mono)",
-						marginTop: 10,
-						display: "flex",
-						gap: 6,
-					}}
-				>
-					<span>!</span>
-					<span>{p.error}</span>
-				</div>
-			)}
 
 			<div style={{ marginTop: 12 }}>
 				<div
@@ -254,13 +368,12 @@ function RlProjectCard({
 					}}
 				>
 					<span>
-						STEP {p.stage}/6 ·{" "}
-						{RL_STAGES[Math.max(0, p.stage - 1)]?.label || "—"}
+						STEP {stageIdx}/6 · {phaseLabel(p.phase)}
 					</span>
-					<span>{p.progress}%</span>
+					<span>{progress}%</span>
 				</div>
 				<div className="progress">
-					<span style={{ width: p.progress + "%" }} />
+					<span style={{ width: progress + "%" }} />
 				</div>
 			</div>
 
@@ -269,14 +382,33 @@ function RlProjectCard({
 					marginTop: 10,
 					display: "flex",
 					justifyContent: "space-between",
+					alignItems: "center",
 					fontFamily: "var(--lg-pixel)",
 					fontSize: 8,
 					color: "var(--lg-ink-mute)",
 					letterSpacing: "0.1em",
 				}}
 			>
-				<span>{p.owner}</span>
-				<span>{p.updated}</span>
+				<span>{p.username.toUpperCase()}</span>
+				<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+					<span>{timeAgo(p.updated_at)}</span>
+					<button
+						className="link"
+						style={{ fontSize: 9, color: "var(--lg-amber)" }}
+						onClick={(e) => onRename(e, p.id)}
+						title="Rename project"
+					>
+						✎
+					</button>
+					<button
+						className="link"
+						style={{ fontSize: 9, color: "var(--lg-coral)" }}
+						onClick={(e) => onDelete(e, p.id)}
+						title="Delete project"
+					>
+						<IX size={8} />
+					</button>
+				</div>
 			</div>
 		</div>
 	);

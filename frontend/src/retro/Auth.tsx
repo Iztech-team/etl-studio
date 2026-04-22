@@ -18,26 +18,30 @@ export type AuthUser = {
 
 type AuthState = {
 	user: AuthUser | null;
-	login: (username: string, password: string) => boolean;
+	login: (username: string, password: string) => Promise<boolean>;
+	register: (
+		username: string,
+		password: string,
+		displayName: string,
+	) => Promise<string | null>;
+	loginAsGuest: () => void;
 	logout: () => void;
 };
 
 const LS_AUTH = "retro-legacy.v2.auth";
 
-const ACCOUNTS: Record<
-	string,
-	{ password: string; user: AuthUser }
-> = {
-	legacy: {
-		password: "$Legacy$2026",
-		user: {
-			username: "legacy",
-			displayName: "SYSOP",
-			initials: "SY",
-			role: "ROOT · ONLINE",
-		},
-	},
-};
+function makeAuthUser(data: {
+	username: string;
+	display_name: string;
+}): AuthUser {
+	const dn = data.display_name || data.username;
+	return {
+		username: data.username,
+		displayName: dn.toUpperCase(),
+		initials: dn.slice(0, 2).toUpperCase(),
+		role: data.username === "__guest__" ? "GUEST · SESSION" : "USER · ONLINE",
+	};
+}
 
 const AuthContext = createContext<AuthState | null>(null);
 
@@ -46,12 +50,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 		try {
 			const raw = localStorage.getItem(LS_AUTH);
 			if (!raw) return null;
-			const parsed = JSON.parse(raw) as AuthUser;
-			if (parsed?.username && ACCOUNTS[parsed.username]) {
-				return ACCOUNTS[parsed.username].user;
-			}
-		} catch {}
-		return null;
+			return JSON.parse(raw) as AuthUser;
+		} catch {
+			return null;
+		}
 	});
 
 	useEffect(() => {
@@ -59,19 +61,62 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 		else localStorage.removeItem(LS_AUTH);
 	}, [user]);
 
-	const login = (username: string, password: string) => {
-		const account = ACCOUNTS[username.trim().toLowerCase()];
-		if (account && account.password === password) {
-			setUser(account.user);
+	const login = async (
+		username: string,
+		password: string,
+	): Promise<boolean> => {
+		try {
+			const res = await fetch("/api/auth/login", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ username, password }),
+			});
+			if (!res.ok) return false;
+			const data = await res.json();
+			setUser(makeAuthUser(data));
 			return true;
+		} catch {
+			return false;
 		}
-		return false;
+	};
+
+	const register = async (
+		username: string,
+		password: string,
+		displayName: string,
+	): Promise<string | null> => {
+		try {
+			const res = await fetch("/api/auth/register", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					username,
+					password,
+					display_name: displayName,
+				}),
+			});
+			if (!res.ok) {
+				const err = await res.json().catch(() => null);
+				return err?.detail || "Registration failed";
+			}
+			const data = await res.json();
+			setUser(makeAuthUser(data));
+			return null;
+		} catch {
+			return "Network error";
+		}
+	};
+
+	const loginAsGuest = () => {
+		setUser(
+			makeAuthUser({ username: "__guest__", display_name: "GUEST" }),
+		);
 	};
 
 	const logout = () => setUser(null);
 
 	return (
-		<AuthContext.Provider value={{ user, login, logout }}>
+		<AuthContext.Provider value={{ user, login, register, loginAsGuest, logout }}>
 			{children}
 		</AuthContext.Provider>
 	);
@@ -83,20 +128,45 @@ export function useAuth() {
 	return ctx;
 }
 
+type Mode = "login" | "register";
+
 export function LoginScreen() {
-	const { login } = useAuth();
+	const { login, register, loginAsGuest } = useAuth();
+	const [mode, setMode] = useState<Mode>("login");
 	const [username, setUsername] = useState("");
 	const [password, setPassword] = useState("");
+	const [displayName, setDisplayName] = useState("");
 	const [error, setError] = useState<string | null>(null);
+	const [loading, setLoading] = useState(false);
 	const [shakeKey, setShakeKey] = useState(0);
 
-	const submit = (e: FormEvent) => {
+	const shake = (msg: string) => {
+		setError(msg);
+		setShakeKey((k) => k + 1);
+	};
+
+	const submitLogin = async (e: FormEvent) => {
 		e.preventDefault();
-		const ok = login(username, password);
-		if (!ok) {
-			setError("ACCESS DENIED · CHECK CREDENTIALS");
-			setShakeKey((k) => k + 1);
-		}
+		if (!username.trim() || !password.trim()) return;
+		setLoading(true);
+		setError(null);
+		const ok = await login(username, password);
+		setLoading(false);
+		if (!ok) shake("ACCESS DENIED · CHECK CREDENTIALS");
+	};
+
+	const submitRegister = async (e: FormEvent) => {
+		e.preventDefault();
+		if (!username.trim() || !password.trim()) return;
+		setLoading(true);
+		setError(null);
+		const err = await register(
+			username,
+			password,
+			displayName || username,
+		);
+		setLoading(false);
+		if (err) shake(err.toUpperCase());
 	};
 
 	return (
@@ -112,7 +182,9 @@ export function LoginScreen() {
 				</div>
 				<div className="rl-login-head">
 					<div className="pixel rl-login-brand">LEGACY</div>
-					<div className="rl-login-sub">ETL · SIGN IN</div>
+					<div className="rl-login-sub">
+						ETL · {mode === "login" ? "SIGN IN" : "REGISTER"}
+					</div>
 				</div>
 				<div
 					className="mono"
@@ -123,11 +195,15 @@ export function LoginScreen() {
 						lineHeight: 1.7,
 					}}
 				>
-					Authorized operators only. Enter credentials to access the legacy
-					migration system.
+					{mode === "login"
+						? "Enter credentials to access the legacy migration system."
+						: "Create an account to save and manage your projects."}
 				</div>
 
-				<form onSubmit={submit} noValidate>
+				<form
+					onSubmit={mode === "login" ? submitLogin : submitRegister}
+					noValidate
+				>
 					<div className="rl-login-field">
 						<label htmlFor="rl-user">USERNAME</label>
 						<input
@@ -140,7 +216,7 @@ export function LoginScreen() {
 								setUsername(e.target.value);
 								setError(null);
 							}}
-							placeholder="legacy"
+							placeholder="username"
 						/>
 					</div>
 					<div className="rl-login-field">
@@ -149,7 +225,9 @@ export function LoginScreen() {
 							id="rl-pass"
 							className="input"
 							type="password"
-							autoComplete="current-password"
+							autoComplete={
+								mode === "login" ? "current-password" : "new-password"
+							}
 							value={password}
 							onChange={(e) => {
 								setPassword(e.target.value);
@@ -158,6 +236,23 @@ export function LoginScreen() {
 							placeholder="•••••••••••"
 						/>
 					</div>
+
+					{mode === "register" && (
+						<div className="rl-login-field">
+							<label htmlFor="rl-display">
+								DISPLAY NAME{" "}
+								<span style={{ opacity: 0.5, fontSize: 9 }}>(OPTIONAL)</span>
+							</label>
+							<input
+								id="rl-display"
+								className="input"
+								autoComplete="off"
+								value={displayName}
+								onChange={(e) => setDisplayName(e.target.value)}
+								placeholder="how you want to be shown"
+							/>
+						</div>
+					)}
 
 					{error && (
 						<div key={shakeKey} className="rl-login-error">
@@ -168,11 +263,48 @@ export function LoginScreen() {
 					<button
 						type="submit"
 						className="btn btn-primary"
+						disabled={loading}
 						style={{ width: "100%", justifyContent: "center", marginTop: 10 }}
 					>
-						SIGN IN <IArrow size={10} />
+						{loading
+							? "..."
+							: mode === "login"
+								? "SIGN IN"
+								: "CREATE ACCOUNT"}{" "}
+						<IArrow size={10} />
 					</button>
 				</form>
+
+				<div
+					style={{
+						display: "flex",
+						justifyContent: "space-between",
+						alignItems: "center",
+						marginTop: 14,
+					}}
+				>
+					<button
+						type="button"
+						className="link"
+						style={{ fontSize: 10 }}
+						onClick={() => {
+							setMode(mode === "login" ? "register" : "login");
+							setError(null);
+						}}
+					>
+						{mode === "login"
+							? "NO ACCOUNT? REGISTER"
+							: "ALREADY REGISTERED? SIGN IN"}
+					</button>
+					<button
+						type="button"
+						className="link"
+						style={{ fontSize: 10 }}
+						onClick={loginAsGuest}
+					>
+						GUEST SESSION →
+					</button>
+				</div>
 
 				<div
 					className="pixel"

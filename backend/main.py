@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import os, shutil, uuid
@@ -32,6 +32,8 @@ from db import (
     rename_project,
     delete_project,
     update_project_phase,
+    register_user,
+    login_user,
 )
 from project_state import (
     save_state,
@@ -42,6 +44,9 @@ from project_state import (
     delete_project_files,
 )
 from models.project_schemas import (
+    RegisterRequest,
+    LoginRequest,
+    AuthResponse,
     CreateProjectRequest,
     RenameProjectRequest,
     ProjectResponse,
@@ -84,6 +89,61 @@ def _auto_save(session_id: str, phase: str) -> None:
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/api/dashboard-stats")
+async def dashboard_stats(username: str):
+    """Aggregate stats across all projects for a user."""
+    projects = list_projects(username)
+    total_rows = 0
+    quality_scores: list[float] = []
+    for p in projects:
+        state = load_state(p["id"])
+        lr = state.get("load_result", {})
+        if lr and isinstance(lr, dict):
+            rw = lr.get("rows_written", {})
+            total_rows += sum(rw.values()) if isinstance(rw, dict) else 0
+        raw = state.get("raw", {})
+        if raw.get("tables"):
+            from utils.stats import StatsEngine
+
+            engine = StatsEngine(state)
+            stats = engine.compute()
+            quality_scores.append(stats["quality_score"])
+    avg_quality = (
+        round(sum(quality_scores) / len(quality_scores), 1) if quality_scores else 0
+    )
+    return {
+        "total_rows_migrated": total_rows,
+        "avg_quality_score": avg_quality,
+        "projects_with_data": len(quality_scores),
+    }
+
+
+@app.post("/api/auth/register", response_model=AuthResponse)
+async def register(body: RegisterRequest):
+    if not body.username.strip() or not body.password.strip():
+        raise HTTPException(400, "Username and password are required")
+    if len(body.password) < 4:
+        raise HTTPException(400, "Password must be at least 4 characters")
+    try:
+        user = register_user(
+            body.username.strip().lower(),
+            body.password,
+            body.display_name.strip() or body.username.strip(),
+        )
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    return AuthResponse(**user)
+
+
+@app.post("/api/auth/login", response_model=AuthResponse)
+async def login_endpoint(body: LoginRequest):
+    try:
+        user = login_user(body.username.strip().lower(), body.password)
+    except ValueError:
+        raise HTTPException(401, "Invalid username or password")
+    return AuthResponse(**user)
 
 
 @app.post("/api/projects", response_model=ProjectResponse)
@@ -368,6 +428,36 @@ async def get_table_data(session_id: str):
     }
 
 
+@app.get("/api/table-data/{session_id}/{table_name}")
+async def get_table_page(
+    session_id: str,
+    table_name: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=500),
+):
+    """Return a single page of rows for a specific table."""
+    if session_id not in sessions:
+        raise HTTPException(404, "Session not found")
+    s = sessions[session_id]
+    raw = s.get("raw", {})
+    all_tables = raw.get("tables", {})
+    if table_name not in all_tables:
+        raise HTTPException(404, f"Table '{table_name}' not found")
+    rows = all_tables[table_name]
+    total = len(rows)
+    start = (page - 1) * page_size
+    end = start + page_size
+    return {
+        "table": table_name,
+        "rows": rows[start:end],
+        "columns": list(rows[0].keys()) if rows else [],
+        "page": page,
+        "page_size": page_size,
+        "total_rows": total,
+        "total_pages": max(1, (total + page_size - 1) // page_size),
+    }
+
+
 @app.post("/api/table-data/{session_id}", response_model=EditDataResponse)
 async def save_table_data(session_id: str, body: EditDataRequest):
     """Replace table rows with edited data and recompute schema/stats."""
@@ -402,11 +492,15 @@ async def save_table_data(session_id: str, body: EditDataRequest):
 
 
 @app.post("/api/configure/{session_id}", response_model=ConfigureResponse)
-async def configure(session_id: str, body: ConfigureRequest):
+async def configure(
+    session_id: str,
+    body: ConfigureRequest,
+    phase: str = Query("configure"),
+):
     if session_id not in sessions:
         raise HTTPException(404, "Session not found")
     sessions[session_id]["config"] = body.dict()
-    _auto_save(session_id, "configure")
+    _auto_save(session_id, phase)
     return ConfigureResponse(ok=True, message="Configuration saved")
 
 
@@ -544,6 +638,7 @@ async def stats(session_id: str):
     from utils.stats import StatsEngine
 
     engine = StatsEngine(s)
+    _auto_save(session_id, "stats")
     return StatsResponse(**engine.compute())
 
 

@@ -3,15 +3,10 @@ export type ProjectStatus = "running" | "done" | "error" | "draft";
 export type Project = {
 	id: string;
 	name: string;
-	desc: string;
-	source: string;
-	target: string;
-	status: ProjectStatus;
-	stage: number;
-	progress: number;
-	owner: string;
-	updated: string;
-	error?: string;
+	username: string;
+	phase: string;
+	created_at: string;
+	updated_at: string;
 };
 
 export type StageId =
@@ -25,13 +20,24 @@ export type StageId =
 export type Stage = { id: StageId; label: string; sub: string };
 
 export const RL_STAGES: Stage[] = [
-	{ id: "upload", label: "UPLOAD", sub: ".IB file" },
+	{ id: "upload", label: "UPLOAD", sub: "Database file" },
 	{ id: "extract", label: "EXTRACT", sub: "Parse tables" },
 	{ id: "select", label: "SELECT", sub: "Pick tables" },
 	{ id: "transform", label: "TRANSFORM", sub: "Clean columns" },
 	{ id: "map", label: "MAP", sub: "Target schema" },
 	{ id: "export", label: "EXPORT", sub: "CSV, SQL, JSON" },
 ];
+
+export type ResumedSession = {
+	sessionId: string;
+	preview: Record<string, Record<string, unknown>[]>;
+	schema: Record<string, Record<string, unknown>>;
+	stats: Record<string, { row_count: number }>;
+	tables: string[];
+	config: Record<string, unknown> | null;
+	transform: Record<string, unknown> | null;
+	loadResult: Record<string, unknown> | null;
+};
 
 export type Template = {
 	id: string;
@@ -53,19 +59,5 @@ export type HistoryRow = {
 	note: string;
 };
 
-export const RL_PROJECTS: Project[] = [
-	{
-		id: "p1",
-		name: "SALES ARCHIVE 1998",
-		desc: "Migrate legacy sales database to Postgres",
-		source: "sales_archive.IB",
-		target: "postgres://warehouse/sales",
-		status: "running",
-		stage: 3,
-		progress: 48,
-		owner: "SYSOP",
-		updated: "2H AGO",
-	},
-];
 export const RL_TEMPLATES: Template[] = [];
 export const RL_HISTORY: HistoryRow[] = [];

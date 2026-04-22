@@ -9,30 +9,67 @@ import {
 	type DragEvent,
 	type ReactNode,
 } from "react";
-import { RL_STAGES, type Project, type StageId } from "./data";
-import { IArrow, ICheck, IDisk, IDot, IUpload, IX } from "./icons";
+import { RL_STAGES, type Project, type ResumedSession, type StageId } from "./data";
+import { IArrow, ICheck, IDisk, IUpload, IX } from "./icons";
 import { RlTopbar } from "./Topbar";
 
-// ---------- upload state ----------
+// ---------- types ----------
 
-type FileKind = "csv" | "tsv" | "json" | "sql" | "xlsx" | "ib" | "unknown";
+type FileKind = "csv" | "tsv" | "json" | "sql" | "xlsx" | "ib" | "sqlite" | "unknown";
 
-export type UploadedTable = {
-	id: string;
-	name: string;
-	displayName: string;
-	size: number;
+const DB_EXTENSIONS = new Set(["ib", "sqlite", "sqlite3", "db", "fdb", "gdb", "mdb", "accdb", "dbf"]);
+
+type StagedFile = {
+	file: File;
 	kind: FileKind;
+};
+
+type ExtractedTable = {
+	name: string;
+	rowCount: number;
+	colCount: number;
 	columns: string[];
-	rowCount: number | null;
-	addedAt: number;
+};
+
+type UploadResult = {
+	sessionId: string;
+	tables: ExtractedTable[];
+	preview: Record<string, Record<string, unknown>[]>;
+	schema: Record<string, Record<string, unknown>>;
+	stats: Record<string, { row_count: number }>;
+};
+
+type TransformResult = {
+	ok: boolean;
+	tables_transformed: number;
+	total_rows: number;
+	encoding_conversions: number;
+	type_conversions: number;
+	reference_mappings: number;
+	null_normalizations: number;
+	warnings: string[];
+	preview: Record<string, unknown>;
+};
+
+type LoadResult = {
+	ok: boolean;
+	output_files: string[];
+	rows_written: Record<string, number>;
+	errors: string[];
 };
 
 type PipelineCtx = {
-	uploads: UploadedTable[];
-	add: (tables: UploadedTable[]) => void;
-	remove: (id: string) => void;
-	clear: () => void;
+	projectId: string | null;
+	staged: StagedFile[];
+	addStaged: (files: StagedFile[]) => void;
+	removeStaged: (idx: number) => void;
+	clearStaged: () => void;
+	uploadResult: UploadResult | null;
+	setUploadResult: (r: UploadResult | null) => void;
+	transformResult: TransformResult | null;
+	setTransformResult: (r: TransformResult | null) => void;
+	loadResult: LoadResult | null;
+	setLoadResult: (r: LoadResult | null) => void;
 };
 
 const PipelineContext = createContext<PipelineCtx | null>(null);
@@ -43,21 +80,82 @@ function usePipelineCtx(): PipelineCtx {
 	return ctx;
 }
 
-function PipelineProvider({ children }: { children: ReactNode }) {
-	const [uploads, setUploads] = useState<UploadedTable[]>([]);
+function PipelineProvider({
+	projectId,
+	resumed,
+	children,
+}: {
+	projectId: string | null;
+	resumed: ResumedSession | null;
+	children: ReactNode;
+}) {
+	const [staged, setStaged] = useState<StagedFile[]>([]);
+	const [uploadResult, setUploadResult] = useState<UploadResult | null>(() => {
+		if (!resumed) return null;
+		const tableNames = resumed.tables.length > 0
+			? resumed.tables
+			: Object.keys(resumed.schema);
+		if (tableNames.length === 0) return null;
+		return {
+			sessionId: resumed.sessionId,
+			tables: tableNames.map((name) => ({
+				name,
+				rowCount: resumed.stats[name]?.row_count ?? 0,
+				colCount: Object.keys(resumed.schema[name] ?? {}).length,
+				columns: Object.keys(resumed.schema[name] ?? {}),
+			})),
+			preview: resumed.preview as Record<string, Record<string, unknown>[]>,
+			schema: resumed.schema,
+			stats: resumed.stats,
+		};
+	});
+	const [transformResult, setTransformResult] = useState<TransformResult | null>(() => {
+		if (!resumed?.transform) return null;
+		const t = resumed.transform as Record<string, unknown>;
+		return {
+			ok: t.ok as boolean ?? true,
+			tables_transformed: t.tables_transformed as number ?? 0,
+			total_rows: t.total_rows as number ?? 0,
+			encoding_conversions: t.encoding_conversions as number ?? 0,
+			type_conversions: t.type_conversions as number ?? 0,
+			reference_mappings: t.reference_mappings as number ?? 0,
+			null_normalizations: t.null_normalizations as number ?? 0,
+			warnings: (t.warnings as string[]) ?? [],
+			preview: (t.preview as Record<string, unknown>) ?? {},
+		};
+	});
+	const [loadResult, setLoadResult] = useState<LoadResult | null>(() => {
+		if (!resumed?.loadResult) return null;
+		const l = resumed.loadResult as Record<string, unknown>;
+		return {
+			ok: l.ok as boolean ?? true,
+			output_files: (l.output_files as string[]) ?? [],
+			rows_written: (l.rows_written as Record<string, number>) ?? {},
+			errors: (l.errors as string[]) ?? [],
+		};
+	});
 	const ctx: PipelineCtx = {
-		uploads,
-		add: (tables) => setUploads((prev) => [...prev, ...tables]),
-		remove: (id) => setUploads((prev) => prev.filter((t) => t.id !== id)),
-		clear: () => setUploads([]),
+		projectId,
+		staged,
+		addStaged: (files) => setStaged((prev) => [...prev, ...files]),
+		removeStaged: (idx) => setStaged((prev) => prev.filter((_, i) => i !== idx)),
+		clearStaged: () => setStaged([]),
+		uploadResult,
+		setUploadResult,
+		transformResult,
+		setTransformResult,
+		loadResult,
+		setLoadResult,
 	};
 	return (
 		<PipelineContext.Provider value={ctx}>{children}</PipelineContext.Provider>
 	);
 }
 
+// ---------- helpers ----------
+
 const ACCEPT =
-	".ib,.csv,.tsv,.json,.jsonl,.ndjson,.sql,.xlsx,.xls,text/csv,application/json,application/sql";
+	".ib,.sqlite,.sqlite3,.db,.fdb,.gdb,.mdb,.accdb,.dbf,.csv,.tsv,.json,.jsonl,.ndjson,.sql,.xlsx,.xls,text/csv,application/json,application/sql";
 
 function detectKind(name: string): FileKind {
 	const ext = name.toLowerCase().split(".").pop() ?? "";
@@ -67,7 +165,13 @@ function detectKind(name: string): FileKind {
 	if (ext === "sql") return "sql";
 	if (["xlsx", "xls"].includes(ext)) return "xlsx";
 	if (ext === "ib") return "ib";
+	if (["sqlite", "sqlite3", "db"].includes(ext)) return "sqlite";
 	return "unknown";
+}
+
+function isDbFile(name: string): boolean {
+	const ext = name.toLowerCase().split(".").pop() ?? "";
+	return DB_EXTENSIONS.has(ext);
 }
 
 function fmtSize(n: number): string {
@@ -77,56 +181,64 @@ function fmtSize(n: number): string {
 	return (n / (1024 * 1024 * 1024)).toFixed(1) + " GB";
 }
 
-function tableNameFromFile(name: string): string {
-	return name
-		.replace(/\.[^.]+$/, "")
-		.replace(/[^a-zA-Z0-9_]+/g, "_")
-		.toUpperCase();
-}
-
-async function parseDelimited(
-	file: File,
-	delim: string,
-): Promise<{ columns: string[]; rowCount: number }> {
-	const text = await file.text();
-	const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
-	if (lines.length === 0) return { columns: [], rowCount: 0 };
-	const columns = lines[0]
-		.split(delim)
-		.map((s) => s.trim().replace(/^"|"$/g, ""));
-	return { columns, rowCount: Math.max(0, lines.length - 1) };
-}
-
-async function fileToTable(file: File): Promise<UploadedTable> {
-	const kind = detectKind(file.name);
-	let columns: string[] = [];
-	let rowCount: number | null = null;
-	try {
-		if (kind === "csv") {
-			const r = await parseDelimited(file, ",");
-			columns = r.columns;
-			rowCount = r.rowCount;
-		} else if (kind === "tsv") {
-			const r = await parseDelimited(file, "\t");
-			columns = r.columns;
-			rowCount = r.rowCount;
-		} else if (kind === "json") {
-			const text = await file.text();
-			const nonEmpty = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-			rowCount = nonEmpty.length;
+async function uploadToBackend(
+	files: File[],
+	projectId: string | null,
+): Promise<UploadResult> {
+	// If any file is a DB file, use pre-extract endpoint (single file)
+	const dbFile = files.find((f) => isDbFile(f.name));
+	if (dbFile) {
+		const form = new FormData();
+		form.append("file", dbFile);
+		if (projectId) form.append("project_id", projectId);
+		const res = await fetch("/api/pre-extract", { method: "POST", body: form });
+		if (!res.ok) {
+			const err = await res.json().catch(() => null);
+			throw new Error(err?.detail || "Upload failed");
 		}
-	} catch {
-		// swallow parse errors — kind stays with empty columns
+		const data = await res.json();
+		const tables: ExtractedTable[] = (data.tables_extracted ?? []).map(
+			(name: string) => ({
+				name,
+				rowCount: data.stats?.[name]?.row_count ?? 0,
+				colCount: Object.keys(data.inferred_schema?.[name] ?? {}).length,
+				columns: Object.keys(data.inferred_schema?.[name] ?? {}),
+			}),
+		);
+		return {
+			sessionId: data.session_id,
+			tables,
+			preview: data.preview ?? {},
+			schema: data.inferred_schema ?? {},
+			stats: data.stats ?? {},
+		};
 	}
+
+	// Flat files — use /api/upload
+	const form = new FormData();
+	for (const f of files) form.append("files", f);
+	if (projectId) form.append("project_id", projectId);
+	const res = await fetch("/api/upload", { method: "POST", body: form });
+	if (!res.ok) {
+		const err = await res.json().catch(() => null);
+		throw new Error(err?.detail || "Upload failed");
+	}
+	const data = await res.json();
+	const schema: Record<string, Record<string, unknown>> =
+		data.inferred_schema ?? {};
+	const stats: Record<string, { row_count: number }> = data.stats ?? {};
+	const tables: ExtractedTable[] = Object.keys(schema).map((name) => ({
+		name,
+		rowCount: stats[name]?.row_count ?? 0,
+		colCount: Object.keys(schema[name] ?? {}).length,
+		columns: Object.keys(schema[name] ?? {}),
+	}));
 	return {
-		id: `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2, 8)}`,
-		name: file.name,
-		displayName: tableNameFromFile(file.name),
-		size: file.size,
-		kind,
-		columns,
-		rowCount,
-		addedAt: Date.now(),
+		sessionId: data.session_id,
+		tables,
+		preview: data.preview ?? {},
+		schema,
+		stats,
 	};
 }
 
@@ -176,33 +288,34 @@ function kindBadge(kind: FileKind) {
 	const cls =
 		kind === "unknown"
 			? "badge badge-err"
-			: kind === "ib"
+			: kind === "ib" || kind === "sqlite"
 				? "badge badge-solid"
 				: "badge badge-ok";
 	return <span className={cls}>{label}</span>;
 }
 
 function RlUpload({ onNext }: { onNext: () => void }) {
-	const { uploads, add, remove, clear } = usePipelineCtx();
+	const { staged, addStaged, removeStaged, clearStaged, projectId, setUploadResult } =
+		usePipelineCtx();
 	const inputRef = useRef<HTMLInputElement | null>(null);
+	const [uploading, setUploading] = useState(false);
 	const [dragOver, setDragOver] = useState(false);
-	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState<string | null>(null);
 
-	const ingest = async (files: FileList | File[] | null) => {
+	const ingest = (files: FileList | File[] | null) => {
 		if (!files) return;
 		const arr = Array.from(files);
 		if (arr.length === 0) return;
-		setBusy(true);
-		try {
-			const parsed = await Promise.all(arr.map(fileToTable));
-			add(parsed);
-		} finally {
-			setBusy(false);
-		}
+		const newFiles: StagedFile[] = arr.map((f) => ({
+			file: f,
+			kind: detectKind(f.name),
+		}));
+		setError(null);
+		addStaged(newFiles);
 	};
 
 	const onInput = (e: ChangeEvent<HTMLInputElement>) => {
-		void ingest(e.target.files);
+		ingest(e.target.files);
 		e.target.value = "";
 	};
 
@@ -214,10 +327,29 @@ function RlUpload({ onNext }: { onNext: () => void }) {
 	const onDrop = (e: DragEvent) => {
 		e.preventDefault();
 		setDragOver(false);
-		void ingest(e.dataTransfer?.files ?? null);
+		ingest(e.dataTransfer?.files ?? null);
 	};
 
-	const totalRows = uploads.reduce((a, t) => a + (t.rowCount ?? 0), 0);
+	const handleUpload = async () => {
+		if (staged.length === 0) return;
+		setUploading(true);
+		setError(null);
+		try {
+			const result = await uploadToBackend(
+				staged.map((s) => s.file),
+				projectId,
+			);
+			setUploadResult(result);
+			onNext();
+		} catch (e) {
+			setError(e instanceof Error ? e.message : "Upload failed");
+		} finally {
+			setUploading(false);
+		}
+	};
+
+	const hasDbFile = staged.some((s) => isDbFile(s.file.name));
+	const hasFlatFile = staged.some((s) => !isDbFile(s.file.name));
 
 	return (
 		<div
@@ -258,7 +390,7 @@ function RlUpload({ onNext }: { onNext: () => void }) {
 								marginTop: 8,
 							}}
 						>
-							.IB · .CSV · .TSV · .JSON · .SQL · .XLSX — EACH CSV IS ONE TABLE
+							.IB · .SQLITE · .CSV · .TSV · .JSON · .SQL · .XLSX
 						</div>
 						<button
 							className="btn btn-primary"
@@ -281,20 +413,7 @@ function RlUpload({ onNext }: { onNext: () => void }) {
 						/>
 					</div>
 
-					{busy && (
-						<div
-							className="mono"
-							style={{
-								fontSize: 11,
-								color: "var(--lg-amber)",
-								marginTop: 12,
-							}}
-						>
-							PARSING FILES…
-						</div>
-					)}
-
-					{uploads.length > 0 && (
+					{staged.length > 0 && (
 						<div style={{ marginTop: 16 }}>
 							<div
 								className="pixel"
@@ -305,16 +424,16 @@ function RlUpload({ onNext }: { onNext: () => void }) {
 									marginBottom: 8,
 								}}
 							>
-								UPLOADED · {uploads.length} FILE{uploads.length === 1 ? "" : "S"} · {totalRows.toLocaleString()} ROW{totalRows === 1 ? "" : "S"}
+								STAGED · {staged.length} FILE{staged.length === 1 ? "" : "S"}
 							</div>
 							<div
 								style={{ display: "flex", flexDirection: "column", gap: 6 }}
 							>
-								{uploads.map((t) => (
-									<div key={t.id} className="rl-file-row">
+								{staged.map((s, i) => (
+									<div key={s.file.name + i} className="rl-file-row">
 										<IDisk size={12} />
 										<div style={{ flex: 1, minWidth: 0 }}>
-											<div style={{ fontSize: 12 }}>{t.name}</div>
+											<div style={{ fontSize: 12 }}>{s.file.name}</div>
 											<div
 												style={{
 													fontSize: 10,
@@ -322,84 +441,65 @@ function RlUpload({ onNext }: { onNext: () => void }) {
 													marginTop: 2,
 												}}
 											>
-												{fmtSize(t.size)}
-												{t.rowCount != null && (
-													<>
-														{" "}· {t.rowCount.toLocaleString()} ROWS
-													</>
-												)}
-												{t.columns.length > 0 && (
-													<>
-														{" "}· {t.columns.length} COLS
-													</>
-												)}
+												{fmtSize(s.file.size)}
 											</div>
 										</div>
-										{kindBadge(t.kind)}
+										{kindBadge(s.kind)}
 										<button
 											className="link"
 											style={{ fontSize: 10 }}
-											onClick={() => remove(t.id)}
+											onClick={() => removeStaged(i)}
 											title="Remove"
 										>
-											<IX size={8} /> REMOVE
+											<IX size={8} />
 										</button>
 									</div>
 								))}
 							</div>
-							{uploads.length > 1 && (
+							{staged.length > 1 && (
 								<button
 									className="btn btn-ghost"
 									style={{ marginTop: 10, padding: "4px 10px", fontSize: 10 }}
-									onClick={clear}
+									onClick={clearStaged}
 								>
 									CLEAR ALL
 								</button>
 							)}
 						</div>
 					)}
+
+					{error && (
+						<div
+							className="mono"
+							style={{
+								fontSize: 11,
+								color: "var(--lg-coral)",
+								marginTop: 12,
+							}}
+						>
+							{"> "}{error}
+						</div>
+					)}
 				</div>
 			</div>
 			<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
 				<div className="panel">
-					<div className="panel-head">CURRENT SOURCE</div>
+					<div className="panel-head">READY TO UPLOAD</div>
 					<div className="panel-body">
-						{uploads.length === 0 ? (
-							<>
-								<div
-									className="pixel"
-									style={{ fontSize: 12, color: "var(--lg-amber)" }}
-								>
-									sales_archive.IB
-								</div>
-								<div
-									className="mono"
-									style={{
-										fontSize: 11,
-										color: "var(--lg-ink-dim)",
-										marginTop: 6,
-									}}
-								>
-									1.2 GB · 8 TABLES · 5.2M ROWS
-								</div>
-								<div
-									className="mono"
-									style={{
-										fontSize: 10,
-										color: "var(--lg-ink-mute)",
-										marginTop: 10,
-									}}
-								>
-									Upload your own files above to override this demo database.
-								</div>
-							</>
+						{staged.length === 0 ? (
+							<div
+								className="mono"
+								style={{ fontSize: 11, color: "var(--lg-ink-mute)" }}
+							>
+								Add files to begin.
+							</div>
 						) : (
 							<>
 								<div
 									className="pixel"
 									style={{ fontSize: 14, color: "var(--lg-amber)" }}
 								>
-									{uploads.length} TABLE{uploads.length === 1 ? "" : "S"}
+									{staged.length} FILE{staged.length === 1 ? "" : "S"}
 								</div>
 								<div
 									className="mono"
@@ -409,16 +509,385 @@ function RlUpload({ onNext }: { onNext: () => void }) {
 										marginTop: 6,
 									}}
 								>
-									{totalRows.toLocaleString()} ROWS ·{" "}
-									{fmtSize(uploads.reduce((a, t) => a + t.size, 0))}
+									{fmtSize(staged.reduce((a, s) => a + s.file.size, 0))}
 								</div>
+								{hasDbFile && hasFlatFile && (
+									<div
+										className="mono"
+										style={{
+											fontSize: 10,
+											color: "var(--lg-coral)",
+											marginTop: 8,
+										}}
+									>
+										! MIXING DB AND FLAT FILES — ONLY THE DB FILE WILL BE
+										EXTRACTED
+									</div>
+								)}
 							</>
 						)}
 					</div>
 				</div>
-				<button className="btn btn-primary" onClick={onNext}>
-					CONTINUE TO EXTRACT <IArrow size={10} />
+				<button
+					className="btn btn-primary"
+					disabled={staged.length === 0 || uploading}
+					onClick={handleUpload}
+				>
+					{uploading ? "UPLOADING…" : "UPLOAD & EXTRACT"} <IArrow size={10} />
 				</button>
+			</div>
+		</div>
+	);
+}
+
+// ---------- table preview modal ----------
+
+type PageData = {
+	rows: Record<string, unknown>[];
+	columns: string[];
+	page: number;
+	total_rows: number;
+	total_pages: number;
+};
+
+function TablePreviewModal({
+	sessionId,
+	tableName,
+	onClose,
+}: {
+	sessionId: string;
+	tableName: string;
+	onClose: () => void;
+}) {
+	const [page, setPage] = useState(1);
+	const [data, setData] = useState<PageData | null>(null);
+	const [loading, setLoading] = useState(true);
+	const [error, setError] = useState<string | null>(null);
+	const [editing, setEditing] = useState(false);
+	const [editedRows, setEditedRows] = useState<Record<string, unknown>[]>([]);
+	const [saving, setSaving] = useState(false);
+	const [dirty, setDirty] = useState(false);
+
+	const fetchPage = async (p: number) => {
+		setLoading(true);
+		setError(null);
+		try {
+			const res = await fetch(
+				`/api/table-data/${sessionId}/${encodeURIComponent(tableName)}?page=${p}&page_size=100`,
+			);
+			if (!res.ok) {
+				const err = await res.json().catch(() => null);
+				throw new Error(err?.detail || "Failed to load data");
+			}
+			const d = await res.json();
+			setData(d);
+			setPage(d.page);
+			setEditedRows(d.rows.map((r: Record<string, unknown>) => ({ ...r })));
+			setDirty(false);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : "Load failed");
+		} finally {
+			setLoading(false);
+		}
+	};
+
+	const saveEdits = async () => {
+		if (!data) return;
+		setSaving(true);
+		setError(null);
+		try {
+			// Fetch all rows, replace current page's rows, save back
+			const allRes = await fetch(`/api/table-data/${sessionId}`);
+			if (!allRes.ok) throw new Error("Failed to load full data");
+			const allData = await allRes.json();
+			const allRows: Record<string, unknown>[] = allData.tables[tableName] ?? [];
+			const start = (page - 1) * 100;
+			for (let i = 0; i < editedRows.length; i++) {
+				allRows[start + i] = editedRows[i];
+			}
+			const res = await fetch(`/api/table-data/${sessionId}`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ tables: { [tableName]: allRows } }),
+			});
+			if (!res.ok) {
+				const err = await res.json().catch(() => null);
+				throw new Error(err?.detail || "Save failed");
+			}
+			setDirty(false);
+			// Refresh the current page
+			await fetchPage(page);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : "Save failed");
+		} finally {
+			setSaving(false);
+		}
+	};
+
+	const updateCell = (rowIdx: number, col: string, value: string) => {
+		setEditedRows((prev) => {
+			const next = [...prev];
+			next[rowIdx] = { ...next[rowIdx], [col]: value || null };
+			return next;
+		});
+		setDirty(true);
+	};
+
+	useEffect(() => {
+		fetchPage(1);
+	}, [sessionId, tableName]);
+
+	const totalPages = data?.total_pages ?? 1;
+	const displayRows = editing ? editedRows : (data?.rows ?? []);
+
+	return (
+		<div
+			style={{
+				position: "fixed",
+				inset: 0,
+				zIndex: 9999,
+				background: "rgba(0,0,0,0.75)",
+				display: "flex",
+				alignItems: "center",
+				justifyContent: "center",
+				padding: 24,
+			}}
+			onClick={onClose}
+		>
+			<div
+				style={{
+					background: "var(--lg-bg)",
+					border: `2px solid ${editing ? "var(--lg-coral)" : "var(--lg-amber)"}`,
+					maxWidth: "90vw",
+					maxHeight: "85vh",
+					width: "100%",
+					display: "flex",
+					flexDirection: "column",
+					overflow: "hidden",
+				}}
+				onClick={(e) => e.stopPropagation()}
+			>
+				{/* Header */}
+				<div
+					style={{
+						display: "flex",
+						alignItems: "center",
+						justifyContent: "space-between",
+						padding: "10px 14px",
+						borderBottom: "1px solid var(--lg-border)",
+						background: "var(--lg-bg-2)",
+					}}
+				>
+					<div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+						<IDisk size={10} />
+						<span
+							className="pixel"
+							style={{ fontSize: 11, color: "var(--lg-amber)", letterSpacing: "0.1em" }}
+						>
+							{tableName.toUpperCase()}
+						</span>
+						{editing && (
+							<span className="badge badge-warn">EDIT MODE</span>
+						)}
+						{data && (
+							<span
+								className="mono"
+								style={{ fontSize: 10, color: "var(--lg-ink-mute)" }}
+							>
+								{data.total_rows.toLocaleString()} rows · {data.columns.length} cols
+							</span>
+						)}
+					</div>
+					<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+						{editing ? (
+							<>
+								{dirty && (
+									<button
+										className="btn btn-primary"
+										style={{ padding: "4px 10px", fontSize: 10 }}
+										onClick={saveEdits}
+										disabled={saving}
+									>
+										{saving ? "SAVING…" : "SAVE"}
+									</button>
+								)}
+								<button
+									className="btn btn-ghost"
+									style={{ padding: "4px 10px", fontSize: 10 }}
+									onClick={() => {
+										setEditing(false);
+										setEditedRows(data?.rows.map((r) => ({ ...r })) ?? []);
+										setDirty(false);
+									}}
+								>
+									CANCEL
+								</button>
+							</>
+						) : (
+							<button
+								className="btn btn-ghost"
+								style={{ padding: "4px 10px", fontSize: 10 }}
+								onClick={() => setEditing(true)}
+							>
+								EDIT
+							</button>
+						)}
+						<button
+							className="link"
+							style={{ fontSize: 12, color: "var(--lg-ink-mute)" }}
+							onClick={onClose}
+						>
+							<IX size={10} /> CLOSE
+						</button>
+					</div>
+				</div>
+
+				{/* Table content */}
+				<div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+					{loading ? (
+						<div
+							className="pixel"
+							style={{
+								fontSize: 11,
+								color: "var(--lg-amber)",
+								letterSpacing: "0.1em",
+								padding: 40,
+								textAlign: "center",
+							}}
+						>
+							LOADING…
+						</div>
+					) : error ? (
+						<div
+							className="mono"
+							style={{ fontSize: 11, color: "var(--lg-coral)", padding: 40, textAlign: "center" }}
+						>
+							{error}
+						</div>
+					) : data && displayRows.length > 0 ? (
+						<table className="table" style={{ width: "100%" }}>
+							<thead>
+								<tr>
+									<th
+										style={{
+											width: 50,
+											fontFamily: "var(--lg-pixel)",
+											fontSize: 8,
+											color: "var(--lg-ink-mute)",
+										}}
+									>
+										#
+									</th>
+									{data.columns.map((col) => (
+										<th key={col}>{col}</th>
+									))}
+								</tr>
+							</thead>
+							<tbody>
+								{displayRows.map((row, ri) => (
+									<tr key={ri}>
+										<td
+											style={{
+												fontFamily: "var(--lg-mono)",
+												fontSize: 9,
+												color: "var(--lg-ink-mute)",
+											}}
+										>
+											{(page - 1) * 100 + ri + 1}
+										</td>
+										{data.columns.map((col) =>
+											editing ? (
+												<td key={col} style={{ padding: 0 }}>
+													<input
+														className="input"
+														style={{
+															fontSize: 11,
+															padding: "4px 6px",
+															width: "100%",
+															border: "none",
+															borderBottom: "1px solid var(--lg-border)",
+															background: "transparent",
+														}}
+														value={row[col] != null ? String(row[col]) : ""}
+														onChange={(e) => updateCell(ri, col, e.target.value)}
+													/>
+												</td>
+											) : (
+												<td key={col}>
+													{row[col] != null ? String(row[col]) : "—"}
+												</td>
+											),
+										)}
+									</tr>
+								))}
+							</tbody>
+						</table>
+					) : (
+						<div
+							className="mono"
+							style={{ fontSize: 11, color: "var(--lg-ink-mute)", padding: 40, textAlign: "center" }}
+						>
+							No data in this table.
+						</div>
+					)}
+				</div>
+
+				{/* Pagination footer */}
+				<div
+					style={{
+						display: "flex",
+						alignItems: "center",
+						justifyContent: "space-between",
+						padding: "8px 14px",
+						borderTop: "1px solid var(--lg-border)",
+						background: "var(--lg-bg-2)",
+					}}
+				>
+					<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-mute)" }}>
+						PAGE {page} / {totalPages}
+						{data && (
+							<>
+								{" · "}SHOWING {(page - 1) * 100 + 1}–
+								{Math.min(page * 100, data.total_rows)} OF{" "}
+								{data.total_rows.toLocaleString()}
+							</>
+						)}
+					</div>
+					<div style={{ display: "flex", gap: 6 }}>
+						<button
+							className="btn btn-ghost"
+							style={{ padding: "4px 10px", fontSize: 10 }}
+							disabled={page <= 1 || loading}
+							onClick={() => fetchPage(1)}
+						>
+							«
+						</button>
+						<button
+							className="btn btn-ghost"
+							style={{ padding: "4px 10px", fontSize: 10 }}
+							disabled={page <= 1 || loading}
+							onClick={() => fetchPage(page - 1)}
+						>
+							‹ PREV
+						</button>
+						<button
+							className="btn btn-ghost"
+							style={{ padding: "4px 10px", fontSize: 10 }}
+							disabled={page >= totalPages || loading}
+							onClick={() => fetchPage(page + 1)}
+						>
+							NEXT ›
+						</button>
+						<button
+							className="btn btn-ghost"
+							style={{ padding: "4px 10px", fontSize: 10 }}
+							disabled={page >= totalPages || loading}
+							onClick={() => fetchPage(totalPages)}
+						>
+							»
+						</button>
+					</div>
+				</div>
 			</div>
 		</div>
 	);
@@ -426,26 +895,11 @@ function RlUpload({ onNext }: { onNext: () => void }) {
 
 // ---------- extract ----------
 
-const MOCK_EXTRACT: [string, number, string][] = [
-	["CUSTOMERS", 48221, "6.2 MB"],
-	["ORDERS", 892100, "84.1 MB"],
-	["ORDER_LINES", 3120441, "210 MB"],
-	["PRODUCTS", 12400, "1.8 MB"],
-	["SUPPLIERS", 412, "120 KB"],
-	["TERRITORIES", 54, "18 KB"],
-	["PRICE_HIST", 204000, "14 MB"],
-	["AUDIT_LOG", 980332, "22 MB"],
-];
-
 function RlExtract({ onNext }: { onNext: () => void }) {
-	const { uploads } = usePipelineCtx();
-	const hasUploads = uploads.length > 0;
-	const totalRows = hasUploads
-		? uploads.reduce((a, t) => a + (t.rowCount ?? 0), 0)
-		: MOCK_EXTRACT.reduce((a, [, r]) => a + r, 0);
-	const totalSize = hasUploads
-		? fmtSize(uploads.reduce((a, t) => a + t.size, 0))
-		: "338 MB CSV";
+	const { uploadResult } = usePipelineCtx();
+	const tables = uploadResult?.tables ?? [];
+	const totalRows = tables.reduce((a, t) => a + t.rowCount, 0);
+	const [previewTable, setPreviewTable] = useState<string | null>(null);
 
 	return (
 		<div
@@ -456,12 +910,17 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 				marginTop: 14,
 			}}
 		>
+			{previewTable && uploadResult?.sessionId && (
+				<TablePreviewModal
+					sessionId={uploadResult.sessionId}
+					tableName={previewTable}
+					onClose={() => setPreviewTable(null)}
+				/>
+			)}
 			<div className="panel">
 				<div className="panel-head">
-					<IDisk size={10} />{" "}
-					{hasUploads
-						? `PARSED ${uploads.length} UPLOAD${uploads.length === 1 ? "" : "S"}`
-						: "EXTRACTING sales_archive.IB"}
+					<IDisk size={10} /> EXTRACTED {tables.length} TABLE
+					{tables.length === 1 ? "" : "S"}
 				</div>
 				<div className="panel-body">
 					<div
@@ -476,9 +935,7 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 						}}
 					>
 						<span>
-							{hasUploads
-								? `READ ${uploads.length} / ${uploads.length} FILES`
-								: `PARSING RECORDS · 8 / 8 TABLES`}
+							READ {tables.length} / {tables.length} TABLES
 						</span>
 						<span style={{ color: "var(--lg-amber)" }}>100%</span>
 					</div>
@@ -492,38 +949,53 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 							gap: 6,
 						}}
 					>
-						{hasUploads
-							? uploads.map((t) => (
-									<div
-										key={t.id}
-										className="rl-file-row"
-										style={{ background: "var(--lg-bg-2)" }}
+						{tables.map((t) => (
+							<div
+								key={t.name}
+								className="rl-file-row"
+								style={{ background: "var(--lg-bg-2)" }}
+							>
+								<ICheck size={10} />
+								<div style={{ flex: 1, fontSize: 11 }}>
+									{t.name.toUpperCase()}
+								</div>
+								<div
+									style={{
+										display: "flex",
+										alignItems: "center",
+										gap: 8,
+										fontSize: 10,
+										color: "var(--lg-ink-mute)",
+									}}
+								>
+									<span>{t.rowCount.toLocaleString()} rows · {t.colCount} cols</span>
+									<button
+										className="btn btn-ghost"
+										style={{ padding: "2px 8px", fontSize: 9 }}
+										onClick={(e) => {
+											e.stopPropagation();
+											setPreviewTable(t.name);
+										}}
 									>
-										<ICheck size={10} />
-										<div style={{ flex: 1, fontSize: 11 }}>{t.displayName}</div>
-										<div
-											style={{ fontSize: 10, color: "var(--lg-ink-mute)" }}
-										>
-											{(t.rowCount ?? 0).toLocaleString()} · {fmtSize(t.size)}
-										</div>
-									</div>
-								))
-							: MOCK_EXTRACT.map(([n, r, s]) => (
-									<div
-										key={n}
-										className="rl-file-row"
-										style={{ background: "var(--lg-bg-2)" }}
-									>
-										<ICheck size={10} />
-										<div style={{ flex: 1, fontSize: 11 }}>{n}</div>
-										<div
-											style={{ fontSize: 10, color: "var(--lg-ink-mute)" }}
-										>
-											{r.toLocaleString()} · {s}
-										</div>
-									</div>
-								))}
+										PREVIEW
+									</button>
+								</div>
+							</div>
+						))}
 					</div>
+					{tables.length === 0 && (
+						<div
+							className="mono"
+							style={{
+								fontSize: 11,
+								color: "var(--lg-ink-mute)",
+								padding: 20,
+								textAlign: "center",
+							}}
+						>
+							No tables extracted yet. Go back to Upload first.
+						</div>
+					)}
 				</div>
 			</div>
 			<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -534,7 +1006,7 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 							className="pixel"
 							style={{ fontSize: 24, color: "var(--lg-amber)" }}
 						>
-							{hasUploads ? uploads.length : 8} TABLES
+							{tables.length} TABLE{tables.length === 1 ? "" : "S"}
 						</div>
 						<div
 							className="mono"
@@ -544,41 +1016,37 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 								marginTop: 4,
 							}}
 						>
-							{totalRows.toLocaleString()} ROWS · {totalSize}
+							{totalRows.toLocaleString()} ROWS
 						</div>
 					</div>
 				</div>
 				<div className="panel">
-					<div className="panel-head">
-						{hasUploads ? "DETECTED" : "ENCODING DETECTED"}
-					</div>
+					<div className="panel-head">SCHEMA INFO</div>
 					<div className="panel-body">
 						<dl className="kv">
-							{hasUploads ? (
-								<>
-									<dt>TYPES</dt>
-									<dd>
-										{Array.from(new Set(uploads.map((t) => t.kind)))
-											.map((k) => k.toUpperCase())
-											.join(", ")}
-									</dd>
-									<dt>CHARSET</dt>
-									<dd>UTF-8</dd>
-								</>
-							) : (
-								<>
-									<dt>FORMAT</dt>
-									<dd>IB v4.2 (1997–2003)</dd>
-									<dt>CHARSET</dt>
-									<dd>CP1252</dd>
-									<dt>ENDIAN</dt>
-									<dd>little-endian</dd>
-								</>
-							)}
+							<dt>TABLES</dt>
+							<dd>{tables.length}</dd>
+							<dt>COLUMNS</dt>
+							<dd>
+								{tables.reduce((a, t) => a + t.colCount, 0)}
+							</dd>
+							<dt>SESSION</dt>
+							<dd
+								style={{
+									fontSize: 9,
+									wordBreak: "break-all",
+								}}
+							>
+								{uploadResult?.sessionId?.slice(0, 8) ?? "—"}
+							</dd>
 						</dl>
 					</div>
 				</div>
-				<button className="btn btn-primary" onClick={onNext}>
+				<button
+					className="btn btn-primary"
+					onClick={onNext}
+					disabled={tables.length === 0}
+				>
 					CONTINUE TO SELECT <IArrow size={10} />
 				</button>
 			</div>
@@ -588,30 +1056,28 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 
 // ---------- select ----------
 
-const MOCK_SELECT = [
-	{ n: "CUSTOMERS", r: 48221, c: 14, s: "6.2 MB", types: ["INT", "VARCHAR", "DATE", "MONEY"], picked: true },
-	{ n: "ORDERS", r: 892100, c: 22, s: "84.1 MB", types: ["INT", "VARCHAR", "DATE", "MONEY"], picked: true },
-	{ n: "ORDER_LINES", r: 3120441, c: 11, s: "210 MB", types: ["INT", "DECIMAL", "MONEY"], picked: true },
-	{ n: "PRODUCTS", r: 12400, c: 18, s: "1.8 MB", types: ["INT", "VARCHAR", "TEXT", "MONEY"], picked: true },
-	{ n: "SUPPLIERS", r: 412, c: 9, s: "120 KB", types: ["INT", "VARCHAR"], picked: false },
-	{ n: "TERRITORIES", r: 54, c: 6, s: "18 KB", types: ["INT", "VARCHAR"], picked: false },
-	{ n: "PRICE_HIST", r: 204000, c: 7, s: "14 MB", types: ["INT", "MONEY", "DATE"], picked: false },
-	{ n: "AUDIT_LOG", r: 980332, c: 5, s: "22 MB", types: ["INT", "VARCHAR", "DATE"], picked: false },
-];
-
 function RlSelect({ onNext }: { onNext: () => void }) {
-	const { uploads } = usePipelineCtx();
+	const { uploadResult } = usePipelineCtx();
+	const [saving, setSaving] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const tables = uploadResult?.tables ?? [];
+	const schema = uploadResult?.schema ?? {};
+
 	const rows = useMemo(() => {
-		if (uploads.length === 0) return MOCK_SELECT;
-		return uploads.map((t) => ({
-			n: t.displayName,
-			r: t.rowCount ?? 0,
-			c: t.columns.length,
-			s: fmtSize(t.size),
-			types: [t.kind.toUpperCase()],
-			picked: true,
-		}));
-	}, [uploads]);
+		return tables.map((t) => {
+			const colTypes = Object.values(schema[t.name] ?? {}) as string[];
+			const uniqueTypes = Array.from(new Set(colTypes.map((v) =>
+				typeof v === "string" ? v.toUpperCase() : "TEXT"
+			)));
+			return {
+				n: t.name,
+				r: t.rowCount,
+				c: t.colCount,
+				types: uniqueTypes.length > 0 ? uniqueTypes.slice(0, 4) : ["TEXT"],
+				picked: true,
+			};
+		});
+	}, [tables, schema]);
 
 	const [picked, setPicked] = useState<boolean[]>(() => rows.map((r) => r.picked));
 
@@ -651,7 +1117,6 @@ function RlSelect({ onNext }: { onNext: () => void }) {
 								<th>ROWS</th>
 								<th>COLS</th>
 								<th>TYPES</th>
-								<th>SIZE</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -696,7 +1161,7 @@ function RlSelect({ onNext }: { onNext: () => void }) {
 											letterSpacing: "0.1em",
 										}}
 									>
-										{t.n}
+										{t.n.toUpperCase()}
 									</td>
 									<td style={{ fontVariantNumeric: "tabular-nums" }}>
 										{t.r.toLocaleString()}
@@ -711,11 +1176,23 @@ function RlSelect({ onNext }: { onNext: () => void }) {
 											))}
 										</div>
 									</td>
-									<td style={{ color: "var(--lg-ink-dim)" }}>{t.s}</td>
 								</tr>
 							))}
 						</tbody>
 					</table>
+					{rows.length === 0 && (
+						<div
+							className="mono"
+							style={{
+								fontSize: 11,
+								color: "var(--lg-ink-mute)",
+								padding: 20,
+								textAlign: "center",
+							}}
+						>
+							No tables to select. Upload files first.
+						</div>
+					)}
 				</div>
 			</div>
 			<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -754,66 +1231,182 @@ function RlSelect({ onNext }: { onNext: () => void }) {
 						more later.
 					</div>
 				</div>
-				<button className="btn btn-primary" onClick={onNext}>
-					CONTINUE TO TRANSFORM <IArrow size={10} />
+				{error && (
+					<div
+						className="mono"
+						style={{ fontSize: 11, color: "var(--lg-coral)" }}
+					>
+						{"> "}{error}
+					</div>
+				)}
+				<button
+					className="btn btn-primary"
+					onClick={async () => {
+						if (!uploadResult?.sessionId) return;
+						const selectedNames = rows
+							.filter((_, i) => safePicked[i])
+							.map((r) => r.n);
+						setSaving(true);
+						setError(null);
+						try {
+							const res = await fetch(
+								`/api/pre-extract-select/${uploadResult.sessionId}`,
+								{
+									method: "POST",
+									headers: { "Content-Type": "application/json" },
+									body: JSON.stringify({ tables: selectedNames }),
+								},
+							);
+							if (!res.ok) {
+								const err = await res.json().catch(() => null);
+								throw new Error(err?.detail || "Selection failed");
+							}
+							onNext();
+						} catch (e) {
+							setError(e instanceof Error ? e.message : "Selection failed");
+						} finally {
+							setSaving(false);
+						}
+					}}
+					disabled={n === 0 || saving}
+				>
+					{saving ? "SAVING…" : "CONTINUE TO TRANSFORM"} <IArrow size={10} />
 				</button>
 			</div>
 		</div>
 	);
 }
 
-// ---------- transform (CUSTOMERS demo) ----------
-
-type Col = {
-	n: string;
-	t: string;
-	op: "keep" | "rename" | "cast" | "drop";
-	to?: string;
-	rename?: string;
+type ColOp = "keep" | "rename" | "cast" | "drop";
+type ColEdit = {
+	name: string;
+	type: string;
+	op: ColOp;
+	targetName: string;
+	targetType: string;
 };
 
-const TRANSFORM_COLS: Col[] = [
-	{ n: "CUST_ID", t: "INT", op: "rename", to: "customer_id" },
-	{ n: "CUST_NAME_1", t: "VARCHAR(30)", op: "rename", to: "display_name" },
-	{ n: "CUST_NAME_2", t: "VARCHAR(30)", op: "drop" },
-	{ n: "ADDR_LINE", t: "VARCHAR(60)", op: "rename", to: "address_line_1" },
-	{ n: "CITY", t: "VARCHAR(24)", op: "keep" },
-	{ n: "STATE_CD", t: "CHAR(2)", op: "rename", to: "region" },
-	{ n: "JOIN_DT", t: "DATE", op: "cast", to: "TIMESTAMPTZ", rename: "joined_at" },
-	{ n: "CREDIT_LIM", t: "MONEY", op: "cast", to: "DECIMAL(12,2)", rename: "credit_limit" },
-	{ n: "ACTV", t: "CHAR(1)", op: "cast", to: "BOOLEAN", rename: "is_active" },
-];
+const CAST_TYPES = ["string", "integer", "float", "boolean"];
 
-const TRANSFORM_ROWS: string[][] = [
-	["10045", "ACME NORTHWIND", "", "47 RAILROAD AVE", "PORTLAND", "OR", "1998-04-12", "5000.00", "Y"],
-	["10046", "BOB'S TOOLS", "LLC", "12 MILL ST", "EUGENE", "OR", "1998-04-18", "2500.00", "Y"],
-	["10047", "CEDAR CO.", "", "901 OAK DR", "SALEM", "OR", "1998-05-02", "10000.00", "N"],
-	["10048", "DELTA FARMS", "", "7 RANCH RD", "BEND", "OR", "1998-05-11", "750.00", "Y"],
-];
+function resolveType(colInfo: unknown): string {
+	if (typeof colInfo === "object" && colInfo) {
+		const ci = colInfo as Record<string, unknown>;
+		return String(ci.inferred_type ?? ci.original_type ?? "string");
+	}
+	return String(colInfo ?? "string");
+}
 
 function RlTransform({ onNext }: { onNext: () => void }) {
-	const COLS = TRANSFORM_COLS;
-	const ROWS = TRANSFORM_ROWS;
-	const [sel, setSel] = useState(1);
-	const c = COLS[sel];
+	const { uploadResult, setTransformResult } = usePipelineCtx();
+	const [running, setRunning] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const [result, setResult] = useState<TransformResult | null>(null);
+	const tables = uploadResult?.tables ?? [];
+	const preview = uploadResult?.preview ?? {};
+	const schema = uploadResult?.schema ?? {};
 
-	const afterName = (c: Col) =>
-		c.op === "cast"
-			? c.rename || c.n.toLowerCase()
-			: c.op === "rename"
-				? c.to!
-				: c.n.toLowerCase();
-	const afterType = (c: Col) => (c.op === "cast" ? c.to! : c.t);
-	const afterValue = (v: string, c: Col) => {
-		if (c.op === "drop") return null;
-		if (c.op === "cast") {
-			if (c.to === "BOOLEAN") return v === "Y" ? "true" : "false";
-			if (c.to === "TIMESTAMPTZ") return v + "T00:00:00Z";
-			if (c.to?.startsWith("DECIMAL")) return Number(v).toFixed(2);
+	const [activeTable, setActiveTable] = useState<string>(tables[0]?.name ?? "");
+	const [sel, setSel] = useState(0);
+
+	// Per-table column edits state: { [tableName]: ColEdit[] }
+	const [allEdits, setAllEdits] = useState<Record<string, ColEdit[]>>(() => {
+		const init: Record<string, ColEdit[]> = {};
+		for (const t of tables) {
+			const tSchema = schema[t.name] ?? {};
+			init[t.name] = Object.keys(tSchema).map((col) => ({
+				name: col,
+				type: resolveType(tSchema[col]),
+				op: "keep" as ColOp,
+				targetName: col.toLowerCase(),
+				targetType: resolveType(tSchema[col]),
+			}));
 		}
-		return v;
+		return init;
+	});
+
+	const cols = allEdits[activeTable] ?? [];
+	const c = cols[sel] ?? cols[0];
+
+	const updateCol = (idx: number, patch: Partial<ColEdit>) => {
+		setAllEdits((prev) => {
+			const tableCols = [...(prev[activeTable] ?? [])];
+			tableCols[idx] = { ...tableCols[idx], ...patch };
+			return { ...prev, [activeTable]: tableCols };
+		});
 	};
-	const kept = COLS.map((c, i) => ({ ...c, i })).filter((c) => c.op !== "drop");
+
+	const setOp = (idx: number, op: ColOp) => {
+		const col = cols[idx];
+		const patch: Partial<ColEdit> = { op };
+		if (op === "keep") {
+			patch.targetName = col.name.toLowerCase();
+			patch.targetType = col.type;
+		}
+		if (op === "rename") {
+			patch.targetType = col.type;
+		}
+		if (op === "cast") {
+			patch.targetName = col.targetName || col.name.toLowerCase();
+		}
+		updateCol(idx, patch);
+	};
+
+	const activePreview = (preview[activeTable] ?? []) as Record<string, unknown>[];
+	const kept = cols.filter((c) => c.op !== "drop");
+	const opCounts = {
+		rename: cols.filter((c) => c.op === "rename").length,
+		cast: cols.filter((c) => c.op === "cast").length,
+		drop: cols.filter((c) => c.op === "drop").length,
+	};
+
+	const saveAndTransform = async () => {
+		if (!uploadResult?.sessionId) return;
+		setRunning(true);
+		setError(null);
+		try {
+			// 1. Save configuration
+			const tableConfigs = tables.map((t) => {
+				const edits = allEdits[t.name] ?? [];
+				return {
+					source_table: t.name,
+					target_table: t.name,
+					columns: edits.map((e) => ({
+						name: e.name,
+						target_name: e.op === "rename" || e.op === "cast" ? e.targetName : undefined,
+						data_type: e.op === "cast" ? e.targetType : e.type,
+						nullable: true,
+						include: e.op !== "drop",
+					})),
+				};
+			});
+			const cfgRes = await fetch(
+				`/api/configure/${uploadResult.sessionId}`,
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ tables: tableConfigs }),
+				},
+			);
+			if (!cfgRes.ok) {
+				const err = await cfgRes.json().catch(() => null);
+				throw new Error(err?.detail || "Configuration failed");
+			}
+
+			// 2. Run transform
+			const res = await fetch(`/api/transform/${uploadResult.sessionId}`);
+			if (!res.ok) {
+				const err = await res.json().catch(() => null);
+				throw new Error(err?.detail || "Transform failed");
+			}
+			const data = await res.json();
+			setResult(data);
+			setTransformResult(data);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : "Transform failed");
+		} finally {
+			setRunning(false);
+		}
+	};
 
 	return (
 		<div
@@ -824,14 +1417,19 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 				gap: 14,
 			}}
 		>
-			<div style={{ display: "flex", gap: 6 }}>
-				{["CUSTOMERS", "ORDERS", "ORDER_LINES", "PRODUCTS"].map((t) => (
+			{/* Table tabs + summary */}
+			<div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+				{tables.map((t) => (
 					<button
-						key={t}
-						className={`btn ${t === "CUSTOMERS" ? "btn-primary" : "btn-ghost"}`}
+						key={t.name}
+						className={`btn ${t.name === activeTable ? "btn-primary" : "btn-ghost"}`}
 						style={{ padding: "6px 12px", fontSize: 10 }}
+						onClick={() => {
+							setActiveTable(t.name);
+							setSel(0);
+						}}
 					>
-						{t}
+						{t.name.toUpperCase()}
 					</button>
 				))}
 				<div style={{ flex: 1 }} />
@@ -846,11 +1444,7 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 				>
 					<span
 						className="pixel"
-						style={{
-							fontSize: 8,
-							color: "var(--lg-ink-mute)",
-							letterSpacing: "0.1em",
-						}}
+						style={{ fontSize: 8, color: "var(--lg-ink-mute)", letterSpacing: "0.1em" }}
 					>
 						OPS
 					</span>
@@ -858,492 +1452,448 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 						className="pixel"
 						style={{ fontSize: 12, color: "var(--lg-amber)" }}
 					>
-						{COLS.filter((c) => c.op !== "keep").length + 1}
+						{opCounts.rename + opCounts.cast + opCounts.drop}
 					</span>
-					<span
-						className="mono"
-						style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}
-					>
-						{COLS.filter((c) => c.op === "rename" || c.op === "cast").length}{" "}
-						rename · {COLS.filter((c) => c.op === "cast").length} cast ·{" "}
-						{COLS.filter((c) => c.op === "drop").length} drop · 1 add
+					<span className="mono" style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}>
+						{opCounts.rename} rename · {opCounts.cast} cast · {opCounts.drop} drop
 					</span>
 				</div>
 			</div>
 
+			{/* Column list + edit panel */}
 			<div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 14 }}>
 				<div className="panel">
-					<div className="panel-head">COLUMN EDITS — CUSTOMERS</div>
+					<div className="panel-head">
+						COLUMN EDITS — {activeTable.toUpperCase()}
+					</div>
 					<div className="panel-body" style={{ padding: 0 }}>
-						{COLS.map((col, i) => (
+						{cols.length === 0 ? (
 							<div
-								key={col.n}
-								className={`rl-col-row ${i === sel ? "row-selected" : ""} ${col.op === "drop" ? "dropped" : ""}`}
-								onClick={() => setSel(i)}
+								className="mono"
+								style={{ fontSize: 11, color: "var(--lg-ink-mute)", padding: 20, textAlign: "center" }}
 							>
-								<div style={{ flex: 1.4 }}>
-									{col.op === "rename" || (col.op === "cast" && col.rename) ? (
-										<>
+								No columns available.
+							</div>
+						) : (
+							cols.map((col, i) => (
+								<div
+									key={col.name}
+									className={`rl-col-row ${i === sel ? "row-selected" : ""} ${col.op === "drop" ? "dropped" : ""}`}
+									onClick={() => setSel(i)}
+									style={{ cursor: "pointer" }}
+								>
+									<div style={{ flex: 1.4 }}>
+										{col.op === "rename" || col.op === "cast" ? (
+											<>
+												<span
+													style={{
+														color: "var(--lg-ink-mute)",
+														textDecoration: "line-through",
+														marginRight: 6,
+														fontSize: 10,
+													}}
+												>
+													{col.name}
+												</span>
+												<span
+													style={{
+														color: "var(--lg-amber)",
+														fontFamily: "var(--lg-pixel)",
+														fontSize: 9,
+													}}
+												>
+													{col.targetName}
+												</span>
+											</>
+										) : (
 											<span
 												style={{
-													color: "var(--lg-ink-mute)",
-													textDecoration: "line-through",
-													marginRight: 6,
-													fontSize: 10,
-												}}
-											>
-												{col.n}
-											</span>
-											<span
-												style={{
-													color: "var(--lg-amber)",
+													color: col.op === "drop" ? "var(--lg-ink-mute)" : "var(--lg-ink)",
 													fontFamily: "var(--lg-pixel)",
 													fontSize: 9,
+													textDecoration: col.op === "drop" ? "line-through" : "none",
 												}}
 											>
-												{col.to || col.rename}
+												{col.name}
 											</span>
-										</>
-									) : (
-										<span
-											style={{
-												color: "var(--lg-ink)",
-												fontFamily: "var(--lg-pixel)",
-												fontSize: 9,
-											}}
-										>
-											{col.n}
-										</span>
-									)}
+										)}
+									</div>
+									<div
+										style={{
+											flex: 1,
+											fontFamily: "var(--lg-mono)",
+											fontSize: 10,
+											color: "var(--lg-ink-dim)",
+										}}
+									>
+										{col.op === "cast" ? (
+											<>
+												<span style={{ textDecoration: "line-through", marginRight: 4 }}>
+													{col.type.toUpperCase()}
+												</span>
+												<span style={{ color: "var(--lg-amber)" }}>
+													{col.targetType.toUpperCase()}
+												</span>
+											</>
+										) : (
+											col.type.toUpperCase()
+										)}
+									</div>
+									<div style={{ width: 80, textAlign: "right" }}>
+										{col.op === "keep" && <span className="badge badge-mute">KEEP</span>}
+										{col.op === "rename" && <span className="badge badge-ok">RENAME</span>}
+										{col.op === "cast" && <span className="badge badge-warn">CAST</span>}
+										{col.op === "drop" && <span className="badge badge-err">DROP</span>}
+									</div>
 								</div>
-								<div
-									style={{
-										flex: 1,
-										fontFamily: "var(--lg-mono)",
-										fontSize: 10,
-										color: "var(--lg-ink-dim)",
-									}}
-								>
-									{col.op === "cast" ? (
-										<>
-											<span
-												style={{
-													textDecoration: "line-through",
-													marginRight: 4,
-												}}
-											>
-												{col.t}
-											</span>
-											<span style={{ color: "var(--lg-amber)" }}>{col.to}</span>
-										</>
-									) : (
-										col.t
-									)}
-								</div>
-								<div style={{ width: 80, textAlign: "right" }}>
-									{col.op === "keep" && (
-										<span className="badge badge-mute">KEEP</span>
-									)}
-									{col.op === "rename" && (
-										<span className="badge badge-ok">RENAME</span>
-									)}
-									{col.op === "cast" && (
-										<span className="badge badge-warn">CAST</span>
-									)}
-									{col.op === "drop" && (
-										<span className="badge badge-err">DROP</span>
-									)}
-								</div>
-							</div>
-						))}
-						<div
-							className="rl-col-row"
-							style={{
-								borderTop: "2px dashed var(--lg-amber)",
-								background: "rgba(255,179,71,0.04)",
-							}}
-						>
-							<div
-								style={{
-									flex: 1.4,
-									fontFamily: "var(--lg-pixel)",
-									fontSize: 9,
-									color: "var(--lg-amber)",
-								}}
-							>
-								+ migrated_at
-							</div>
-							<div style={{ flex: 1, fontSize: 10, color: "var(--lg-amber)" }}>
-								TIMESTAMPTZ · default NOW()
-							</div>
-							<div style={{ width: 80, textAlign: "right" }}>
-								<span className="badge badge-solid">ADD</span>
-							</div>
-						</div>
+							))
+						)}
 					</div>
 				</div>
 
 				<div className="panel">
-					<div className="panel-head">EDIT · {c.n}</div>
+					<div className="panel-head">EDIT · {c?.name ?? "—"}</div>
 					<div className="panel-body">
-						<div
-							className="pixel"
-							style={{
-								fontSize: 10,
-								color: "var(--lg-ink-mute)",
-								marginBottom: 4,
-								letterSpacing: "0.1em",
-							}}
-						>
-							OPERATION
-						</div>
-						<div
-							style={{
-								display: "grid",
-								gridTemplateColumns: "repeat(4,1fr)",
-								gap: 4,
-								marginBottom: 12,
-							}}
-						>
-							{(["keep", "rename", "cast", "drop"] as const).map((k) => (
-								<button
-									key={k}
-									className={`btn ${c.op === k ? "btn-primary" : "btn-ghost"}`}
-									style={{
-										padding: "5px 6px",
-										fontSize: 9,
-										justifyContent: "center",
-									}}
-								>
-									{k.toUpperCase()}
-								</button>
-							))}
-						</div>
-						{c.op === "rename" && (
+						{c && (
 							<>
 								<div
 									className="pixel"
-									style={{
-										fontSize: 10,
-										color: "var(--lg-ink-mute)",
-										marginBottom: 4,
-									}}
+									style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4, letterSpacing: "0.1em" }}
 								>
-									NEW NAME
-								</div>
-								<input className="input" defaultValue={c.to} />
-							</>
-						)}
-						{c.op === "cast" && (
-							<>
-								<div
-									className="pixel"
-									style={{
-										fontSize: 10,
-										color: "var(--lg-ink-mute)",
-										marginBottom: 4,
-									}}
-								>
-									CAST TO
+									OPERATION
 								</div>
 								<div
 									style={{
 										display: "grid",
-										gridTemplateColumns: "repeat(2,1fr)",
+										gridTemplateColumns: "repeat(4,1fr)",
 										gap: 4,
 										marginBottom: 12,
 									}}
 								>
-									{[
-										"TEXT",
-										"INT",
-										"BIGINT",
-										"DECIMAL(12,2)",
-										"BOOLEAN",
-										"TIMESTAMPTZ",
-									].map((tp) => (
+									{(["keep", "rename", "cast", "drop"] as const).map((k) => (
 										<button
-											key={tp}
-											className={`btn ${c.to === tp ? "btn-primary" : "btn-ghost"}`}
-											style={{
-												padding: "5px 8px",
-												fontSize: 9,
-												justifyContent: "flex-start",
-											}}
+											key={k}
+											className={`btn ${c.op === k ? "btn-primary" : "btn-ghost"}`}
+											style={{ padding: "5px 6px", fontSize: 9, justifyContent: "center" }}
+											onClick={() => setOp(sel, k)}
 										>
-											{tp}
+											{k.toUpperCase()}
 										</button>
 									))}
 								</div>
-								<div
-									className="pixel"
-									style={{
-										fontSize: 10,
-										color: "var(--lg-ink-mute)",
-										marginBottom: 4,
-									}}
-								>
-									RENAME (OPTIONAL)
-								</div>
-								<input className="input" defaultValue={c.rename || ""} />
+
+								{c.op === "rename" && (
+									<>
+										<div
+											className="pixel"
+											style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4 }}
+										>
+											NEW NAME
+										</div>
+										<input
+											className="input"
+											value={c.targetName}
+											onChange={(e) => updateCol(sel, { targetName: e.target.value })}
+										/>
+									</>
+								)}
+
+								{c.op === "cast" && (
+									<>
+										<div
+											className="pixel"
+											style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4 }}
+										>
+											CAST TO
+										</div>
+										<div
+											style={{
+												display: "grid",
+												gridTemplateColumns: "repeat(2,1fr)",
+												gap: 4,
+												marginBottom: 12,
+											}}
+										>
+											{CAST_TYPES.map((tp) => (
+												<button
+													key={tp}
+													className={`btn ${c.targetType === tp ? "btn-primary" : "btn-ghost"}`}
+													style={{ padding: "5px 8px", fontSize: 9, justifyContent: "flex-start" }}
+													onClick={() => updateCol(sel, { targetType: tp })}
+												>
+													{tp.toUpperCase()}
+												</button>
+											))}
+										</div>
+										<div
+											className="pixel"
+											style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4 }}
+										>
+											RENAME (OPTIONAL)
+										</div>
+										<input
+											className="input"
+											value={c.targetName}
+											onChange={(e) => updateCol(sel, { targetName: e.target.value })}
+										/>
+									</>
+								)}
+
+								{c.op === "drop" && (
+									<div
+										style={{
+											padding: 10,
+											border: "1px solid var(--lg-coral)",
+											color: "var(--lg-coral)",
+											fontSize: 11,
+										}}
+									>
+										Column will be removed. Source data is preserved.
+									</div>
+								)}
+
+								{c.op === "keep" && (
+									<div
+										style={{
+											padding: 10,
+											border: "1px solid var(--lg-border)",
+											color: "var(--lg-ink-dim)",
+											fontSize: 11,
+										}}
+									>
+										Pass-through · value and type preserved.
+									</div>
+								)}
 							</>
 						)}
-						{c.op === "drop" && (
-							<div
-								style={{
-									padding: 10,
-									border: "1px solid var(--lg-coral)",
-									color: "var(--lg-coral)",
-									fontSize: 11,
-								}}
-							>
-								Column will be removed. Source data is preserved.
-							</div>
-						)}
-						{c.op === "keep" && (
-							<div
-								style={{
-									padding: 10,
-									border: "1px solid var(--lg-border)",
-									color: "var(--lg-ink-dim)",
-									fontSize: 11,
-								}}
-							>
-								Pass-through · value and type preserved.
-							</div>
-						)}
-						<hr className="hr-pixel" />
-						<div
-							className="pixel"
-							style={{
-								fontSize: 10,
-								color: "var(--lg-ink-mute)",
-								marginBottom: 4,
-							}}
-						>
-							ROW FILTER
-						</div>
-						<div
-							className="mono"
-							style={{
-								fontSize: 10,
-								padding: 8,
-								border: "1px solid var(--lg-border)",
-								background: "var(--lg-bg)",
-								color: "var(--lg-amber)",
-							}}
-						>
-							WHERE ACTV = 'Y' AND JOIN_DT &gt;= '1998-01-01'
-						</div>
-						<div style={{ fontSize: 10, color: "var(--lg-ink-dim)", marginTop: 6 }}>
-							48,221 →{" "}
-							<b style={{ color: "var(--lg-amber)" }}>46,084 kept</b>
-						</div>
 					</div>
 				</div>
 			</div>
 
-			<div className="panel">
-				<div className="panel-head">BEFORE / AFTER · SAMPLE 4 OF 48,221 ROWS</div>
-				<div className="panel-body" style={{ padding: 0 }}>
-					<div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
-						<div style={{ borderRight: "1px solid var(--lg-border)" }}>
-							<div
-								className="pixel"
-								style={{
-									fontSize: 9,
-									color: "var(--lg-ink-mute)",
-									padding: "8px 10px",
-									letterSpacing: "0.1em",
-								}}
-							>
-								SOURCE · CUSTOMERS
-							</div>
-							<div style={{ overflow: "auto" }}>
-								<table className="table">
-									<thead>
-										<tr>
-											{COLS.map((cl) => (
-												<th
-													key={cl.n}
-													className={
-														cl.op === "drop"
-															? "col-drop"
-															: cl.op === "rename"
-																? "col-rename"
-																: cl.op === "cast"
-																	? "col-cast"
-																	: ""
-													}
-												>
-													{cl.n}
-												</th>
-											))}
-										</tr>
-									</thead>
-									<tbody>
-										{ROWS.map((r, ri) => (
-											<tr key={ri}>
-												{r.map((v, ci) => (
-													<td
-														key={ci}
+			{/* Preview table (before → after) */}
+			{activePreview.length > 0 && (
+				<div className="panel">
+					<div className="panel-head">
+						BEFORE / AFTER · {activeTable.toUpperCase()} · {activePreview.length} SAMPLE ROWS
+					</div>
+					<div className="panel-body" style={{ padding: 0 }}>
+						<div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
+							<div style={{ borderRight: "1px solid var(--lg-border)" }}>
+								<div
+									className="pixel"
+									style={{ fontSize: 9, color: "var(--lg-ink-mute)", padding: "8px 10px", letterSpacing: "0.1em" }}
+								>
+									SOURCE · {activeTable.toUpperCase()}
+								</div>
+								<div style={{ overflow: "auto" }}>
+									<table className="table">
+										<thead>
+											<tr>
+												{cols.map((cl) => (
+													<th
+														key={cl.name}
 														className={
-															COLS[ci].op === "drop"
-																? "col-drop"
-																: COLS[ci].op === "rename"
-																	? "col-rename"
-																	: COLS[ci].op === "cast"
-																		? "col-cast"
-																		: ""
+															cl.op === "drop" ? "col-drop"
+																: cl.op === "rename" ? "col-rename"
+																: cl.op === "cast" ? "col-cast" : ""
 														}
 													>
-														{v || "—"}
-													</td>
+														{cl.name}
+													</th>
 												))}
 											</tr>
-										))}
-									</tbody>
-								</table>
-							</div>
-						</div>
-						<div>
-							<div
-								className="pixel"
-								style={{
-									fontSize: 9,
-									color: "var(--lg-amber)",
-									padding: "8px 10px",
-									letterSpacing: "0.1em",
-								}}
-							>
-								→ OUTPUT · customers
-							</div>
-							<div style={{ overflow: "auto" }}>
-								<table className="table">
-									<thead>
-										<tr>
-											{kept.map((cl) => (
-												<th
-													key={cl.n}
-													className={
-														cl.op === "cast"
-															? "col-cast"
-															: cl.op === "rename"
-																? "col-rename"
-																: ""
-													}
-												>
-													{afterName(cl)}
-													<div
-														style={{
-															fontFamily: "var(--lg-mono)",
-															fontSize: 9,
-															color: "var(--lg-ink-mute)",
-															fontWeight: 400,
-															letterSpacing: 0,
-														}}
-													>
-														{afterType(cl)}
-													</div>
-												</th>
+										</thead>
+										<tbody>
+											{activePreview.slice(0, 4).map((row, ri) => (
+												<tr key={ri}>
+													{cols.map((cl) => (
+														<td
+															key={cl.name}
+															className={
+																cl.op === "drop" ? "col-drop"
+																	: cl.op === "rename" ? "col-rename"
+																	: cl.op === "cast" ? "col-cast" : ""
+															}
+														>
+															{row[cl.name] != null ? String(row[cl.name]) : "—"}
+														</td>
+													))}
+												</tr>
 											))}
-											<th className="col-add">
-												migrated_at
-												<div
-													style={{
-														fontFamily: "var(--lg-mono)",
-														fontSize: 9,
-														letterSpacing: 0,
-														fontWeight: 400,
-													}}
-												>
-													TIMESTAMPTZ
-												</div>
-											</th>
-										</tr>
-									</thead>
-									<tbody>
-										{ROWS.map((r, ri) => (
-											<tr key={ri}>
+										</tbody>
+									</table>
+								</div>
+							</div>
+							<div>
+								<div
+									className="pixel"
+									style={{ fontSize: 9, color: "var(--lg-amber)", padding: "8px 10px", letterSpacing: "0.1em" }}
+								>
+									→ OUTPUT · {activeTable.toLowerCase()}
+								</div>
+								<div style={{ overflow: "auto" }}>
+									<table className="table">
+										<thead>
+											<tr>
 												{kept.map((cl) => (
-													<td
-														key={cl.n}
+													<th
+														key={cl.name}
 														className={
-															cl.op === "cast"
-																? "col-cast"
-																: cl.op === "rename"
-																	? "col-rename"
-																	: ""
+															cl.op === "cast" ? "col-cast"
+																: cl.op === "rename" ? "col-rename" : ""
 														}
 													>
-														{afterValue(r[cl.i], cl)}
-													</td>
+														{cl.targetName}
+														<div
+															style={{
+																fontFamily: "var(--lg-mono)",
+																fontSize: 9,
+																color: "var(--lg-ink-mute)",
+																fontWeight: 400,
+																letterSpacing: 0,
+															}}
+														>
+															{(cl.op === "cast" ? cl.targetType : cl.type).toUpperCase()}
+														</div>
+													</th>
 												))}
-												<td className="col-add">2026-04-22T14:02Z</td>
 											</tr>
-										))}
-									</tbody>
-								</table>
+										</thead>
+										<tbody>
+											{activePreview.slice(0, 4).map((row, ri) => (
+												<tr key={ri}>
+													{kept.map((cl) => (
+														<td
+															key={cl.name}
+															className={
+																cl.op === "cast" ? "col-cast"
+																	: cl.op === "rename" ? "col-rename" : ""
+															}
+														>
+															{row[cl.name] != null ? String(row[cl.name]) : "—"}
+														</td>
+													))}
+												</tr>
+											))}
+										</tbody>
+									</table>
+								</div>
 							</div>
 						</div>
 					</div>
 				</div>
-			</div>
+			)}
+
+			{/* Transform result stats */}
+			{result && (
+				<div className="panel">
+					<div className="panel-head">TRANSFORM RESULT</div>
+					<div className="panel-body" style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+						<dl className="kv">
+							<dt>TABLES</dt>
+							<dd>{result.tables_transformed}</dd>
+							<dt>ROWS</dt>
+							<dd>{result.total_rows.toLocaleString()}</dd>
+							<dt>ENCODING FIXES</dt>
+							<dd>{result.encoding_conversions}</dd>
+							<dt>TYPE CONVERSIONS</dt>
+							<dd>{result.type_conversions}</dd>
+							<dt>NULL NORMALIZATIONS</dt>
+							<dd>{result.null_normalizations}</dd>
+						</dl>
+						{result.warnings.length > 0 && (
+							<div>
+								{result.warnings.map((w, i) => (
+									<div key={i} className="mono" style={{ fontSize: 10, color: "var(--lg-coral)", marginTop: 4 }}>
+										! {w}
+									</div>
+								))}
+							</div>
+						)}
+					</div>
+				</div>
+			)}
+
+			{error && (
+				<div className="mono" style={{ fontSize: 11, color: "var(--lg-coral)" }}>
+					{"> "}{error}
+				</div>
+			)}
 
 			<div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-				<button className="btn btn-ghost">SAVE AS RECIPE</button>
-				<button className="btn btn-primary" onClick={onNext}>
-					CONTINUE TO MAP <IArrow size={10} />
-				</button>
+				{!result ? (
+					<button
+						className="btn btn-primary"
+						onClick={saveAndTransform}
+						disabled={running || !uploadResult?.sessionId}
+					>
+						{running ? "TRANSFORMING…" : "RUN TRANSFORM"} <IArrow size={10} />
+					</button>
+				) : (
+					<button className="btn btn-primary" onClick={onNext}>
+						CONTINUE TO MAP <IArrow size={10} />
+					</button>
+				)}
 			</div>
 		</div>
 	);
 }
 
-// ---------- map (wired view) ----------
-
-const MAP_SOURCES = [
-	{ n: "customer_id", t: "BIGINT" },
-	{ n: "display_name", t: "TEXT" },
-	{ n: "address_line_1", t: "TEXT" },
-	{ n: "city", t: "TEXT" },
-	{ n: "region", t: "TEXT" },
-	{ n: "joined_at", t: "TIMESTAMPTZ" },
-	{ n: "credit_limit", t: "DECIMAL(12,2)" },
-	{ n: "is_active", t: "BOOLEAN" },
-	{ n: "migrated_at", t: "TIMESTAMPTZ" },
-];
-
-type MapTarget = {
-	n: string;
-	t: string;
-	req: boolean;
-	src: string | null;
-	x: string | null;
-};
-
-const MAP_TARGETS: MapTarget[] = [
-	{ n: "id", t: "bigint", req: true, src: "customer_id", x: "direct" },
-	{ n: "name", t: "text", req: true, src: "display_name", x: "direct" },
-	{ n: "address", t: "text", req: false, src: "address_line_1", x: "concat" },
-	{ n: "city", t: "text", req: false, src: "city", x: "upper→title" },
-	{ n: "state", t: "char(2)", req: false, src: "region", x: "lookup" },
-	{ n: "signup_date", t: "date", req: true, src: "joined_at", x: "cast date" },
-	{ n: "credit_limit", t: "numeric", req: false, src: "credit_limit", x: "direct" },
-	{ n: "active", t: "boolean", req: true, src: "is_active", x: "direct" },
-	{ n: "created_at", t: "timestamptz", req: true, src: "migrated_at", x: "direct" },
-	{ n: "tenant_id", t: "text", req: true, src: null, x: "const" },
-	{ n: "tier", t: "text", req: false, src: null, x: null },
-];
+// ---------- map (configure) ----------
 
 function RlMap({ onNext }: { onNext: () => void }) {
-	const SOURCES = MAP_SOURCES;
-	const TARGETS = MAP_TARGETS;
-	const [sel, setSel] = useState("address");
-	const rowH = 40;
-	const headH = 24;
-	const mapped = TARGETS.filter((t) => t.src).length;
-	const missing = TARGETS.filter((t) => t.req && !t.src).length;
+	const { uploadResult, transformResult } = usePipelineCtx();
+	const [saving, setSaving] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	const tables = uploadResult?.tables ?? [];
+	const schema = uploadResult?.schema ?? {};
+	const transformPreview = (transformResult?.preview ?? {}) as Record<string, Record<string, unknown>[]>;
+
+	const [activeTable, setActiveTable] = useState<string>(tables[0]?.name ?? "");
+	const activeSchema = schema[activeTable] ?? {};
+	const columns = Object.keys(activeSchema);
+	const previewRows = (transformPreview[activeTable] ?? []) as Record<string, unknown>[];
+
+	const saveConfig = async () => {
+		if (!uploadResult?.sessionId) return;
+		setSaving(true);
+		setError(null);
+		try {
+			const tableConfigs = tables.map((t) => {
+				const tSchema = schema[t.name] ?? {};
+				const cols = Object.keys(tSchema).map((col) => ({
+					name: col,
+					data_type: typeof tSchema[col] === "object"
+						? String((tSchema[col] as Record<string, unknown>).inferred_type ?? "string")
+						: String(tSchema[col] ?? "string"),
+					nullable: true,
+					include: true,
+				}));
+				return {
+					source_table: t.name,
+					columns: cols,
+				};
+			});
+			const res = await fetch(
+				`/api/configure/${uploadResult.sessionId}?phase=map`,
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ tables: tableConfigs }),
+				},
+			);
+			if (!res.ok) {
+				const err = await res.json().catch(() => null);
+				throw new Error(err?.detail || "Configuration failed");
+			}
+			onNext();
+		} catch (e) {
+			setError(e instanceof Error ? e.message : "Configuration failed");
+		} finally {
+			setSaving(false);
+		}
+	};
 
 	return (
 		<div
@@ -1354,189 +1904,166 @@ function RlMap({ onNext }: { onNext: () => void }) {
 				gap: 14,
 			}}
 		>
-			<div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-				<select className="select" style={{ width: 280 }}>
-					<option>postgres/crm_customer_v2 · 11 fields</option>
-					<option>snowflake/sales_fact · 22 fields</option>
-					<option>+ CREATE NEW TEMPLATE</option>
-				</select>
+			<div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+				{tables.map((t) => (
+					<button
+						key={t.name}
+						className={`btn ${t.name === activeTable ? "btn-primary" : "btn-ghost"}`}
+						style={{ padding: "6px 12px", fontSize: 10 }}
+						onClick={() => setActiveTable(t.name)}
+					>
+						{t.name.toUpperCase()}
+					</button>
+				))}
 				<div style={{ flex: 1 }} />
 				<span className="badge badge-solid">
-					<ICheck size={8} /> {mapped}/{TARGETS.length} MAPPED
+					<ICheck size={8} /> {tables.length} TABLE{tables.length === 1 ? "" : "S"} CONFIGURED
 				</span>
-				{missing > 0 && (
-					<span className="badge badge-err">{missing} REQ MISSING</span>
-				)}
-				<button className="btn btn-ghost">AUTO-MAP</button>
 			</div>
 
-			<div className="panel">
-				<div className="panel-head">TARGET ← SOURCE · WIRED</div>
-				<div className="panel-body">
-					<div
-						style={{
-							display: "grid",
-							gridTemplateColumns: "1fr 80px 1fr",
-							gap: 0,
-						}}
-					>
-						<div>
+			<div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 14 }}>
+				<div className="panel">
+					<div className="panel-head">
+						COLUMN MAPPING — {activeTable.toUpperCase()}
+					</div>
+					<div className="panel-body" style={{ padding: 0 }}>
+						{columns.length === 0 ? (
 							<div
-								className="pixel"
-								style={{
-									fontSize: 9,
-									color: "var(--lg-ink-mute)",
-									padding: "0 0 8px",
-									letterSpacing: "0.1em",
-								}}
+								className="mono"
+								style={{ fontSize: 11, color: "var(--lg-ink-mute)", padding: 20, textAlign: "center" }}
 							>
-								SOURCE · customers (post-transform)
+								No columns to configure.
 							</div>
-							{SOURCES.map((s) => (
-								<div
-									key={s.n}
-									className="rl-map-field"
-									style={{ height: rowH - 4 }}
-								>
-									<div style={{ fontFamily: "var(--lg-mono)", fontSize: 11 }}>
-										{s.n}
-									</div>
-									<div style={{ fontSize: 9, color: "var(--lg-ink-mute)" }}>
-										{s.t}
-									</div>
-								</div>
-							))}
-						</div>
-						<div style={{ position: "relative" }}>
-							<svg
-								viewBox={`0 0 80 ${headH + TARGETS.length * rowH}`}
-								preserveAspectRatio="none"
-								style={{
-									position: "absolute",
-									inset: 0,
-									width: "100%",
-									height: "100%",
-								}}
-							>
-								{TARGETS.map((t, ti) => {
-									if (!t.src) return null;
-									const si = SOURCES.findIndex((s) => s.n === t.src);
-									if (si < 0) return null;
-									const y1 = headH + si * rowH + rowH / 2;
-									const y2 = headH + ti * rowH + rowH / 2;
-									const isSel = t.n === sel;
-									return (
-										<path
-											key={t.n}
-											d={`M0,${y1} C40,${y1} 40,${y2} 80,${y2}`}
-											fill="none"
-											stroke={
-												isSel ? "var(--lg-amber)" : "var(--lg-amber-dim)"
-											}
-											strokeWidth={isSel ? 2 : 1}
-											opacity={isSel ? 1 : 0.55}
-											shapeRendering="crispEdges"
-										/>
-									);
-								})}
-								{TARGETS.map((t, ti) => {
-									if (t.src) return null;
-									const y2 = headH + ti * rowH + rowH / 2;
-									return (
-										<path
-											key={t.n}
-											d={`M30,${y2} L80,${y2}`}
-											stroke="var(--lg-coral)"
-											strokeWidth={1}
-											strokeDasharray="2 2"
-											fill="none"
-										/>
-									);
-								})}
-							</svg>
-						</div>
-						<div>
-							<div
-								className="pixel"
-								style={{
-									fontSize: 9,
-									color: "var(--lg-amber)",
-									padding: "0 0 8px",
-									letterSpacing: "0.1em",
-								}}
-							>
-								→ TARGET · crm_customer_v2
-							</div>
-							{TARGETS.map((t) => {
-								const isSel = t.n === sel;
+						) : (
+							columns.map((col) => {
+								const colInfo = activeSchema[col];
+								const typeStr = typeof colInfo === "object" && colInfo
+									? String((colInfo as Record<string, unknown>).inferred_type ?? (colInfo as Record<string, unknown>).original_type ?? "TEXT")
+									: String(colInfo ?? "TEXT");
 								return (
-									<div
-										key={t.n}
-										onClick={() => setSel(t.n)}
-										className={`rl-map-field tgt ${isSel ? "selected" : ""} ${!t.src ? "unmapped" : ""}`}
-										style={{ height: rowH - 4 }}
-									>
-										<div
-											style={{
-												display: "flex",
-												justifyContent: "space-between",
-												alignItems: "baseline",
-											}}
-										>
-											<div
+									<div key={col} className="rl-col-row">
+										<div style={{ flex: 1.4 }}>
+											<span
 												style={{
-													fontFamily: "var(--lg-mono)",
-													fontSize: 11,
+													color: "var(--lg-ink)",
+													fontFamily: "var(--lg-pixel)",
+													fontSize: 9,
 												}}
 											>
-												{t.n}
-												{t.req && (
-													<span
-														style={{
-															color: "var(--lg-coral)",
-															marginLeft: 3,
-														}}
-													>
-														*
-													</span>
-												)}
-											</div>
-											<div
-												style={{ fontSize: 9, color: "var(--lg-ink-mute)" }}
-											>
-												{t.t}
-											</div>
+												{col}
+											</span>
 										</div>
 										<div
 											style={{
-												fontSize: 9,
-												color: t.src ? "var(--lg-ink-dim)" : "var(--lg-coral)",
+												flex: 0.6,
 												fontFamily: "var(--lg-mono)",
+												fontSize: 10,
+												color: "var(--lg-ink-dim)",
 											}}
 										>
-											{t.src ? (
-												<>
-													← {t.src} ·{" "}
-													<span style={{ color: "var(--lg-amber)" }}>
-														ƒ {t.x}
-													</span>
-												</>
-											) : (
-												"UNMAPPED · PICK A SOURCE"
-											)}
+											{typeStr.toUpperCase()}
+										</div>
+										<div style={{ flex: 0.4, textAlign: "center" }}>
+											<IArrow size={8} />
+										</div>
+										<div style={{ flex: 1.4 }}>
+											<span
+												style={{
+													color: "var(--lg-amber)",
+													fontFamily: "var(--lg-pixel)",
+													fontSize: 9,
+												}}
+											>
+												{col.toLowerCase()}
+											</span>
+										</div>
+										<div style={{ width: 60, textAlign: "right" }}>
+											<span className="badge badge-ok">INCLUDE</span>
 										</div>
 									</div>
 								);
-							})}
+							})
+						)}
+					</div>
+				</div>
+
+				<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+					<div className="panel">
+						<div className="panel-head">TABLE INFO</div>
+						<div className="panel-body">
+							<dl className="kv">
+								<dt>SOURCE</dt>
+								<dd>{activeTable.toUpperCase()}</dd>
+								<dt>TARGET</dt>
+								<dd>{activeTable.toLowerCase()}</dd>
+								<dt>COLUMNS</dt>
+								<dd>{columns.length}</dd>
+								<dt>ROWS</dt>
+								<dd>{(tables.find((t) => t.name === activeTable)?.rowCount ?? 0).toLocaleString()}</dd>
+							</dl>
 						</div>
 					</div>
+					{transformResult && (
+						<div className="panel">
+							<div className="panel-head">TRANSFORM STATS</div>
+							<div className="panel-body">
+								<dl className="kv">
+									<dt>ENCODING</dt>
+									<dd>{transformResult.encoding_conversions} fixes</dd>
+									<dt>TYPE CONV</dt>
+									<dd>{transformResult.type_conversions}</dd>
+									<dt>NULLS</dt>
+									<dd>{transformResult.null_normalizations}</dd>
+								</dl>
+							</div>
+						</div>
+					)}
 				</div>
 			</div>
 
+			{previewRows.length > 0 && (
+				<div className="panel">
+					<div className="panel-head">
+						PREVIEW · {activeTable.toUpperCase()} · {previewRows.length} ROWS
+					</div>
+					<div className="panel-body" style={{ padding: 0, overflow: "auto" }}>
+						<table className="table">
+							<thead>
+								<tr>
+									{columns.map((col) => (
+										<th key={col}>{col}</th>
+									))}
+								</tr>
+							</thead>
+							<tbody>
+								{previewRows.slice(0, 5).map((row, ri) => (
+									<tr key={ri}>
+										{columns.map((col) => (
+											<td key={col}>
+												{row[col] != null ? String(row[col]) : "—"}
+											</td>
+										))}
+									</tr>
+								))}
+							</tbody>
+						</table>
+					</div>
+				</div>
+			)}
+
+			{error && (
+				<div className="mono" style={{ fontSize: 11, color: "var(--lg-coral)" }}>
+					{"> "}{error}
+				</div>
+			)}
+
 			<div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-				<button className="btn btn-ghost">VALIDATE</button>
-				<button className="btn btn-primary" onClick={onNext}>
-					CONTINUE TO EXPORT <IArrow size={10} />
+				<button
+					className="btn btn-primary"
+					onClick={saveConfig}
+					disabled={saving || tables.length === 0}
+				>
+					{saving ? "SAVING…" : "CONTINUE TO EXPORT"} <IArrow size={10} />
 				</button>
 			</div>
 		</div>
@@ -1545,51 +2072,42 @@ function RlMap({ onNext }: { onNext: () => void }) {
 
 // ---------- export ----------
 
-const EXPORT_PREV: Record<string, string> = {
-	csv: `customer_id,display_name,city,region,joined_at,credit_limit,is_active,migrated_at
-10045,"ACME NORTHWIND","PORTLAND","OR",1998-04-12T00:00:00Z,5000.00,true,2026-04-22T14:02Z
-10046,"BOB'S TOOLS","EUGENE","OR",1998-04-18T00:00:00Z,2500.00,true,2026-04-22T14:02Z
-10047,"CEDAR CO.","SALEM","OR",1998-05-02T00:00:00Z,10000.00,false,2026-04-22T14:02Z
-…
-48,218 more rows`,
-	"sql-insert": `INSERT INTO customer_v2 (customer_id, display_name, city, region, joined_at, credit_limit, is_active) VALUES
-  (10045, 'ACME NORTHWIND', 'PORTLAND', 'OR', '1998-04-12'::timestamptz, 5000.00, true),
-  (10046, 'BOB''S TOOLS',   'EUGENE',   'OR', '1998-04-18'::timestamptz, 2500.00, true),
-  (10047, 'CEDAR CO.',      'SALEM',    'OR', '1998-05-02'::timestamptz,10000.00, false);
--- 48,221 rows in 483 batches`,
-	"sql-full": `CREATE TABLE customer_v2 (
-  customer_id   BIGINT       PRIMARY KEY,
-  display_name  TEXT         NOT NULL,
-  city          TEXT,
-  region        TEXT,
-  joined_at     TIMESTAMPTZ  NOT NULL,
-  credit_limit  NUMERIC(12,2),
-  is_active     BOOLEAN      NOT NULL,
-  migrated_at   TIMESTAMPTZ  NOT NULL
-);
-
-INSERT INTO customer_v2 VALUES (10045, 'ACME NORTHWIND', ...);`,
-	json: `{"customer_id":10045,"display_name":"ACME NORTHWIND","city":"PORTLAND","is_active":true}
-{"customer_id":10046,"display_name":"BOB'S TOOLS","city":"EUGENE","is_active":true}
-…`,
-	db: `-- target: postgres://prod-db/public
--- streaming 48,221 rows via COPY
-[ connection : established  ✓ ]
-[ schema     : customer_v2 exists ✓ ]
-[ conflict   : ON CONFLICT DO UPDATE ]
-
-> Press RUN to stream.`,
-};
-
 function RlExport({ onDone }: { onDone: () => void }) {
-	const [fmt, setFmt] = useState("csv");
+	const { uploadResult, transformResult, loadResult, setLoadResult } = usePipelineCtx();
+	const [fmt, setFmt] = useState("json");
+	const [running, setRunning] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	const totalRows = transformResult?.total_rows ?? uploadResult?.tables.reduce((a, t) => a + t.rowCount, 0) ?? 0;
+
 	const FORMATS = [
-		{ id: "csv", label: "CSV", sub: "Comma-separated · UTF-8" },
-		{ id: "sql-insert", label: "SQL · INSERTS", sub: "INSERT INTO … VALUES" },
-		{ id: "sql-full", label: "SQL · FULL", sub: "CREATE + INSERTS" },
 		{ id: "json", label: "JSON", sub: "One object per row" },
-		{ id: "db", label: "DIRECT TO DB", sub: "Stream via connection" },
+		{ id: "sql", label: "SQL", sub: "CREATE + INSERT statements" },
 	];
+
+	const runLoad = async () => {
+		if (!uploadResult?.sessionId) return;
+		setRunning(true);
+		setError(null);
+		try {
+			const res = await fetch(`/api/load/${uploadResult.sessionId}`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ output_format: fmt }),
+			});
+			if (!res.ok) {
+				const err = await res.json().catch(() => null);
+				throw new Error(err?.detail || "Load failed");
+			}
+			const data = await res.json();
+			setLoadResult(data);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : "Load failed");
+		} finally {
+			setRunning(false);
+		}
+	};
+
 	return (
 		<div
 			style={{
@@ -1605,7 +2123,7 @@ function RlExport({ onDone }: { onDone: () => void }) {
 					{FORMATS.map((f) => (
 						<div
 							key={f.id}
-							onClick={() => setFmt(f.id)}
+							onClick={() => !loadResult && setFmt(f.id)}
 							className={`rl-fmt-row ${fmt === f.id ? "active" : ""}`}
 						>
 							<div
@@ -1632,52 +2150,97 @@ function RlExport({ onDone }: { onDone: () => void }) {
 					))}
 				</div>
 			</div>
+
 			<div className="panel">
 				<div className="panel-head">
 					<span style={{ flex: 1 }}>
-						PREVIEW · customers.
-						{fmt === "csv"
-							? "csv"
-							: fmt === "json"
-								? "json"
-								: fmt === "db"
-									? "stream"
-									: "sql"}
+						{loadResult ? "OUTPUT FILES" : "EXPORT SETTINGS"}
 					</span>
-					<span className="badge badge-mute">48,221 ROWS · ≈7.4 MB</span>
+					<span className="badge badge-mute">
+						{totalRows.toLocaleString()} ROWS
+					</span>
 				</div>
-				<pre
-					style={{
-						margin: 0,
-						padding: 14,
-						fontSize: 11,
-						lineHeight: 1.7,
-						fontFamily: "var(--lg-mono)",
-						color: "var(--lg-amber)",
-						background: "#000",
-						minHeight: 340,
-						whiteSpace: "pre-wrap",
-						overflow: "auto",
-					}}
-				>
-					{EXPORT_PREV[fmt]}
-				</pre>
+				<div className="panel-body">
+					{loadResult ? (
+						<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+							{loadResult.output_files.map((file) => (
+								<div key={file} className="rl-file-row">
+									<IDisk size={12} />
+									<div style={{ flex: 1, fontSize: 12 }}>{file}</div>
+									<a
+										href={`/api/download/${uploadResult?.sessionId}/${file}`}
+										download
+										className="btn btn-ghost"
+										style={{ padding: "4px 10px", fontSize: 10 }}
+									>
+										DOWNLOAD
+									</a>
+								</div>
+							))}
+							{loadResult.errors.length > 0 && (
+								<div style={{ marginTop: 8 }}>
+									{loadResult.errors.map((e, i) => (
+										<div
+											key={i}
+											className="mono"
+											style={{ fontSize: 10, color: "var(--lg-coral)", marginTop: 4 }}
+										>
+											! {e}
+										</div>
+									))}
+								</div>
+							)}
+							<div style={{ marginTop: 12 }}>
+								<div
+									className="pixel"
+									style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 8 }}
+								>
+									ROWS WRITTEN
+								</div>
+								<dl className="kv">
+									{Object.entries(loadResult.rows_written).map(([table, count]) => (
+										<>
+											<dt key={table + "-dt"}>{table.toUpperCase()}</dt>
+											<dd key={table + "-dd"}>{count.toLocaleString()}</dd>
+										</>
+									))}
+								</dl>
+							</div>
+						</div>
+					) : (
+						<div
+							className="mono"
+							style={{
+								fontSize: 11,
+								color: "var(--lg-ink-dim)",
+								lineHeight: 1.7,
+							}}
+						>
+							Select a format and click RUN to generate output files.
+							The backend will process all transformed data and create
+							downloadable {fmt.toUpperCase()} files.
+						</div>
+					)}
+				</div>
 			</div>
+
 			<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
 				<div className="panel">
-					<div className="panel-head">READY TO RUN</div>
+					<div className="panel-head">
+						{loadResult ? "COMPLETE" : "READY TO RUN"}
+					</div>
 					<div className="panel-body">
 						<div
 							className="pixel"
 							style={{ fontSize: 22, color: "var(--lg-amber)" }}
 						>
-							48,221
+							{totalRows.toLocaleString()}
 						</div>
 						<div
 							className="mono"
 							style={{ fontSize: 11, color: "var(--lg-ink-dim)" }}
 						>
-							ROWS WILL MIGRATE
+							{loadResult ? "ROWS EXPORTED" : "ROWS WILL EXPORT"}
 						</div>
 					</div>
 				</div>
@@ -1685,21 +2248,48 @@ function RlExport({ onDone }: { onDone: () => void }) {
 					<div className="panel-head">OPTIONS</div>
 					<div className="panel-body">
 						<dl className="kv">
-							<dt>BATCH</dt>
-							<dd>100 rows</dd>
+							<dt>FORMAT</dt>
+							<dd>{fmt.toUpperCase()}</dd>
 							<dt>ENCODING</dt>
 							<dd>UTF-8</dd>
 							<dt>ON ERROR</dt>
 							<dd>halt + log</dd>
-							<dt>DELIMITER</dt>
-							<dd>{fmt === "csv" ? "," : "—"}</dd>
 						</dl>
 					</div>
 				</div>
-				<button className="btn btn-primary" onClick={onDone}>
-					▶ RUN PIPELINE
-				</button>
-				<button className="btn btn-ghost">DOWNLOAD SAMPLE</button>
+
+				{error && (
+					<div className="mono" style={{ fontSize: 11, color: "var(--lg-coral)" }}>
+						{"> "}{error}
+					</div>
+				)}
+
+				{!loadResult ? (
+					<button
+						className="btn btn-primary"
+						onClick={runLoad}
+						disabled={running || !uploadResult?.sessionId}
+					>
+						{running ? "EXPORTING…" : "▶ RUN PIPELINE"}
+					</button>
+				) : (
+					<button
+						className="btn btn-primary"
+						onClick={async () => {
+							// Call stats to finalize the pipeline phase
+							if (uploadResult?.sessionId) {
+								try {
+									await fetch(`/api/stats/${uploadResult.sessionId}`);
+								} catch {
+									// non-critical
+								}
+							}
+							onDone();
+						}}
+					>
+						DONE · BACK TO PROJECTS
+					</button>
+				)}
 			</div>
 		</div>
 	);
@@ -1709,11 +2299,13 @@ function RlExport({ onDone }: { onDone: () => void }) {
 
 export function RlPipeline({
 	project,
+	resumed,
 	stage,
 	setStage,
 	onBack,
 }: {
 	project: Project | null;
+	resumed: ResumedSession | null;
 	stage: StageId;
 	setStage: (s: StageId) => void;
 	onBack: () => void;
@@ -1724,32 +2316,19 @@ export function RlPipeline({
 	};
 	const stageMeta = RL_STAGES.find((s) => s.id === stage);
 	return (
-		<PipelineProvider>
+		<PipelineProvider projectId={project?.id ?? null} resumed={resumed}>
 			<div className="rl-page">
 				<RlTopbar
-					title={project?.name || "NEW PROJECT"}
+					title={project?.name?.toUpperCase() || "GUEST SESSION"}
 					sub={
-						project && project.source !== "—"
-							? `${project.source}  →  ${project.target}`
+						project
+							? `PHASE: ${project.phase.toUpperCase()}`
 							: "NOT STARTED"
 					}
 					right={
-						<>
-							<button className="btn btn-ghost" onClick={onBack}>
-								← PROJECTS
-							</button>
-							{project?.status === "running" && (
-								<span className="badge badge-ok">
-									<IDot size={6} /> RUNNING
-								</span>
-							)}
-							{project?.status === "done" && (
-								<span className="badge badge-solid">DONE</span>
-							)}
-							{project?.status === "error" && (
-								<span className="badge badge-err">ERROR</span>
-							)}
-						</>
+						<button className="btn btn-ghost" onClick={onBack}>
+							← PROJECTS
+						</button>
 					}
 				/>
 				<RlStepper stage={stage} onStage={setStage} />

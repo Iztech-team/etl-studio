@@ -95,7 +95,7 @@ export function RlHistory() {
 					<div className="rl-empty">
 						<Sparkles />
 						<div className="rl-empty-mascot">
-							<SpriteGhost size={80} />
+							<SpriteGhost size={80} color="amber" />
 						</div>
 						<div className="rl-empty-title">NO RUNS YET</div>
 						<div className="rl-empty-sub">

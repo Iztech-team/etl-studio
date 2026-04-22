@@ -112,6 +112,11 @@ body { font-family: var(--lg-mono); }
   color: var(--lg-ink-dim);
 }
 .btn-ghost:hover { color: var(--lg-ink); border-color: var(--lg-ink-mute); background: transparent; }
+.btn:disabled, .btn[disabled] {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
 
 .btn-coral {
   background: var(--lg-coral);
