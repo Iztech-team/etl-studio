@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { PipelineProvider, usePipeline } from "./store/pipeline";
 import { ProgressSteps } from "./components/ui";
 import LiquidEther from "./components/ui/LiquidEther";
@@ -10,6 +11,8 @@ import ValidatePhase from "./components/ValidatePhase";
 import TransformPhase from "./components/TransformPhase";
 import LoadPhase from "./components/LoadPhase";
 import StatsPhase from "./components/StatsPhase";
+import LandingPage from "./components/LandingPage";
+import { saveProject } from "./api/projects";
 import type { Phase } from "./store/pipeline";
 
 const PHASE_COMPONENTS: Record<Phase, () => JSX.Element> = {
@@ -23,26 +26,52 @@ const PHASE_COMPONENTS: Record<Phase, () => JSX.Element> = {
 	stats: StatsPhase,
 };
 
+const liquidEtherProps = {
+	colors: ["#1E3A8A", "#3B82F6", "#60A5FA"] as [string, string, string],
+	mouseForce: 50,
+	cursorSize: 150,
+	resolution: 0.5,
+	isBounce: true,
+	autoDemo: true,
+	autoSpeed: 1.4,
+	autoIntensity: 5.0,
+	takeoverDuration: 0.2,
+	autoResumeDelay: 1500,
+	autoRampDuration: 0.4,
+};
+
 function PipelineApp() {
 	const { state, dispatch } = usePipeline();
+	const [saving, setSaving] = useState(false);
+
+	if (state.mode === "landing") {
+		return (
+			<>
+				<div className="pointer-events-none fixed inset-0 z-[1]">
+					<LiquidEther {...liquidEtherProps} />
+				</div>
+				<div className="pointer-events-none fixed inset-0 z-[2] bg-background/50" />
+				<LandingPage />
+			</>
+		);
+	}
+
 	const PhaseComponent = PHASE_COMPONENTS[state.phase];
+
+	async function handleSave() {
+		if (!state.projectId) return;
+		setSaving(true);
+		try {
+			await saveProject(state.projectId);
+		} finally {
+			setSaving(false);
+		}
+	}
 
 	return (
 		<div className="min-h-screen flex flex-col relative">
 			<div className="pointer-events-none fixed inset-0 z-[1]">
-				<LiquidEther
-					colors={["#1E3A8A", "#3B82F6", "#60A5FA"]}
-					mouseForce={50}
-					cursorSize={150}
-					resolution={0.5}
-					isBounce={true}
-					autoDemo={true}
-					autoSpeed={1.4}
-					autoIntensity={5.0}
-					takeoverDuration={0.2}
-					autoResumeDelay={1500}
-					autoRampDuration={0.4}
-				/>
+				<LiquidEther {...liquidEtherProps} />
 			</div>
 			<div className="pointer-events-none fixed inset-0 z-[2] bg-background/50" />
 
@@ -56,22 +85,45 @@ function PipelineApp() {
 							<h1 className="text-lg font-bold text-foreground tracking-tight">
 								ETL Studio
 							</h1>
-							<span className="text-xs text-muted-foreground hidden sm:inline">
-								v1.0
-							</span>
-						</div>
-						{state.sessionId && (
-							<span className="text-xs text-muted-foreground">
-								session:{" "}
-								<span className="text-accent font-mono">
-									{state.sessionId.slice(0, 8)}
+							{state.projectName && (
+								<span className="text-sm text-accent font-medium">
+									/ {state.projectName}
 								</span>
-							</span>
-						)}
+							)}
+						</div>
+						<div className="flex items-center gap-3">
+							{state.mode === "project" && (
+								<button
+									onClick={handleSave}
+									disabled={saving}
+									className="px-3 py-1.5 rounded-md border border-border text-xs font-medium text-foreground hover:bg-muted/50 disabled:opacity-50"
+								>
+									{saving ? "Saving..." : "Save"}
+								</button>
+							)}
+							<button
+								onClick={() => dispatch({ type: "RESET" })}
+								className="px-3 py-1.5 rounded-md border border-border text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50"
+							>
+								{state.mode === "project"
+									? "Back to Projects"
+									: "New Session"}
+							</button>
+							{state.sessionId && state.mode === "guest" && (
+								<span className="text-xs text-muted-foreground">
+									session:{" "}
+									<span className="text-accent font-mono">
+										{state.sessionId.slice(0, 8)}
+									</span>
+								</span>
+							)}
+						</div>
 					</div>
 					<ProgressSteps
 						current={state.phase}
-						onNavigate={(phase) => dispatch({ type: "GO_TO_PHASE", phase })}
+						onNavigate={(phase) =>
+							dispatch({ type: "GO_TO_PHASE", phase })
+						}
 					/>
 				</div>
 			</header>

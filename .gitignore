@@ -20,6 +20,7 @@ venv/
 # Backend runtime
 backend/uploads/
 backend/outputs/
+backend/data/
 
 # OS
 .DS_Store

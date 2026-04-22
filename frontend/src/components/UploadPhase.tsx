@@ -13,12 +13,12 @@ export default function UploadPhase() {
     if (accepted.length === 0) return
     dispatch({ type: 'SET_LOADING', loading: true })
     try {
-      const result = await uploadFiles(accepted)
+      const result = await uploadFiles(accepted, state.projectId ?? undefined)
       dispatch({ type: 'SET_UPLOAD', result })
     } catch (e: unknown) {
       dispatch({ type: 'SET_ERROR', error: e instanceof Error ? e.message : 'Upload failed' })
     }
-  }, [dispatch])
+  }, [dispatch, state.projectId])
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,

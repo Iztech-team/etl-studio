@@ -29,10 +29,12 @@ export async function preExtract(
   file: File,
   password?: string,
   onProgress?: (percent: number) => void,
+  projectId?: string,
 ): Promise<PreExtractResponse> {
   const form = new FormData()
   form.append('file', file)
   if (password) form.append('password', password)
+  if (projectId) form.append('project_id', projectId)
   const { data } = await api.post<PreExtractResponse>('/pre-extract', form, {
     onUploadProgress: (e) => {
       if (onProgress && e.total) {
@@ -60,9 +62,10 @@ export async function saveTableData(
   return data
 }
 
-export async function uploadFiles(files: File[]): Promise<UploadResponse> {
+export async function uploadFiles(files: File[], projectId?: string): Promise<UploadResponse> {
   const form = new FormData()
   for (const f of files) form.append('files', f)
+  if (projectId) form.append('project_id', projectId)
   const { data } = await api.post<UploadResponse>('/upload', form)
   return data
 }

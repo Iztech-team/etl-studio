@@ -58,6 +58,7 @@ export default function PreExtractPhase() {
         selectedFile,
         password || undefined,
         (percent) => setUploadProgress(percent),
+        state.projectId ?? undefined,
       )
       // Select all tables by default
       setSelectedTables(new Set(result.tables_extracted))

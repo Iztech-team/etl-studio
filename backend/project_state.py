@@ -70,12 +70,15 @@ def load_state(project_id: str) -> dict:
             if table in ddl_schema:
                 raw["schema"][table] = ddl_schema[table]
 
-    files = [
-        fname
+    session["files"] = [
+        {
+            "name": fname,
+            "path": os.path.join(uploads_dir, fname),
+            "size": os.path.getsize(os.path.join(uploads_dir, fname)),
+        }
         for fname in os.listdir(uploads_dir)
         if os.path.isfile(os.path.join(uploads_dir, fname))
     ]
-    session["files"] = files
 
     phase = session.get("phase", "upload")
     phase_index = PHASE_ORDER.index(phase) if phase in PHASE_ORDER else 0

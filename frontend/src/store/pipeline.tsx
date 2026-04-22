@@ -12,9 +12,14 @@ import type {
 export const PHASES = ['pre-extract', 'upload', 'edit', 'configure', 'validate', 'transform', 'load', 'stats'] as const
 export type Phase = (typeof PHASES)[number]
 
+export type AppMode = 'landing' | 'project' | 'guest'
+
 interface PipelineState {
+  mode: AppMode
   phase: Phase
   sessionId: string | null
+  projectId: string | null
+  projectName: string | null
   preExtractResult: PreExtractResponse | null
   uploadResult: UploadResponse | null
   configureResult: ConfigureResponse | null
@@ -29,6 +34,9 @@ interface PipelineState {
 type Action =
   | { type: 'SET_LOADING'; loading: boolean }
   | { type: 'SET_ERROR'; error: string | null }
+  | { type: 'SET_PROJECT'; projectId: string; projectName: string }
+  | { type: 'START_GUEST' }
+  | { type: 'RESTORE_PROJECT'; projectId: string; projectName: string; sessionId: string; phase: Phase; uploadResult: UploadResponse | null; configureResult: ConfigureResponse | null; validateResult: ValidateResponse | null; transformResult: TransformResponse | null; loadResult: LoadResponse | null; statsResult: StatsResponse | null }
   | { type: 'SET_PRE_EXTRACT'; result: PreExtractResponse }
   | { type: 'CONFIRM_PRE_EXTRACT'; selectedTables: string[] }
   | { type: 'SKIP_PRE_EXTRACT' }
@@ -43,8 +51,11 @@ type Action =
   | { type: 'RESET' }
 
 const initialState: PipelineState = {
+  mode: 'landing',
   phase: 'pre-extract',
   sessionId: null,
+  projectId: null,
+  projectName: null,
   preExtractResult: null,
   uploadResult: null,
   configureResult: null,
@@ -62,6 +73,27 @@ function reducer(state: PipelineState, action: Action): PipelineState {
       return { ...state, loading: action.loading, error: null }
     case 'SET_ERROR':
       return { ...state, error: action.error, loading: false }
+    case 'SET_PROJECT':
+      return { ...state, mode: 'project', projectId: action.projectId, projectName: action.projectName, phase: 'pre-extract' }
+    case 'START_GUEST':
+      return { ...state, mode: 'guest', phase: 'pre-extract' }
+    case 'RESTORE_PROJECT':
+      return {
+        ...state,
+        mode: 'project',
+        projectId: action.projectId,
+        projectName: action.projectName,
+        sessionId: action.sessionId,
+        phase: action.phase,
+        uploadResult: action.uploadResult,
+        configureResult: action.configureResult,
+        validateResult: action.validateResult,
+        transformResult: action.transformResult,
+        loadResult: action.loadResult,
+        statsResult: action.statsResult,
+        loading: false,
+        error: null,
+      }
     case 'SET_PRE_EXTRACT':
       return {
         ...state,
