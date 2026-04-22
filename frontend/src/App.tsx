@@ -50,7 +50,7 @@ function PipelineApp() {
 				<div className="pointer-events-none fixed inset-0 z-[1]">
 					<LiquidEther {...liquidEtherProps} />
 				</div>
-				<div className="pointer-events-none fixed inset-0 z-[2] bg-background/50" />
+				<div className="pointer-events-none fixed inset-0 z-[2] bg-background/60" />
 				<LandingPage />
 			</>
 		);
@@ -73,9 +73,9 @@ function PipelineApp() {
 			<div className="pointer-events-none fixed inset-0 z-[1]">
 				<LiquidEther {...liquidEtherProps} />
 			</div>
-			<div className="pointer-events-none fixed inset-0 z-[2] bg-background/50" />
+			<div className="pointer-events-none fixed inset-0 z-[2] bg-background/60" />
 
-			<header className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm border-b border-border">
+			<header className="sticky top-0 z-10 bg-background/95 backdrop-blur-md border-b border-border">
 				<div className="max-w-5xl mx-auto px-6 py-4">
 					<div className="flex items-center justify-between mb-4">
 						<div className="flex items-center gap-3">
@@ -83,7 +83,7 @@ function PipelineApp() {
 								E
 							</span>
 							<h1 className="text-lg font-bold text-foreground tracking-tight">
-								ETL Studio
+								ETL Legacy
 							</h1>
 							{state.projectName && (
 								<span className="text-sm text-accent font-medium">
@@ -135,7 +135,7 @@ function PipelineApp() {
 			<Separator />
 			<footer className="py-3 text-center relative z-[5]">
 				<span className="text-xs text-muted-foreground">
-					ETL Studio · Data Pipeline Toolkit
+					ETL Legacy · Data Pipeline Toolkit
 				</span>
 			</footer>
 		</div>

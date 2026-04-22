@@ -131,16 +131,16 @@ export default function LandingPage() {
   const buttonClasses = 'px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed'
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen p-6">
+    <div className="flex flex-col items-center justify-center min-h-screen p-6 relative z-[5]">
       {/* Header */}
       <div className="text-center mb-10">
         <h1 className="text-4xl font-bold text-foreground flex items-center justify-center gap-2">
           <span className="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-primary text-primary-foreground text-lg font-bold">
             E
           </span>
-          TL Studio
+          TL Legacy
         </h1>
-        <p className="text-muted-foreground mt-2 text-sm">Data Pipeline Toolkit</p>
+        <p className="text-muted-foreground mt-2 text-sm">Legacy Data Pipeline Toolkit</p>
       </div>
 
       {/* Cards */}

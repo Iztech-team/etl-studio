@@ -49,7 +49,7 @@ from models.project_schemas import (
     ProjectListResponse,
 )
 
-app = FastAPI(title="ETL Studio", version="1.0.0")
+app = FastAPI(title="ETL Legacy", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
