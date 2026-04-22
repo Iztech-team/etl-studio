@@ -25,6 +25,29 @@ from models.schemas import (
     EditDataRequest,
     EditDataResponse,
 )
+from db import (
+    init_db,
+    create_project,
+    list_projects,
+    get_project,
+    rename_project,
+    delete_project,
+    update_project_phase,
+)
+from project_state import (
+    save_state,
+    load_state,
+    ensure_project_dirs,
+    project_uploads_dir,
+    project_outputs_dir,
+    delete_project_files,
+)
+from models.project_schemas import (
+    CreateProjectRequest,
+    RenameProjectRequest,
+    ProjectResponse,
+    ProjectListResponse,
+)
 
 app = FastAPI(title="ETL Studio", version="1.0.0")
 
@@ -40,13 +63,119 @@ OUTPUT_DIR = "outputs"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+GUEST_DIR = os.path.join(os.path.dirname(__file__), "data", "guest")
+os.makedirs(GUEST_DIR, exist_ok=True)
+init_db()
+
 # In-memory session store (keyed by session_id)
 sessions: dict = {}
+
+
+def _auto_save(session_id: str, phase: str) -> None:
+    """If the session is linked to a project, persist state and update phase."""
+    s = sessions.get(session_id)
+    if not s or not s.get("project_id"):
+        return
+    project_id = s["project_id"]
+    s["phase"] = phase
+    save_state(project_id, s)
+    update_project_phase(project_id, phase)
 
 
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.post("/api/projects", response_model=ProjectResponse)
+async def create_project_endpoint(body: CreateProjectRequest):
+    try:
+        project = create_project(body.name, body.username)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    ensure_project_dirs(project["id"])
+    return ProjectResponse(**project)
+
+
+@app.get("/api/projects", response_model=ProjectListResponse)
+async def list_projects_endpoint(username: str):
+    projects = list_projects(username)
+    return ProjectListResponse(projects=[ProjectResponse(**p) for p in projects])
+
+
+@app.get("/api/projects/{project_id}", response_model=ProjectResponse)
+async def get_project_endpoint(project_id: str):
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    return ProjectResponse(**project)
+
+
+@app.patch("/api/projects/{project_id}", response_model=ProjectResponse)
+async def rename_project_endpoint(project_id: str, body: RenameProjectRequest):
+    try:
+        rename_project(project_id, body.name)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    project = get_project(project_id)
+    return ProjectResponse(**project)
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project_endpoint(project_id: str):
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    to_remove = [
+        sid for sid, s in sessions.items() if s.get("project_id") == project_id
+    ]
+    for sid in to_remove:
+        del sessions[sid]
+    delete_project_files(project_id)
+    delete_project(project_id)
+    return {"ok": True}
+
+
+@app.post("/api/projects/{project_id}/resume")
+async def resume_project(project_id: str):
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    session_id = str(uuid.uuid4())
+    session = load_state(project_id)
+    session["project_id"] = project_id
+    sessions[session_id] = session
+    raw = session.get("raw", {})
+    return {
+        "session_id": session_id,
+        "project": project,
+        "phase": project["phase"],
+        "files": session.get("files", []),
+        "preview": raw.get("preview", {}),
+        "inferred_schema": raw.get("schema", {}),
+        "stats": raw.get("stats", {}),
+        "ddl_schema": session.get("ddl_schema", {}),
+        "config": session.get("config"),
+        "validation": session.get("validation"),
+        "transform": session.get("transformed"),
+        "load_result": session.get("load_result"),
+    }
+
+
+@app.post("/api/projects/{project_id}/save")
+async def save_project(project_id: str):
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    session = None
+    for s in sessions.values():
+        if s.get("project_id") == project_id:
+            session = s
+            break
+    if not session:
+        raise HTTPException(400, "No active session for this project")
+    save_state(project_id, session)
+    return {"ok": True}
 
 
 def _detect_db_type(filename: str) -> str | None:
@@ -61,6 +190,7 @@ def _detect_db_type(filename: str) -> str | None:
 async def pre_extract(
     file: UploadFile = File(...),
     password: str | None = Form(None),
+    project_id: str | None = Form(None),
 ):
     db_type = _detect_db_type(file.filename or "")
     if not db_type:
@@ -71,7 +201,10 @@ async def pre_extract(
         )
 
     session_id = str(uuid.uuid4())
-    session_dir = os.path.join(UPLOAD_DIR, session_id)
+    if project_id:
+        session_dir = project_uploads_dir(project_id)
+    else:
+        session_dir = os.path.join(GUEST_DIR, session_id)
     os.makedirs(session_dir, exist_ok=True)
 
     dest = os.path.join(session_dir, file.filename)
@@ -117,6 +250,7 @@ async def pre_extract(
     ]
 
     sessions[session_id] = {
+        "project_id": project_id,
         "pre_extract": {
             "file": file_info.dict(),
             "password": password is not None,
@@ -129,6 +263,7 @@ async def pre_extract(
         "applied_ddl": [],
     }
 
+    _auto_save(session_id, "pre-extract")
     return PreExtractResponse(
         ok=True,
         session_id=session_id,
@@ -161,7 +296,10 @@ async def pre_extract_select(session_id: str, body: ApplyDDLRequest):
         raw.get("preview", {}).pop(table, None)
 
     # Remove CSV files for deselected tables
-    session_dir = os.path.join(UPLOAD_DIR, session_id)
+    if s.get("project_id"):
+        session_dir = project_uploads_dir(s["project_id"])
+    else:
+        session_dir = os.path.join(GUEST_DIR, session_id)
     s["files"] = [
         f for f in s.get("files", []) if f["name"].rsplit(".", 1)[0] in selected
     ]
@@ -170,6 +308,7 @@ async def pre_extract_select(session_id: str, body: ApplyDDLRequest):
         if os.path.exists(csv_path):
             os.remove(csv_path)
 
+    _auto_save(session_id, "edit")
     return {
         "ok": True,
         "kept": sorted(selected & all_tables),
@@ -178,9 +317,15 @@ async def pre_extract_select(session_id: str, body: ApplyDDLRequest):
 
 
 @app.post("/api/upload")
-async def upload_files(files: List[UploadFile] = File(...)):
+async def upload_files(
+    files: List[UploadFile] = File(...),
+    project_id: str | None = Form(None),
+):
     session_id = str(uuid.uuid4())
-    session_dir = os.path.join(UPLOAD_DIR, session_id)
+    if project_id:
+        session_dir = project_uploads_dir(project_id)
+    else:
+        session_dir = os.path.join(GUEST_DIR, session_id)
     os.makedirs(session_dir, exist_ok=True)
 
     saved = []
@@ -193,6 +338,7 @@ async def upload_files(files: List[UploadFile] = File(...)):
     extractor = Extractor(session_dir)
     result = extractor.extract_all()
     sessions[session_id] = {
+        "project_id": project_id,
         "extractor": extractor,
         "raw": result,
         "files": saved,
@@ -200,6 +346,7 @@ async def upload_files(files: List[UploadFile] = File(...)):
         "applied_ddl": [],
     }
 
+    _auto_save(session_id, "edit")
     return {
         "session_id": session_id,
         "files": saved,
@@ -252,6 +399,7 @@ async def save_table_data(session_id: str, body: EditDataRequest):
     extractor._infer_schema()
     raw["schema"] = extractor._schema
 
+    _auto_save(session_id, "edit")
     return EditDataResponse(ok=True, stats=stats)
 
 
@@ -260,6 +408,7 @@ async def configure(session_id: str, body: ConfigureRequest):
     if session_id not in sessions:
         raise HTTPException(404, "Session not found")
     sessions[session_id]["config"] = body.dict()
+    _auto_save(session_id, "configure")
     return ConfigureResponse(ok=True, message="Configuration saved")
 
 
@@ -359,6 +508,7 @@ async def validate(session_id: str):
     config = s.get("config", {})
     result = extractor.validate(config)
     sessions[session_id]["validation"] = result
+    _auto_save(session_id, "validate")
     return ValidateResponse(**result)
 
 
@@ -371,6 +521,7 @@ async def transform(session_id: str):
     result = transformer.run()
     sessions[session_id]["transformed"] = result
     sessions[session_id]["transformer"] = transformer
+    _auto_save(session_id, "transform")
     return TransformResponse(**result)
 
 
@@ -382,7 +533,10 @@ async def load(session_id: str, body: LoadRequest):
     if "transformed" not in s:
         raise HTTPException(400, "Run transform first")
 
-    out_dir = os.path.join(OUTPUT_DIR, session_id)
+    if s.get("project_id"):
+        out_dir = project_outputs_dir(s["project_id"])
+    else:
+        out_dir = os.path.join(OUTPUT_DIR, session_id)
     os.makedirs(out_dir, exist_ok=True)
 
     ddl_schema = {
@@ -393,6 +547,7 @@ async def load(session_id: str, body: LoadRequest):
     loader = Loader(s["transformed"], body.dict(), out_dir, ddl_schema=ddl_schema)
     result = loader.run()
     sessions[session_id]["load_result"] = result
+    _auto_save(session_id, "load")
     return LoadResponse(**result)
 
 
@@ -409,7 +564,12 @@ async def stats(session_id: str):
 
 @app.get("/api/download/{session_id}/{filename}")
 async def download(session_id: str, filename: str):
-    safe_dir = os.path.realpath(os.path.join(OUTPUT_DIR, session_id))
+    s = sessions.get(session_id)
+    if s and s.get("project_id"):
+        base_dir = project_outputs_dir(s["project_id"])
+    else:
+        base_dir = os.path.join(OUTPUT_DIR, session_id)
+    safe_dir = os.path.realpath(base_dir)
     path = os.path.realpath(os.path.join(safe_dir, filename))
     if not path.startswith(safe_dir + os.sep):
         raise HTTPException(400, "Invalid filename")
