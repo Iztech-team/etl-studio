@@ -19,7 +19,6 @@ export interface ResumeResponse {
   stats: Record<string, { row_count: number }>
   ddl_schema: Record<string, Record<string, ColumnSchema>>
   config: Record<string, unknown> | null
-  validation: Record<string, unknown> | null
   transform: Record<string, unknown> | null
   load_result: Record<string, unknown> | null
 }

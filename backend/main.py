@@ -10,7 +10,6 @@ from core.loader import Loader
 from models.schemas import (
     ConfigureRequest,
     ConfigureResponse,
-    ValidateResponse,
     TransformResponse,
     LoadRequest,
     LoadResponse,
@@ -156,7 +155,6 @@ async def resume_project(project_id: str):
         "stats": raw.get("stats", {}),
         "ddl_schema": session.get("ddl_schema", {}),
         "config": session.get("config"),
-        "validation": session.get("validation"),
         "transform": session.get("transformed"),
         "load_result": session.get("load_result"),
     }
@@ -497,19 +495,6 @@ async def apply_ddl(session_id: str, body: ApplyDDLRequest):
 
     all_ok = all(r.applied for r in results)
     return ApplyDDLResponse(ok=all_ok, results=results)
-
-
-@app.get("/api/validate/{session_id}", response_model=ValidateResponse)
-async def validate(session_id: str):
-    if session_id not in sessions:
-        raise HTTPException(404, "Session not found")
-    s = sessions[session_id]
-    extractor: Extractor = s["extractor"]
-    config = s.get("config", {})
-    result = extractor.validate(config)
-    sessions[session_id]["validation"] = result
-    _auto_save(session_id, "validate")
-    return ValidateResponse(**result)
 
 
 @app.get("/api/transform/{session_id}", response_model=TransformResponse)

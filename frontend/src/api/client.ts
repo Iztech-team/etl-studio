@@ -3,7 +3,6 @@ import type {
   UploadResponse,
   ConfigureRequest,
   ConfigureResponse,
-  ValidateResponse,
   TransformResponse,
   LoadRequest,
   LoadResponse,
@@ -72,11 +71,6 @@ export async function uploadFiles(files: File[], projectId?: string): Promise<Up
 
 export async function configure(sessionId: string, config: ConfigureRequest): Promise<ConfigureResponse> {
   const { data } = await api.post<ConfigureResponse>(`/configure/${sessionId}`, config)
-  return data
-}
-
-export async function validate(sessionId: string): Promise<ValidateResponse> {
-  const { data } = await api.get<ValidateResponse>(`/validate/${sessionId}`)
   return data
 }
 

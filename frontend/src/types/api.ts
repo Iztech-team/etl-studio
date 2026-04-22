@@ -47,23 +47,6 @@ export interface ConfigureResponse {
   message: string
 }
 
-export interface ValidationIssue {
-  level: 'error' | 'warning' | 'info'
-  table: string
-  column: string | null
-  message: string
-  count: number | null
-}
-
-export interface ValidateResponse {
-  passed: boolean
-  record_counts: Record<string, number>
-  financial_totals: Record<string, number>
-  duplicate_counts: Record<string, number>
-  truncation_risks: { table: string; column: string; max_length: number; count: number }[]
-  issues: ValidationIssue[]
-  spot_checks: { table: string; rows: Record<string, unknown>[] }[]
-}
 
 export interface TransformResponse {
   ok: boolean

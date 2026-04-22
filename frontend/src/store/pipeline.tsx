@@ -2,14 +2,13 @@ import { createContext, useContext, useReducer, type ReactNode } from 'react'
 import type {
   UploadResponse,
   ConfigureResponse,
-  ValidateResponse,
   TransformResponse,
   LoadResponse,
   StatsResponse,
   PreExtractResponse,
 } from '../types/api'
 
-export const PHASES = ['pre-extract', 'upload', 'edit', 'configure', 'validate', 'transform', 'load', 'stats'] as const
+export const PHASES = ['pre-extract', 'upload', 'edit', 'configure', 'transform', 'load', 'stats'] as const
 export type Phase = (typeof PHASES)[number]
 
 export type AppMode = 'landing' | 'project' | 'guest'
@@ -23,7 +22,6 @@ interface PipelineState {
   preExtractResult: PreExtractResponse | null
   uploadResult: UploadResponse | null
   configureResult: ConfigureResponse | null
-  validateResult: ValidateResponse | null
   transformResult: TransformResponse | null
   loadResult: LoadResponse | null
   statsResult: StatsResponse | null
@@ -36,14 +34,13 @@ type Action =
   | { type: 'SET_ERROR'; error: string | null }
   | { type: 'SET_PROJECT'; projectId: string; projectName: string }
   | { type: 'START_GUEST' }
-  | { type: 'RESTORE_PROJECT'; projectId: string; projectName: string; sessionId: string; phase: Phase; uploadResult: UploadResponse | null; configureResult: ConfigureResponse | null; validateResult: ValidateResponse | null; transformResult: TransformResponse | null; loadResult: LoadResponse | null; statsResult: StatsResponse | null }
+  | { type: 'RESTORE_PROJECT'; projectId: string; projectName: string; sessionId: string; phase: Phase; uploadResult: UploadResponse | null; configureResult: ConfigureResponse | null; transformResult: TransformResponse | null; loadResult: LoadResponse | null; statsResult: StatsResponse | null }
   | { type: 'SET_PRE_EXTRACT'; result: PreExtractResponse }
   | { type: 'CONFIRM_PRE_EXTRACT'; selectedTables: string[] }
   | { type: 'SKIP_PRE_EXTRACT' }
   | { type: 'SET_UPLOAD'; result: UploadResponse }
   | { type: 'DONE_EDIT' }
   | { type: 'SET_CONFIGURE'; result: ConfigureResponse }
-  | { type: 'SET_VALIDATE'; result: ValidateResponse }
   | { type: 'SET_TRANSFORM'; result: TransformResponse }
   | { type: 'SET_LOAD'; result: LoadResponse }
   | { type: 'SET_STATS'; result: StatsResponse }
@@ -59,7 +56,6 @@ const initialState: PipelineState = {
   preExtractResult: null,
   uploadResult: null,
   configureResult: null,
-  validateResult: null,
   transformResult: null,
   loadResult: null,
   statsResult: null,
@@ -87,7 +83,6 @@ function reducer(state: PipelineState, action: Action): PipelineState {
         phase: action.phase,
         uploadResult: action.uploadResult,
         configureResult: action.configureResult,
-        validateResult: action.validateResult,
         transformResult: action.transformResult,
         loadResult: action.loadResult,
         statsResult: action.statsResult,
@@ -137,9 +132,7 @@ function reducer(state: PipelineState, action: Action): PipelineState {
     case 'DONE_EDIT':
       return { ...state, phase: 'configure', loading: false }
     case 'SET_CONFIGURE':
-      return { ...state, configureResult: action.result, phase: 'validate', loading: false }
-    case 'SET_VALIDATE':
-      return { ...state, validateResult: action.result, phase: 'transform', loading: false }
+      return { ...state, configureResult: action.result, phase: 'transform', loading: false }
     case 'SET_TRANSFORM':
       return { ...state, transformResult: action.result, phase: 'load', loading: false }
     case 'SET_LOAD':

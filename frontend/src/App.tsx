@@ -7,7 +7,6 @@ import PreExtractPhase from "./components/PreExtractPhase";
 import UploadPhase from "./components/UploadPhase";
 import EditPhase from "./components/EditPhase";
 import ConfigurePhase from "./components/ConfigurePhase";
-import ValidatePhase from "./components/ValidatePhase";
 import TransformPhase from "./components/TransformPhase";
 import LoadPhase from "./components/LoadPhase";
 import StatsPhase from "./components/StatsPhase";
@@ -20,7 +19,6 @@ const PHASE_COMPONENTS: Record<Phase, () => JSX.Element> = {
 	upload: UploadPhase,
 	edit: EditPhase,
 	configure: ConfigurePhase,
-	validate: ValidatePhase,
 	transform: TransformPhase,
 	load: LoadPhase,
 	stats: StatsPhase,

@@ -30,24 +30,6 @@ class ConfigureResponse(BaseModel):
     message: str
 
 
-class ValidationIssue(BaseModel):
-    level: str  # "error" | "warning" | "info"
-    table: str
-    column: Optional[str] = None
-    message: str
-    count: Optional[int] = None
-
-
-class ValidateResponse(BaseModel):
-    passed: bool
-    record_counts: Dict[str, int]
-    financial_totals: Dict[str, Any]
-    duplicate_counts: Dict[str, int]
-    truncation_risks: List[Dict[str, Any]]
-    issues: List[ValidationIssue]
-    spot_checks: List[Dict[str, Any]]
-
-
 class TransformResponse(BaseModel):
     ok: bool
     tables_transformed: int

@@ -13,12 +13,11 @@ PERSIST_KEYS = [
     "ddl_schema",
     "applied_ddl",
     "config",
-    "validation",
     "load_result",
     "pre_extract",
 ]
 
-PHASE_ORDER = ["upload", "edit", "configure", "validate", "transform", "load", "stats"]
+PHASE_ORDER = ["upload", "edit", "configure", "transform", "load", "stats"]
 
 
 def project_dir(project_id: str) -> str:

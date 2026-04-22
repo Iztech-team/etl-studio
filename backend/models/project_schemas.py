@@ -34,6 +34,5 @@ class ResumeProjectResponse(BaseModel):
     stats: dict
     ddl_schema: dict
     config: Optional[dict] = None
-    validation: Optional[dict] = None
     transform: Optional[dict] = None
     load_result: Optional[dict] = None

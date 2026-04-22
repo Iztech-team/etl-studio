@@ -6,7 +6,7 @@ import { Spinner } from '@/components/ui'
 import { usePipeline, type Phase } from '../store/pipeline'
 import { createProject, listProjects, renameProject, deleteProject, resumeProject } from '../api/projects'
 import type { Project } from '../types/project'
-import type { ValidateResponse, TransformResponse, LoadResponse } from '../types/api'
+import type { TransformResponse, LoadResponse } from '../types/api'
 
 type Selection = 'create' | 'open' | null
 
@@ -83,7 +83,6 @@ export default function LandingPage() {
           ddl_schema: res.ddl_schema,
         } : null,
         configureResult: res.config ? { ok: true, message: 'Restored' } : null,
-        validateResult: res.validation as ValidateResponse | null,
         transformResult: res.transform as TransformResponse | null,
         loadResult: res.load_result as LoadResponse | null,
         statsResult: null,
