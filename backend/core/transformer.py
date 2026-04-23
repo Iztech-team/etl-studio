@@ -1,21 +1,35 @@
 import copy
-from typing import Any, Dict, List
-from utils.encoding import fix_encoding_str
+from typing import Any, Dict, List, Optional
+from utils.encoding import (
+    fix_encoding_str,
+    normalize_arabic_digits,
+    strip_directional_marks,
+)
+from utils.audit import AuditTrail
+from core.column_transforms import apply_transforms
 
 
 class Transformer:
     """Applies encoding fixes, type conversions, reference mappings, null normalisation."""
 
-    def __init__(self, raw: Dict[str, Any], config: Dict[str, Any]):
+    def __init__(
+        self,
+        raw: Dict[str, Any],
+        config: Dict[str, Any],
+        audit_trail: Optional[AuditTrail] = None,
+    ):
         self.tables: Dict[str, List[Dict]] = copy.deepcopy(raw.get("tables", {}))
         self.schema: Dict[str, Any] = raw.get("schema", {})
         self.config = config
+        self.audit_trail = audit_trail or AuditTrail()
         self.warnings: List[str] = []
         self._encoding_conversions = 0
         self._type_conversions = 0
         self._ref_mappings = 0
         self._null_normalizations = 0
+        self._dedup_removed = 0
         self._transformed: Dict[str, List[Dict]] = {}
+        self.fk_edges: List[tuple] = []
 
     # ------------------------------------------------------------------
     def _build_fk_lookups(self, table_configs: Dict[str, Any]) -> Dict[tuple, Dict]:
@@ -51,6 +65,18 @@ class Transformer:
 
         fk_lookups = self._build_fk_lookups(table_configs)
 
+        # Collect FK edges for dependency-aware load ordering
+        self.fk_edges = []
+        for tc in table_configs.values():
+            child_table = tc.get("target_table") or tc.get("source_table")
+            for cc in tc.get("columns", []):
+                fk_table = cc.get("fk_source_table")
+                if fk_table and child_table:
+                    self.fk_edges.append((child_table, fk_table))
+
+        # Build dedup constraints from DDL schema
+        ddl_constraints = self.config.get("ddl_constraints", {})
+
         total_rows = 0
         for table_name, rows in self.tables.items():
             tc = table_configs.get(table_name, {})
@@ -70,34 +96,62 @@ class Transformer:
 
                     target_col = cc.get("target_name") or col
 
-                    # 1. Encoding fix
+                    # 1. Strip directional marks
+                    if isinstance(val, str):
+                        clean = strip_directional_marks(val)
+                        if clean != val:
+                            self.audit_trail.log_directional_marks_stripped(
+                                table_name, col
+                            )
+                            val = clean
+
+                    # 2. Encoding fix
                     if isinstance(val, str):
                         fixed = fix_encoding_str(val)
                         if fixed != val:
                             self._encoding_conversions += 1
+                            self.audit_trail.log_encoding_fixed(table_name, col)
                         val = fixed
 
-                    # 2. Null normalisation
+                    # 3. Null normalisation
                     if str(val).strip() in null_values:
                         val = None
                         self._null_normalizations += 1
+                        self.audit_trail.log_null_normalized(table_name, col)
 
-                    # 3. Reference mapping
+                    # 4. Reference mapping
                     ref_map = cc.get("reference_map")
                     if ref_map and val in ref_map:
                         val = ref_map[val]
                         self._ref_mappings += 1
+                        self.audit_trail.log_reference_mapped(table_name, col)
 
-                    # 4. Type conversion
+                    # 5. Type conversion
                     if val is not None:
                         dtype = cc.get("data_type") or (
                             self.schema.get(table_name, {})
                             .get(col, {})
                             .get("inferred_type", "string")
                         )
+                        old_dtype = "string"
+                        try:
+                            if isinstance(val, (int, float)):
+                                old_dtype = "numeric"
+                            elif isinstance(val, bool):
+                                old_dtype = "boolean"
+                        except:
+                            pass
                         val, converted = self._coerce(val, dtype)
                         if converted:
                             self._type_conversions += 1
+                            self.audit_trail.log_type_coerced(
+                                table_name, col, old_dtype, dtype
+                            )
+
+                    # 6. Column transforms pipeline
+                    col_transforms = cc.get("transforms", [])
+                    if col_transforms:
+                        val = apply_transforms(val, col_transforms, col)
 
                     new_row[target_col] = val
 
@@ -117,6 +171,9 @@ class Transformer:
                         val = cc.get("default_value")
                         if val is not None:
                             val, _ = self._coerce(val, cc.get("data_type", "string"))
+                    col_transforms = cc.get("transforms", [])
+                    if col_transforms:
+                        val = apply_transforms(val, col_transforms, cc_name)
                     new_row[target_col] = val
 
                 # --- process FK columns ---
@@ -146,6 +203,10 @@ class Transformer:
                         if converted:
                             self._type_conversions += 1
 
+                    col_transforms = cc.get("transforms", [])
+                    if col_transforms:
+                        val = apply_transforms(val, col_transforms, cc_name)
+
                     new_row[target_col] = val
 
                 new_rows.append(new_row)
@@ -162,6 +223,14 @@ class Transformer:
                 self._transformed[target] = rows
                 total_rows += len(rows)
 
+        # Deduplicate rows based on target DDL unique/PK constraints
+        total_rows = 0
+        for target_name, rows in self._transformed.items():
+            constraints = ddl_constraints.get(target_name, {})
+            deduped = self._deduplicate(target_name, rows, constraints)
+            self._transformed[target_name] = deduped
+            total_rows += len(deduped)
+
         return {
             "ok": True,
             "tables": self._transformed,
@@ -171,6 +240,7 @@ class Transformer:
             "type_conversions": self._type_conversions,
             "reference_mappings": self._ref_mappings,
             "null_normalizations": self._null_normalizations,
+            "dedup_removed": self._dedup_removed,
             "warnings": self.warnings,
             "preview": {t: rows[:5] for t, rows in self._transformed.items()},
         }
@@ -181,20 +251,21 @@ class Transformer:
         dtype = dtype.lower()
         try:
             # Integer family
+            clean = normalize_arabic_digits(str(val)).replace(",", "")
             if dtype in ("integer", "smallint", "bigint"):
-                return int(float(str(val).replace(",", ""))), True
+                return int(float(clean)), True
             # Float family
             if dtype in ("float", "real", "double", "numeric", "decimal"):
-                return float(str(val).replace(",", "")), True
+                return float(clean), True
             # Boolean
             if dtype == "boolean":
-                return str(val).lower() in ("true", "1", "yes"), True
+                return str(clean).lower() in ("true", "1", "yes"), True
             # String family
             if dtype in ("string", "text", "varchar", "char"):
                 return str(val), False
             # Date/time family — keep as string but validate format
             if dtype in ("date", "time", "timestamp", "datetime"):
-                s = str(val).strip()
+                s = normalize_arabic_digits(str(val)).strip()
                 if dtype == "date":
                     from datetime import date as _d
 
@@ -227,3 +298,71 @@ class Transformer:
         except Exception:
             pass
         return val, False
+
+    def _deduplicate(
+        self,
+        table_name: str,
+        rows: List[Dict],
+        constraints: Dict[str, Any],
+    ) -> List[Dict]:
+        """Remove duplicate rows that would violate PK or UNIQUE constraints from the target DDL.
+
+        Strategy: keep-first — the first occurrence wins, later duplicates are dropped.
+        Each constraint (PK, each UNIQUE set) is checked independently.
+        """
+        if not rows or not constraints:
+            return rows
+
+        pk_cols: List[str] = constraints.get("primary_key", [])
+        unique_sets: List[List[str]] = constraints.get("unique", [])
+
+        # Combine all constraint sets to check
+        constraint_sets: List[List[str]] = []
+        if pk_cols:
+            constraint_sets.append(pk_cols)
+        for uq in unique_sets:
+            if uq:
+                constraint_sets.append(uq)
+
+        if not constraint_sets:
+            return rows
+
+        # For each constraint set, track seen keys
+        seen_per_constraint: List[set] = [set() for _ in constraint_sets]
+        deduped: List[Dict] = []
+        removed = 0
+
+        for row in rows:
+            is_dup = False
+            for i, cols in enumerate(constraint_sets):
+                # Build key from the constraint columns
+                key_vals = []
+                all_none = True
+                for col in cols:
+                    val = row.get(col)
+                    key_vals.append(val)
+                    if val is not None:
+                        all_none = False
+                # NULL keys don't violate unique constraints in SQL
+                if all_none:
+                    continue
+                key = tuple(key_vals)
+                if key in seen_per_constraint[i]:
+                    is_dup = True
+                    break
+                seen_per_constraint[i].add(key)
+
+            if is_dup:
+                removed += 1
+            else:
+                deduped.append(row)
+
+        if removed > 0:
+            self._dedup_removed += removed
+            self.warnings.append(
+                f"{table_name}: removed {removed} duplicate row(s) "
+                f"that would violate unique constraints"
+            )
+            self.audit_trail.log_schema_change(table_name, 0, removed)
+
+        return deduped

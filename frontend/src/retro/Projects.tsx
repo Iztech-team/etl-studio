@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { RL_STAGES, type Project } from "./data";
 import { useAuth } from "./Auth";
-import { IArrow, IDisk, IPlus, IX } from "./icons";
+import { IArrow, IDisk, IDownload, IPlus, IX } from "./icons";
 import { SpriteMonitor, Sparkles } from "./Sprites";
 import { RlPromptModal } from "./PromptModal";
 import { RlTopbar } from "./Topbar";
@@ -292,6 +292,25 @@ function RlProjectCard({
 }) {
 	const stageIdx = phaseStageIndex(p.phase);
 	const progress = Math.round((stageIdx / 6) * 100);
+	const [showFiles, setShowFiles] = useState(false);
+	const [outputFiles, setOutputFiles] = useState<string[]>([]);
+	const isExported = p.phase === "load" || p.phase === "stats";
+
+	const toggleFiles = async (e: React.MouseEvent) => {
+		e.stopPropagation();
+		if (showFiles) {
+			setShowFiles(false);
+			return;
+		}
+		try {
+			const res = await fetch(`/api/projects/${p.id}/outputs`);
+			if (res.ok) {
+				const data = await res.json();
+				setOutputFiles(data.files ?? []);
+			}
+		} catch { /* ignore */ }
+		setShowFiles(true);
+	};
 
 	return (
 		<div className="rl-proj corners" onClick={() => onOpen(p)}>
@@ -384,6 +403,16 @@ function RlProjectCard({
 				<span>{p.username.toUpperCase()}</span>
 				<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
 					<span>{timeAgo(p.updated_at)}</span>
+					{isExported && (
+						<button
+							className="link"
+							style={{ fontSize: 9, color: showFiles ? "var(--lg-amber)" : "var(--lg-ink)" }}
+							onClick={toggleFiles}
+							title="Download exports"
+						>
+							<IDownload size={9} />
+						</button>
+					)}
 					<button
 						className="link"
 						style={{ fontSize: 9, color: "var(--lg-amber)" }}
@@ -402,6 +431,48 @@ function RlProjectCard({
 					</button>
 				</div>
 			</div>
+
+			{showFiles && (
+				<div
+					onClick={(e) => e.stopPropagation()}
+					style={{
+						marginTop: 10,
+						borderTop: "1px solid var(--lg-border)",
+						paddingTop: 10,
+					}}
+				>
+					<div
+						className="pixel"
+						style={{ fontSize: 8, color: "var(--lg-ink-mute)", letterSpacing: "0.1em", marginBottom: 6 }}
+					>
+						OUTPUT FILES
+					</div>
+					{outputFiles.length === 0 ? (
+						<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}>
+							No output files yet. Open project and run export.
+						</div>
+					) : (
+						<div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+							{outputFiles.map((file) => (
+								<div key={file} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+									<IDisk size={8} />
+									<span className="mono" style={{ flex: 1, fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+										{file}
+									</span>
+									<a
+										href={`/api/projects/${p.id}/download/${file}`}
+										download
+										className="btn btn-ghost"
+										style={{ padding: "2px 8px", fontSize: 8 }}
+									>
+										GET
+									</a>
+								</div>
+							))}
+						</div>
+					)}
+				</div>
+			)}
 		</div>
 	);
 }

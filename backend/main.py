@@ -2,11 +2,13 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import os, shutil, uuid
+from datetime import timezone
 from typing import List
 
 from core.extractor import Extractor
 from core.transformer import Transformer
 from core.loader import Loader
+from utils.audit import AuditTrail
 from models.schemas import (
     ConfigureRequest,
     ConfigureResponse,
@@ -32,6 +34,12 @@ from db import (
     rename_project,
     delete_project,
     update_project_phase,
+    create_pipeline_run,
+    finish_pipeline_run,
+    get_history as db_get_history,
+    get_dashboard_stats as db_get_dashboard_stats,
+    insert_audit_events_batch,
+    backfill_pipeline_runs,
 )
 from project_state import (
     save_state,
@@ -67,6 +75,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 GUEST_DIR = os.path.join(os.path.dirname(__file__), "data", "guest")
 os.makedirs(GUEST_DIR, exist_ok=True)
 init_db()
+backfill_pipeline_runs()
 
 # In-memory session store (keyed by session_id)
 sessions: dict = {}
@@ -83,6 +92,32 @@ def _auto_save(session_id: str, phase: str) -> None:
     update_project_phase(project_id, phase)
 
 
+def _flush_audit_events(
+    project_id: str, audit_trail, run_id: str | None = None
+) -> None:
+    """Write in-memory audit trail events to the database and clear them."""
+    if not audit_trail or not audit_trail.events:
+        return
+    from datetime import datetime as _dt
+
+    now = _dt.now(timezone.utc).isoformat()
+    batch = []
+    for ev in audit_trail.events:
+        batch.append(
+            {
+                "project_id": project_id,
+                "run_id": run_id,
+                "event_type": ev.get("type", "unknown"),
+                "table_name": ev.get("table"),
+                "column_name": ev.get("column"),
+                "detail": ev.get("description", ""),
+                "created_at": ev.get("timestamp", now),
+            }
+        )
+    insert_audit_events_batch(batch)
+    audit_trail.events.clear()
+
+
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
@@ -91,105 +126,60 @@ async def health():
 @app.get("/api/dashboard-stats")
 async def dashboard_stats(username: str):
     """Aggregate stats across all projects for a user."""
+    db_stats = db_get_dashboard_stats(username)
+    total_rows = db_stats.get("total_rows_migrated", 0)
+
+    # Quality score still needs state files (computed from raw data)
     projects = list_projects(username)
-    total_rows = 0
     quality_scores: list[float] = []
     for p in projects:
-        state = load_state(p["id"])
-        lr = state.get("load_result", {})
-        if lr and isinstance(lr, dict):
-            rw = lr.get("rows_written", {})
-            total_rows += sum(rw.values()) if isinstance(rw, dict) else 0
-        raw = state.get("raw", {})
-        if raw.get("tables"):
-            from utils.stats import StatsEngine
+        try:
+            state = load_state(p["id"])
+            raw = state.get("raw", {})
+            if raw.get("tables"):
+                from utils.stats import StatsEngine
 
-            engine = StatsEngine(state)
-            stats = engine.compute()
-            quality_scores.append(stats["quality_score"])
+                engine = StatsEngine(state)
+                stats = engine.compute()
+                quality_scores.append(stats["quality_score"])
+        except Exception:
+            pass
     avg_quality = (
         round(sum(quality_scores) / len(quality_scores), 1) if quality_scores else 0
     )
     return {
         "total_rows_migrated": total_rows,
         "avg_quality_score": avg_quality,
-        "projects_with_data": len(quality_scores),
+        "projects_with_data": db_stats.get("projects_with_data", 0),
     }
 
 
 @app.get("/api/history")
-async def get_history(username: str):
-    """Return pipeline run history derived from project states."""
+async def history_endpoint(username: str):
+    """Return pipeline run history from the database."""
     from datetime import datetime as _dt
 
-    projects = list_projects(username)
+    runs = db_get_history(username)
     rows = []
-    for p in projects:
-        state = load_state(p["id"])
-        raw = state.get("raw", {})
-        transformed = state.get("transformed", {})
-        load_result = state.get("load_result", {})
-
-        total_rows = 0
-        if load_result and isinstance(load_result, dict):
-            rw = load_result.get("rows_written", {})
-            total_rows = sum(rw.values()) if isinstance(rw, dict) else 0
-        elif transformed and isinstance(transformed, dict):
-            total_rows = transformed.get("total_rows", 0)
-        elif raw.get("tables"):
-            total_rows = sum(len(v) for v in raw["tables"].values())
-
-        # Determine status
-        phase = p["phase"]
-        if phase in ("stats", "load"):
-            status = "done"
-        elif phase == "upload":
-            status = "running" if raw.get("tables") else "running"
-        else:
-            status = "running"
-
-        # Check for errors in load_result
-        if load_result and isinstance(load_result, dict):
-            if load_result.get("errors"):
-                status = "error"
-
-        # Parse timestamps
+    for r in runs:
         try:
-            dt = _dt.fromisoformat(p["updated_at"])
+            dt = _dt.fromisoformat(r["started_at"])
             time_str = dt.strftime("%H:%M")
             date_str = dt.strftime("%Y-%m-%d")
         except (ValueError, TypeError):
             time_str = "—"
             date_str = "—"
-
-        # Build note
-        note = ""
-        if transformed and isinstance(transformed, dict):
-            parts = []
-            enc = transformed.get("encoding_conversions", 0)
-            tc = transformed.get("type_conversions", 0)
-            if enc:
-                parts.append(f"{enc} enc fixes")
-            if tc:
-                parts.append(f"{tc} type conv")
-            note = ", ".join(parts)
-        if load_result and isinstance(load_result, dict) and load_result.get("errors"):
-            note = "; ".join(load_result["errors"][:2])
-
         rows.append(
             {
                 "t": time_str,
                 "d": date_str,
-                "project": p["name"],
-                "stage": phase.upper(),
-                "status": status,
-                "rows": total_rows,
-                "note": note,
+                "project": r["project_name"],
+                "stage": r["phase"].upper(),
+                "status": r["status"],
+                "rows": r["rows_affected"],
+                "note": r["note"],
             }
         )
-
-    # Sort newest first
-    rows.sort(key=lambda r: (r["d"], r["t"]), reverse=True)
     return {"history": rows}
 
 
@@ -306,6 +296,10 @@ def _detect_db_type(filename: str) -> str | None:
     return None
 
 
+def _is_db_file(filename: str) -> bool:
+    return _detect_db_type(filename) is not None
+
+
 @app.post("/api/pre-extract", response_model=PreExtractResponse)
 async def pre_extract(
     file: UploadFile = File(...),
@@ -343,22 +337,34 @@ async def pre_extract(
     # Extract tables from DB into CSVs
     from core.db_extractor import extract_db_to_csvs
 
+    # Create audit trail for DB extraction
+    audit_trail = AuditTrail(source_type="db", source_name=file.filename)
+    audit_trail.log_extraction_started(db_type, 0)
+
     try:
         csv_files = extract_db_to_csvs(dest, db_type, session_dir, password)
     except ImportError as e:
+        audit_trail.log_extraction_error(str(e))
         raise HTTPException(400, str(e))
     except Exception as e:
+        audit_trail.log_extraction_error(str(e))
         raise HTTPException(400, f"Failed to extract database: {e}")
 
     if not csv_files:
+        audit_trail.log_extraction_error("No tables found in the database file")
         raise HTTPException(400, "No tables found in the database file")
 
     # Remove the original DB file so Extractor only sees CSVs
     os.remove(dest)
 
-    # Run the standard Extractor on the generated CSVs
-    extractor = Extractor(session_dir)
+    # Run the standard Extractor on the generated CSVs with audit trail
+    extractor = Extractor(session_dir, audit_trail)
     result = extractor.extract_all()
+
+    audit_trail.log_extraction_completed(
+        list(result.get("tables", {}).keys()),
+        sum(len(rows) for rows in result.get("tables", {}).values()),
+    )
 
     saved_files = [
         {
@@ -381,6 +387,7 @@ async def pre_extract(
         "files": saved_files,
         "ddl_schema": result.get("ddl_schema", {}),
         "applied_ddl": [],
+        "audit_trail": audit_trail,
     }
 
     _auto_save(session_id, "pre-extract")
@@ -440,6 +447,7 @@ async def pre_extract_select(session_id: str, body: ApplyDDLRequest):
 async def upload_files(
     files: List[UploadFile] = File(...),
     project_id: str | None = Form(None),
+    password: str | None = Form(None),
 ):
     session_id = str(uuid.uuid4())
     if project_id:
@@ -448,15 +456,64 @@ async def upload_files(
         session_dir = os.path.join(GUEST_DIR, session_id)
     os.makedirs(session_dir, exist_ok=True)
 
+    # Create audit trail for this session
+    audit_trail = AuditTrail(source_type="upload")
+
     saved = []
+    db_file_info = None
     for f in files:
         dest = os.path.join(session_dir, f.filename)
         with open(dest, "wb") as out:
             shutil.copyfileobj(f.file, out)
-        saved.append({"name": f.filename, "path": dest, "size": os.path.getsize(dest)})
+        file_info = {"name": f.filename, "path": dest, "size": os.path.getsize(dest)}
+        saved.append(file_info)
+        if not db_file_info and _is_db_file(f.filename):
+            db_file_info = file_info
 
-    extractor = Extractor(session_dir)
+    if db_file_info:
+        from core.db_extractor import extract_db_to_csvs
+
+        db_type = _detect_db_type(db_file_info["name"])
+        if db_type is None:
+            raise HTTPException(400, "Unsupported database file type")
+
+        # Update audit trail for DB extraction
+        audit_trail.source_type = "db"
+        audit_trail.source_name = db_file_info["name"]
+        audit_trail.log_extraction_started(db_type, 0)
+
+        try:
+            csv_files = extract_db_to_csvs(
+                db_file_info["path"], db_type, session_dir, password
+            )
+        except ImportError as e:
+            audit_trail.log_extraction_error(str(e))
+            raise HTTPException(400, str(e))
+        except Exception as e:
+            audit_trail.log_extraction_error(str(e))
+            raise HTTPException(400, f"Failed to extract database: {e}")
+
+        if not csv_files:
+            audit_trail.log_extraction_error("No tables found in the database file")
+            raise HTTPException(400, "No tables found in the database file")
+
+        os.remove(db_file_info["path"])
+        saved = [s for s in saved if s["path"] != db_file_info["path"]]
+        for csv_name in csv_files:
+            csv_path = os.path.join(session_dir, csv_name)
+            saved.append(
+                {"name": csv_name, "path": csv_path, "size": os.path.getsize(csv_path)}
+            )
+
+    extractor = Extractor(session_dir, audit_trail)
     result = extractor.extract_all()
+
+    # Complete extraction logging if it was a DB extraction
+    if db_file_info:
+        audit_trail.log_extraction_completed(
+            list(result.get("tables", {}).keys()),
+            sum(len(rows) for rows in result.get("tables", {}).values()),
+        )
     sessions[session_id] = {
         "project_id": project_id,
         "extractor": extractor,
@@ -464,9 +521,21 @@ async def upload_files(
         "files": saved,
         "ddl_schema": result.get("ddl_schema", {}),
         "applied_ddl": [],
+        "audit_trail": audit_trail,
     }
 
     _auto_save(session_id, "edit")
+
+    # Record upload/extract as a pipeline run
+    if project_id:
+        total_rows = sum(len(rows) for rows in result.get("tables", {}).values())
+        table_count = len(result.get("tables", {}))
+        run = create_pipeline_run(project_id, "extract")
+        finish_pipeline_run(
+            run["id"], "done", total_rows, f"{table_count} tables extracted"
+        )
+        _flush_audit_events(project_id, audit_trail, run["id"])
+
     return {
         "session_id": session_id,
         "files": saved,
@@ -558,6 +627,13 @@ async def save_table_data(session_id: str, body: EditDataRequest):
     }
 
 
+@app.get("/api/session/{session_id}/config")
+async def get_session_config(session_id: str):
+    if session_id not in sessions:
+        raise HTTPException(404, "Session not found")
+    return sessions[session_id].get("config", {})
+
+
 @app.post("/api/configure/{session_id}", response_model=ConfigureResponse)
 async def configure(
     session_id: str,
@@ -582,13 +658,21 @@ async def upload_ddl(session_id: str, files: List[UploadFile] = File(...)):
     ddl_schema = s.get("ddl_schema", {})
     data_tables = set(s["raw"].get("tables", {}).keys())
 
+    all_foreign_keys = s.get("ddl_foreign_keys", [])
+    all_constraints = s.get("ddl_constraints_raw", {})
+
     for f in files:
         content = (await f.read()).decode("utf-8", errors="replace")
         parser = SQLParser(content)
         parsed = parser.parse_ddl()
         ddl_schema.update(parsed)
+        # Collect FK relationships and constraints from DDL
+        all_foreign_keys.extend(getattr(parser, "foreign_keys", []))
+        all_constraints.update(getattr(parser, "constraints", {}))
 
     s["ddl_schema"] = ddl_schema
+    s["ddl_foreign_keys"] = all_foreign_keys
+    s["ddl_constraints_raw"] = all_constraints
     matching = [t for t in ddl_schema if t in data_tables]
 
     return DDLUploadResponse(
@@ -663,11 +747,56 @@ async def transform(session_id: str):
     if session_id not in sessions:
         raise HTTPException(404, "Session not found")
     s = sessions[session_id]
-    transformer = Transformer(s["raw"], s.get("config", {}))
+    project_id = s.get("project_id")
+    run = None
+    if project_id:
+        run = create_pipeline_run(project_id, "transform")
+    audit_trail = s.get("audit_trail")
+
+    # Inject DDL constraints (PK, UNIQUE) into config for dedup
+    config = dict(s.get("config", {}))
+    ddl_constraints_raw = s.get("ddl_constraints_raw", {})
+    ddl_schema_raw = s.get("ddl_schema", {})
+    if ddl_constraints_raw:
+        # Use the full constraints parsed from DDL (includes multi-column UNIQUE)
+        config["ddl_constraints"] = ddl_constraints_raw
+    elif ddl_schema_raw:
+        # Fall back to per-column flags from the schema
+        ddl_constraints = {}
+        for tbl, cols_info in ddl_schema_raw.items():
+            pk_cols = [c for c, info in cols_info.items() if info.get("primary_key")]
+            uq_cols = [
+                [c]
+                for c, info in cols_info.items()
+                if info.get("unique") and not info.get("primary_key")
+            ]
+            if pk_cols or uq_cols:
+                ddl_constraints[tbl] = {"primary_key": pk_cols, "unique": uq_cols}
+        config["ddl_constraints"] = ddl_constraints
+
+    transformer = Transformer(s["raw"], config, audit_trail)
     result = transformer.run()
     sessions[session_id]["transformed"] = result
     sessions[session_id]["transformer"] = transformer
+    # Merge FK edges from transform config and DDL foreign keys
+    fk_edges = list(transformer.fk_edges)
+    for fk in s.get("ddl_foreign_keys", []):
+        edge = (fk["child_table"], fk["parent_table"])
+        if edge not in fk_edges:
+            fk_edges.append(edge)
+    sessions[session_id]["fk_edges"] = fk_edges
     _auto_save(session_id, "transform")
+    if run and project_id:
+        total_rows = result.get("total_rows", 0)
+        note_parts = []
+        if result.get("encoding_conversions"):
+            note_parts.append(f"{result['encoding_conversions']} enc fixes")
+        if result.get("type_conversions"):
+            note_parts.append(f"{result['type_conversions']} type conv")
+        if result.get("dedup_removed"):
+            note_parts.append(f"{result['dedup_removed']} dupes removed")
+        finish_pipeline_run(run["id"], "done", total_rows, ", ".join(note_parts))
+        _flush_audit_events(project_id, audit_trail, run["id"])
     return TransformResponse(**result)
 
 
@@ -679,8 +808,13 @@ async def load(session_id: str, body: LoadRequest):
     if "transformed" not in s:
         raise HTTPException(400, "Run transform first")
 
-    if s.get("project_id"):
-        out_dir = project_outputs_dir(s["project_id"])
+    project_id = s.get("project_id")
+    run = None
+    if project_id:
+        run = create_pipeline_run(project_id, "load")
+
+    if project_id:
+        out_dir = project_outputs_dir(project_id)
     else:
         out_dir = os.path.join(OUTPUT_DIR, session_id)
     os.makedirs(out_dir, exist_ok=True)
@@ -690,10 +824,32 @@ async def load(session_id: str, body: LoadRequest):
         for t in s["raw"].get("tables", {})
         if t in s.get("applied_ddl", [])
     }
-    loader = Loader(s["transformed"], body.dict(), out_dir, ddl_schema=ddl_schema)
+    fk_edges = s.get("fk_edges", [])
+    # Also collect FK edges from DDL foreign keys parsed during apply-ddl
+    ddl_fks = s.get("ddl_foreign_keys", [])
+    for fk in ddl_fks:
+        edge = (fk["child_table"], fk["parent_table"])
+        if edge not in fk_edges:
+            fk_edges.append(edge)
+
+    loader = Loader(
+        s["transformed"], body.dict(), out_dir, ddl_schema=ddl_schema, fk_edges=fk_edges
+    )
     result = loader.run()
     sessions[session_id]["load_result"] = result
     _auto_save(session_id, "load")
+    if run and project_id:
+        total_rows = sum(result.get("rows_written", {}).values())
+        status = "error" if result.get("errors") else "done"
+        note = (
+            "; ".join(result.get("errors", [])[:2])
+            if result.get("errors")
+            else f"format={body.output_format}"
+        )
+        finish_pipeline_run(run["id"], status, total_rows, note)
+        audit_trail = s.get("audit_trail")
+        if audit_trail:
+            _flush_audit_events(project_id, audit_trail, run["id"])
     return LoadResponse(**result)
 
 
@@ -716,6 +872,33 @@ async def download(session_id: str, filename: str):
         base_dir = project_outputs_dir(s["project_id"])
     else:
         base_dir = os.path.join(OUTPUT_DIR, session_id)
+    safe_dir = os.path.realpath(base_dir)
+    path = os.path.realpath(os.path.join(safe_dir, filename))
+    if not path.startswith(safe_dir + os.sep):
+        raise HTTPException(400, "Invalid filename")
+    if not os.path.exists(path):
+        raise HTTPException(404, "File not found")
+    return FileResponse(path, filename=os.path.basename(path))
+
+
+@app.get("/api/projects/{project_id}/outputs")
+async def list_project_outputs(project_id: str):
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    out_dir = project_outputs_dir(project_id)
+    if not os.path.isdir(out_dir):
+        return {"files": []}
+    files = [f for f in os.listdir(out_dir) if os.path.isfile(os.path.join(out_dir, f))]
+    return {"files": sorted(files)}
+
+
+@app.get("/api/projects/{project_id}/download/{filename}")
+async def download_project_file(project_id: str, filename: str):
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    base_dir = project_outputs_dir(project_id)
     safe_dir = os.path.realpath(base_dir)
     path = os.path.realpath(os.path.join(safe_dir, filename))
     if not path.startswith(safe_dir + os.sep):

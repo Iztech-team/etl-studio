@@ -90,6 +90,15 @@ export const IUpload = ({ size = 12 }: IconProps) => (
 	</PX>
 );
 
+export const IDownload = ({ size = 12 }: IconProps) => (
+	<PX size={size}>
+		<rect x="5" y="1" width="2" height="7" />
+		<rect x="3" y="6" width="2" height="2" />
+		<rect x="7" y="6" width="2" height="2" />
+		<rect x="1" y="9" width="10" height="2" />
+	</PX>
+);
+
 export const IDot = ({
 	size = 8,
 	c = "currentColor",

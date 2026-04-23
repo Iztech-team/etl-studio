@@ -1,16 +1,18 @@
 import os
 import csv
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from utils.sql_parser import SQLParser
-from utils.encoding import detect_and_convert
+from utils.encoding import detect_and_convert, normalize_arabic_digits, strip_directional_marks
+from utils.audit import AuditTrail
 
 
 class Extractor:
     """Reads xlsx, csv, and SQL dump files from a session directory."""
 
-    def __init__(self, session_dir: str):
+    def __init__(self, session_dir: str, audit_trail: Optional[AuditTrail] = None):
         self.session_dir = session_dir
+        self.audit_trail = audit_trail or AuditTrail()
         self._raw_tables: Dict[str, List[Dict]] = {}
         self._schema: Dict[str, Any] = {}
         self._stats: Dict[str, Any] = {}
@@ -46,7 +48,18 @@ class Extractor:
         content, _enc = detect_and_convert(path)
         lines = content.splitlines()
         reader = csv.DictReader(lines)
-        self._raw_tables[table_name] = [dict(r) for r in reader]
+        cleaned_rows = []
+        for r in reader:
+            row = {}
+            for k, v in r.items():
+                if isinstance(v, str):
+                    original = v
+                    v = strip_directional_marks(v)
+                    if v != original:
+                        self.audit_trail.log_directional_marks_stripped(table_name, k)
+                row[k] = v
+            cleaned_rows.append(row)
+        self._raw_tables[table_name] = cleaned_rows
 
     def _extract_excel(self, path: str, fname: str):
         try:
@@ -64,7 +77,16 @@ class Extractor:
             ]
             data = []
             for row in rows[1:]:
-                data.append({headers[i]: row[i] for i in range(len(headers))})
+                cleaned_row = {}
+                for i in range(len(headers)):
+                    v = row[i]
+                    if isinstance(v, str):
+                        original = v
+                        v = strip_directional_marks(v)
+                        if v != original:
+                            self.audit_trail.log_directional_marks_stripped(sheet, headers[i])
+                    cleaned_row[headers[i]] = v
+                data.append(cleaned_row)
             key = (
                 f"{fname.rsplit('.', 1)[0]}_{sheet}"
                 if len(wb.sheetnames) > 1
@@ -126,7 +148,8 @@ class Extractor:
     @staticmethod
     def _is_int(v) -> bool:
         try:
-            int(str(v))
+            text = normalize_arabic_digits(str(v)).replace(",", "")
+            int(text)
             return True
         except Exception:
             return False
@@ -134,7 +157,8 @@ class Extractor:
     @staticmethod
     def _is_float(v) -> bool:
         try:
-            float(str(v))
+            text = normalize_arabic_digits(str(v)).replace(",", "")
+            float(text)
             return True
         except Exception:
             return False
@@ -175,7 +199,7 @@ class Extractor:
             seen = set()
             dups = 0
             for r in rows:
-                key = tuple(str(r.get(c, "")) for c in cols)
+                key = tuple(strip_directional_marks(str(r.get(c, ""))) for c in cols)
                 if key in seen:
                     dups += 1
                 seen.add(key)
@@ -197,7 +221,9 @@ class Extractor:
                 num_vals = []
                 for v in vals:
                     try:
-                        num_vals.append(float(str(v).replace(",", "")))
+                        num_vals.append(
+                            float(normalize_arabic_digits(str(v)).replace(",", ""))
+                        )
                     except Exception:
                         pass
                 if len(num_vals) > len(rows) * 0.7:

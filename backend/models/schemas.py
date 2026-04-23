@@ -2,6 +2,11 @@ from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
 
 
+class ColumnTransform(BaseModel):
+    op: str
+    params: Dict[str, Any] = {}
+
+
 class ColumnConfig(BaseModel):
     name: str
     target_name: Optional[str] = None
@@ -15,6 +20,7 @@ class ColumnConfig(BaseModel):
     fk_source_column: Optional[str] = None
     fk_match_column: Optional[str] = None
     fk_local_column: Optional[str] = None
+    transforms: List[ColumnTransform] = []
 
 
 class TableConfig(BaseModel):
@@ -44,6 +50,7 @@ class TransformResponse(BaseModel):
     type_conversions: int
     reference_mappings: int
     null_normalizations: int
+    dedup_removed: int = 0
     warnings: List[str]
     preview: Dict[str, Any]
 

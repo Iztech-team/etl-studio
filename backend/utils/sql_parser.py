@@ -114,15 +114,19 @@ class SQLParser:
                     "column_name": {
                         "inferred_type": "float",
                         "original_type": "DECIMAL(10,2)",
-                        "nullable": True
+                        "nullable": True,
+                        "primary_key": False,
+                        "unique": False,
                     }
                 }
             }
+
+        Also populates self.constraints and self.foreign_keys after parsing.
         """
         result: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        self.constraints: Dict[str, Dict[str, Any]] = {}
+        self.foreign_keys: List[Dict[str, str]] = []
 
-        # Match CREATE TABLE with multi-dialect identifiers
-        # Use a greedy match for the body, then find the last closing paren
         create_re = re.compile(
             r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
             r'[`"\[\']?(\w+)[`"\]\']?\s*\((.+)\)\s*;',
@@ -134,30 +138,72 @@ class SQLParser:
             body = m.group(2)
 
             columns: Dict[str, Dict[str, Any]] = {}
-            # Split on commas not inside parentheses
+            pk_cols: List[str] = []
+            unique_sets: List[List[str]] = []
+
             for line in self._split_ddl_columns(body):
                 line = line.strip()
                 if not line:
                     continue
-                # Skip constraints
                 upper = line.upper().lstrip()
+
+                # Table-level PRIMARY KEY (col1, col2)
+                pk_match = re.match(
+                    r"(?:CONSTRAINT\s+\w+\s+)?PRIMARY\s+KEY\s*\(([^)]+)\)",
+                    line,
+                    re.IGNORECASE,
+                )
+                if pk_match:
+                    pk_cols.extend(
+                        c.strip().strip("`\"'[] ") for c in pk_match.group(1).split(",")
+                    )
+                    continue
+
+                # Table-level UNIQUE (col1, col2)
+                uq_match = re.match(
+                    r"(?:CONSTRAINT\s+\w+\s+)?UNIQUE\s*\(([^)]+)\)",
+                    line,
+                    re.IGNORECASE,
+                )
+                if uq_match:
+                    cols = [
+                        c.strip().strip("`\"'[] ") for c in uq_match.group(1).split(",")
+                    ]
+                    unique_sets.append(cols)
+                    continue
+
+                # FOREIGN KEY (col) REFERENCES parent(col)
+                fk_match = re.match(
+                    r'(?:CONSTRAINT\s+\w+\s+)?FOREIGN\s+KEY\s*\(([^)]+)\)\s*REFERENCES\s+[`"\[\']?(\w+)[`"\]\']?\s*\(([^)]+)\)',
+                    line,
+                    re.IGNORECASE,
+                )
+                if fk_match:
+                    local_cols = [
+                        c.strip().strip("`\"'[] ") for c in fk_match.group(1).split(",")
+                    ]
+                    ref_table = fk_match.group(2)
+                    ref_cols = [
+                        c.strip().strip("`\"'[] ") for c in fk_match.group(3).split(",")
+                    ]
+                    self.foreign_keys.append(
+                        {
+                            "child_table": table_name,
+                            "child_columns": local_cols,
+                            "parent_table": ref_table,
+                            "parent_columns": ref_cols,
+                        }
+                    )
+                    continue
+
+                # Skip other constraint lines
                 if any(
                     upper.startswith(kw)
-                    for kw in (
-                        "PRIMARY",
-                        "FOREIGN",
-                        "UNIQUE",
-                        "CHECK",
-                        "CONSTRAINT",
-                        "INDEX",
-                        "KEY",
-                    )
+                    for kw in ("CHECK", "CONSTRAINT", "INDEX", "KEY")
                 ):
                     continue
 
-                # Parse: [identifier] TYPE[(precision)]
-                # Type name can be multi-word (e.g. "double precision", "character varying")
-                # but must stop before keywords like NOT, NULL, DEFAULT, PRIMARY, UNIQUE, CHECK, REFERENCES
+                # Parse column definition
                 col_re = re.compile(
                     r'[`"\[\']?(\w+)[`"\]\']?\s+'
                     r"([A-Za-z]\w*(?:\s+(?!NOT\b|NULL\b|DEFAULT\b|PRIMARY\b|UNIQUE\b|CHECK\b|REFERENCES\b|AUTO_INCREMENT\b|GENERATED\b)[A-Za-z]\w*)*(?:\([^)]*\))?)",
@@ -172,14 +218,54 @@ class SQLParser:
                 nullable = "NOT NULL" not in line.upper()
                 inferred = self._normalize_type(original_type)
 
+                is_pk = bool(re.search(r"\bPRIMARY\s+KEY\b", line, re.IGNORECASE))
+                is_unique = bool(re.search(r"\bUNIQUE\b", line, re.IGNORECASE))
+
+                if is_pk:
+                    pk_cols.append(col_name)
+
+                # Inline REFERENCES on column
+                ref_match = re.search(
+                    r'REFERENCES\s+[`"\[\']?(\w+)[`"\]\']?\s*\(([^)]+)\)',
+                    line,
+                    re.IGNORECASE,
+                )
+                if ref_match:
+                    self.foreign_keys.append(
+                        {
+                            "child_table": table_name,
+                            "child_columns": [col_name],
+                            "parent_table": ref_match.group(1),
+                            "parent_columns": [
+                                ref_match.group(2).strip().strip("`\"'[] ")
+                            ],
+                        }
+                    )
+
                 columns[col_name] = {
                     "inferred_type": inferred,
                     "original_type": original_type,
                     "nullable": nullable,
+                    "primary_key": is_pk,
+                    "unique": is_unique,
                 }
+
+            # Apply table-level PK to column entries
+            for col_name in pk_cols:
+                if col_name in columns:
+                    columns[col_name]["primary_key"] = True
+
+            # Apply table-level UNIQUE to column entries (single-column uniques)
+            for uq_set in unique_sets:
+                if len(uq_set) == 1 and uq_set[0] in columns:
+                    columns[uq_set[0]]["unique"] = True
 
             if columns:
                 result[table_name] = columns
+                self.constraints[table_name] = {
+                    "primary_key": pk_cols,
+                    "unique": unique_sets,
+                }
 
         return result
 

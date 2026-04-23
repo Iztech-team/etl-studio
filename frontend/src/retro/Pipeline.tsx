@@ -11,6 +11,7 @@ import {
 } from "react";
 import { RL_STAGES, type Project, type ResumedSession, type StageId } from "./data";
 import { IArrow, ICheck, IDisk, IUpload, IX } from "./icons";
+import { MascotDeploy, MascotLoad } from "./Sprites";
 import { RlTopbar } from "./Topbar";
 
 // ---------- types ----------
@@ -1300,6 +1301,10 @@ function RlSelect({ onNext }: { onNext: () => void }) {
 }
 
 type ColOp = "keep" | "rename" | "cast" | "drop" | "add" | "fk";
+type ColTransform = {
+	op: string;
+	params: Record<string, unknown>;
+};
 type ColEdit = {
 	name: string;
 	type: string;
@@ -1313,6 +1318,7 @@ type ColEdit = {
 	fkSourceColumn?: string;
 	fkMatchColumn?: string;
 	fkLocalColumn?: string;
+	transforms?: ColTransform[];
 };
 
 const CAST_TYPES = [
@@ -1321,6 +1327,42 @@ const CAST_TYPES = [
 	"smallint", "bigint", "numeric", "decimal", "real", "double",
 	"date", "time", "timestamp", "datetime",
 	"uuid", "json", "blob",
+];
+
+const TRANSFORM_OPS: { id: string; label: string; params: { key: string; label: string; type: string; placeholder?: string; options?: { value: string; label: string }[] }[] }[] = [
+	{ id: "normalize_phone", label: "NORMALIZE PHONE", params: [
+		{ key: "country_code", label: "COUNTRY CODE", placeholder: "+970", type: "text" },
+		{ key: "strip", label: "STRIP CHARS", placeholder: " -()/.", type: "text" },
+	]},
+	{ id: "split_name", label: "SPLIT NAME", params: [
+		{ key: "part", label: "EXTRACT", type: "select", options: [
+			{ value: "first", label: "First word" },
+			{ value: "last", label: "Last word" },
+			{ value: "all_but_last", label: "All but last" },
+			{ value: "all_but_first", label: "All but first" },
+		]},
+		{ key: "separator", label: "SEPARATOR", placeholder: " ", type: "text" },
+		{ key: "default", label: "DEFAULT", placeholder: "(original)", type: "text" },
+	]},
+	{ id: "map_values", label: "MAP VALUES", params: [
+		{ key: "mapping", label: "MAPPING (key=value, one per line)", type: "textarea" },
+		{ key: "default", label: "IF NO MATCH", placeholder: "original", type: "text" },
+		{ key: "case_insensitive", label: "CASE INSENSITIVE", type: "checkbox" },
+	]},
+	{ id: "generate_uuid", label: "GENERATE UUID", params: [
+		{ key: "deterministic", label: "DETERMINISTIC (same input = same UUID)", type: "checkbox" },
+		{ key: "namespace", label: "NAMESPACE", placeholder: "etl-legacy", type: "text" },
+		{ key: "keep_original", label: "ONLY FILL NULLS", type: "checkbox" },
+	]},
+	{ id: "default_if_null", label: "DEFAULT IF NULL", params: [
+		{ key: "value", label: "DEFAULT VALUE", placeholder: "N/A", type: "text" },
+		{ key: "treat_empty_as_null", label: "TREAT EMPTY AS NULL", type: "checkbox" },
+	]},
+	{ id: "conditional", label: "CONDITIONAL MAP", params: [
+		{ key: "rules", label: "RULES (when=then, one per line)", type: "textarea" },
+		{ key: "default", label: "IF NO MATCH", placeholder: "original", type: "text" },
+		{ key: "case_insensitive", label: "CASE INSENSITIVE", type: "checkbox" },
+	]},
 ];
 
 function resolveType(colInfo: unknown): string {
@@ -1439,9 +1481,49 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 		setSel((s) => Math.max(0, Math.min(s, cols.length - 2)));
 	};
 
+	const addTransform = (op: string) => {
+		setAllEdits((prev) => {
+			const tableCols = [...(prev[activeTable] ?? [])];
+			const col = { ...tableCols[sel] };
+			const transforms = [...(col.transforms ?? [])];
+			transforms.push({ op, params: {} });
+			col.transforms = transforms;
+			tableCols[sel] = col;
+			return { ...prev, [activeTable]: tableCols };
+		});
+	};
+
+	const updateTransformParam = (tIdx: number, key: string, value: unknown) => {
+		setAllEdits((prev) => {
+			const tableCols = [...(prev[activeTable] ?? [])];
+			const col = { ...tableCols[sel] };
+			const transforms = [...(col.transforms ?? [])];
+			transforms[tIdx] = {
+				...transforms[tIdx],
+				params: { ...transforms[tIdx].params, [key]: value },
+			};
+			col.transforms = transforms;
+			tableCols[sel] = col;
+			return { ...prev, [activeTable]: tableCols };
+		});
+	};
+
+	const removeTransform = (tIdx: number) => {
+		setAllEdits((prev) => {
+			const tableCols = [...(prev[activeTable] ?? [])];
+			const col = { ...tableCols[sel] };
+			const transforms = [...(col.transforms ?? [])];
+			transforms.splice(tIdx, 1);
+			col.transforms = transforms;
+			tableCols[sel] = col;
+			return { ...prev, [activeTable]: tableCols };
+		});
+	};
+
 	const activePreview = (preview[activeTable] ?? []) as Record<string, unknown>[];
 	const kept = cols.filter((c) => c.op !== "drop");
 	const tableRenameCount = Object.entries(tableNames).filter(([k, v]) => k !== v && v.trim() !== "").length;
+	const transformCount = cols.reduce((n, c) => n + (c.transforms?.length ?? 0), 0);
 	const opCounts = {
 		rename: cols.filter((c) => c.op === "rename").length,
 		cast: cols.filter((c) => c.op === "cast").length,
@@ -1449,6 +1531,40 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 		add: cols.filter((c) => c.op === "add").length,
 		fk: cols.filter((c) => c.op === "fk").length,
 		tableRename: tableRenameCount,
+		transforms: transformCount,
+	};
+
+	const serializeTransforms = (transforms?: ColTransform[]) => {
+		if (!transforms || transforms.length === 0) return [];
+		return transforms.map((tr) => {
+			const params: Record<string, unknown> = {};
+			for (const [k, v] of Object.entries(tr.params)) {
+				if (k === "mapping" && typeof v === "string") {
+					// Parse "key=value" lines into { key: value } dict
+					const mapping: Record<string, string> = {};
+					for (const line of v.split("\n")) {
+						const trimmed = line.trim();
+						if (!trimmed) continue;
+						const eq = trimmed.indexOf("=");
+						if (eq > 0) mapping[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
+					}
+					params[k] = mapping;
+				} else if (k === "rules" && typeof v === "string") {
+					// Parse "when=then" lines into [{when, then}] array
+					const rules: { when: string; then: string }[] = [];
+					for (const line of v.split("\n")) {
+						const trimmed = line.trim();
+						if (!trimmed) continue;
+						const eq = trimmed.indexOf("=");
+						if (eq > 0) rules.push({ when: trimmed.slice(0, eq).trim(), then: trimmed.slice(eq + 1).trim() });
+					}
+					params[k] = rules;
+				} else {
+					params[k] = v;
+				}
+			}
+			return { op: tr.op, params };
+		});
 	};
 
 	const saveAndTransform = async () => {
@@ -1472,6 +1588,7 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 								default_value: !e.nullable ? (e.defaultValue ?? null) : null,
 								include: true,
 								is_new: true,
+								transforms: serializeTransforms(e.transforms),
 							};
 						}
 						if (e.op === "fk") {
@@ -1486,6 +1603,7 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 								fk_source_column: e.fkSourceColumn,
 								fk_match_column: e.fkMatchColumn,
 								fk_local_column: e.fkLocalColumn,
+								transforms: serializeTransforms(e.transforms),
 							};
 						}
 						return {
@@ -1494,6 +1612,7 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 							data_type: e.op === "cast" ? e.targetType : e.type,
 							nullable: true,
 							include: e.op !== "drop",
+							transforms: serializeTransforms(e.transforms),
 						};
 					}),
 				};
@@ -1619,10 +1738,10 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 						className="pixel"
 						style={{ fontSize: 12, color: "var(--lg-amber)" }}
 					>
-						{opCounts.rename + opCounts.cast + opCounts.drop + opCounts.add + opCounts.fk + opCounts.tableRename}
+						{opCounts.rename + opCounts.cast + opCounts.drop + opCounts.add + opCounts.fk + opCounts.tableRename + opCounts.transforms}
 					</span>
 					<span className="mono" style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}>
-						{opCounts.rename} rename · {opCounts.cast} cast · {opCounts.drop} drop{opCounts.add > 0 ? ` · ${opCounts.add} new` : ""}{opCounts.fk > 0 ? ` · ${opCounts.fk} fk` : ""}{opCounts.tableRename > 0 ? ` · ${opCounts.tableRename} tbl rename` : ""}
+						{opCounts.rename} rename · {opCounts.cast} cast · {opCounts.drop} drop{opCounts.add > 0 ? ` · ${opCounts.add} new` : ""}{opCounts.fk > 0 ? ` · ${opCounts.fk} fk` : ""}{opCounts.tableRename > 0 ? ` · ${opCounts.tableRename} tbl rename` : ""}{opCounts.transforms > 0 ? ` · ${opCounts.transforms} transforms` : ""}
 					</span>
 				</div>
 			</div>
@@ -1876,6 +1995,55 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 										Pass-through · value and type preserved.
 									</div>
 								)}
+
+								{/* Column transforms */}
+								<div style={{ marginTop: 16, borderTop: "1px solid var(--lg-border)", paddingTop: 12 }}>
+									<div className="pixel" style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 6, letterSpacing: "0.1em" }}>
+										TRANSFORMS {c.transforms?.length ? `(${c.transforms.length})` : ""}
+									</div>
+									{(c.transforms ?? []).map((t, tIdx) => {
+										const opMeta = TRANSFORM_OPS.find((o) => o.id === t.op);
+										return (
+											<div key={tIdx} style={{ marginBottom: 10, padding: 8, border: "1px solid var(--lg-border)", background: "var(--lg-bg-2)" }}>
+												<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+													<span className="pixel" style={{ fontSize: 8, color: "var(--lg-amber)", letterSpacing: "0.1em" }}>
+														{tIdx + 1}. {opMeta?.label ?? t.op.toUpperCase()}
+													</span>
+													<button className="link" style={{ fontSize: 8, color: "var(--lg-coral)" }} onClick={() => removeTransform(tIdx)}>
+														<IX size={7} />
+													</button>
+												</div>
+												{opMeta?.params.map((p) => (
+													<div key={p.key} style={{ marginBottom: 6 }}>
+														<div className="pixel" style={{ fontSize: 8, color: "var(--lg-ink-mute)", marginBottom: 2 }}>{p.label}</div>
+														{p.type === "text" && (
+															<input className="input" style={{ fontSize: 10, padding: "3px 6px" }} placeholder={p.placeholder ?? ""} value={String(t.params[p.key] ?? "")} onChange={(e) => updateTransformParam(tIdx, p.key, e.target.value)} />
+														)}
+														{p.type === "select" && (
+															<select className="input" style={{ fontSize: 10, padding: "3px 6px" }} value={String(t.params[p.key] ?? "")} onChange={(e) => updateTransformParam(tIdx, p.key, e.target.value)}>
+																<option value="">—</option>
+																{p.options?.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+															</select>
+														)}
+														{p.type === "checkbox" && (
+															<label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, cursor: "pointer" }}>
+																<input type="checkbox" checked={!!t.params[p.key]} onChange={(e) => updateTransformParam(tIdx, p.key, e.target.checked)} />
+																<span className="mono" style={{ color: "var(--lg-ink-dim)" }}>enabled</span>
+															</label>
+														)}
+														{p.type === "textarea" && (
+															<textarea className="input" style={{ fontSize: 10, padding: "3px 6px", minHeight: 50, resize: "vertical", fontFamily: "var(--lg-mono)" }} placeholder={p.key === "mapping" ? "ILS=NIS\nUSD=USD" : p.key === "rules" ? "posted=delivered\ndraft=draft" : ""} value={String(t.params[p.key] ?? "")} onChange={(e) => updateTransformParam(tIdx, p.key, e.target.value)} />
+														)}
+													</div>
+												))}
+											</div>
+										);
+									})}
+									<select className="input" style={{ fontSize: 10, padding: "4px 6px", color: "var(--lg-ink-dim)" }} value="" onChange={(e) => { if (e.target.value) addTransform(e.target.value); e.target.value = ""; }}>
+										<option value="">+ ADD TRANSFORM…</option>
+										{TRANSFORM_OPS.map((o) => (<option key={o.id} value={o.id}>{o.label}</option>))}
+									</select>
+								</div>
 							</>
 						)}
 
@@ -1975,6 +2143,37 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 										All rows will have NULL for this column.
 									</div>
 								)}
+
+								{/* Column transforms for new columns */}
+								<div style={{ marginTop: 16, borderTop: "1px solid var(--lg-border)", paddingTop: 12 }}>
+									<div className="pixel" style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 6, letterSpacing: "0.1em" }}>
+										TRANSFORMS {c.transforms?.length ? `(${c.transforms.length})` : ""}
+									</div>
+									{(c.transforms ?? []).map((t, tIdx) => {
+										const opMeta = TRANSFORM_OPS.find((o) => o.id === t.op);
+										return (
+											<div key={tIdx} style={{ marginBottom: 10, padding: 8, border: "1px solid var(--lg-border)", background: "var(--lg-bg-2)" }}>
+												<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+													<span className="pixel" style={{ fontSize: 8, color: "var(--lg-amber)", letterSpacing: "0.1em" }}>{tIdx + 1}. {opMeta?.label ?? t.op.toUpperCase()}</span>
+													<button className="link" style={{ fontSize: 8, color: "var(--lg-coral)" }} onClick={() => removeTransform(tIdx)}><IX size={7} /></button>
+												</div>
+												{opMeta?.params.map((p) => (
+													<div key={p.key} style={{ marginBottom: 6 }}>
+														<div className="pixel" style={{ fontSize: 8, color: "var(--lg-ink-mute)", marginBottom: 2 }}>{p.label}</div>
+														{p.type === "text" && (<input className="input" style={{ fontSize: 10, padding: "3px 6px" }} placeholder={p.placeholder ?? ""} value={String(t.params[p.key] ?? "")} onChange={(e) => updateTransformParam(tIdx, p.key, e.target.value)} />)}
+														{p.type === "select" && (<select className="input" style={{ fontSize: 10, padding: "3px 6px" }} value={String(t.params[p.key] ?? "")} onChange={(e) => updateTransformParam(tIdx, p.key, e.target.value)}><option value="">—</option>{p.options?.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}</select>)}
+														{p.type === "checkbox" && (<label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, cursor: "pointer" }}><input type="checkbox" checked={!!t.params[p.key]} onChange={(e) => updateTransformParam(tIdx, p.key, e.target.checked)} /><span className="mono" style={{ color: "var(--lg-ink-dim)" }}>enabled</span></label>)}
+														{p.type === "textarea" && (<textarea className="input" style={{ fontSize: 10, padding: "3px 6px", minHeight: 50, resize: "vertical", fontFamily: "var(--lg-mono)" }} placeholder={p.key === "mapping" ? "ILS=NIS\nUSD=USD" : p.key === "rules" ? "posted=delivered\ndraft=draft" : ""} value={String(t.params[p.key] ?? "")} onChange={(e) => updateTransformParam(tIdx, p.key, e.target.value)} />)}
+													</div>
+												))}
+											</div>
+										);
+									})}
+									<select className="input" style={{ fontSize: 10, padding: "4px 6px", color: "var(--lg-ink-dim)" }} value="" onChange={(e) => { if (e.target.value) addTransform(e.target.value); e.target.value = ""; }}>
+										<option value="">+ ADD TRANSFORM…</option>
+										{TRANSFORM_OPS.map((o) => (<option key={o.id} value={o.id}>{o.label}</option>))}
+									</select>
+								</div>
 							</>
 						)}
 
@@ -2120,6 +2319,37 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 										pull: {c.fkSourceTable}.{c.fkSourceColumn}
 									</div>
 								)}
+
+								{/* Column transforms for FK columns */}
+								<div style={{ marginTop: 16, borderTop: "1px solid var(--lg-border)", paddingTop: 12 }}>
+									<div className="pixel" style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 6, letterSpacing: "0.1em" }}>
+										TRANSFORMS {c.transforms?.length ? `(${c.transforms.length})` : ""}
+									</div>
+									{(c.transforms ?? []).map((t, tIdx) => {
+										const opMeta = TRANSFORM_OPS.find((o) => o.id === t.op);
+										return (
+											<div key={tIdx} style={{ marginBottom: 10, padding: 8, border: "1px solid var(--lg-border)", background: "var(--lg-bg-2)" }}>
+												<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+													<span className="pixel" style={{ fontSize: 8, color: "var(--lg-amber)", letterSpacing: "0.1em" }}>{tIdx + 1}. {opMeta?.label ?? t.op.toUpperCase()}</span>
+													<button className="link" style={{ fontSize: 8, color: "var(--lg-coral)" }} onClick={() => removeTransform(tIdx)}><IX size={7} /></button>
+												</div>
+												{opMeta?.params.map((p) => (
+													<div key={p.key} style={{ marginBottom: 6 }}>
+														<div className="pixel" style={{ fontSize: 8, color: "var(--lg-ink-mute)", marginBottom: 2 }}>{p.label}</div>
+														{p.type === "text" && (<input className="input" style={{ fontSize: 10, padding: "3px 6px" }} placeholder={p.placeholder ?? ""} value={String(t.params[p.key] ?? "")} onChange={(e) => updateTransformParam(tIdx, p.key, e.target.value)} />)}
+														{p.type === "select" && (<select className="input" style={{ fontSize: 10, padding: "3px 6px" }} value={String(t.params[p.key] ?? "")} onChange={(e) => updateTransformParam(tIdx, p.key, e.target.value)}><option value="">—</option>{p.options?.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}</select>)}
+														{p.type === "checkbox" && (<label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, cursor: "pointer" }}><input type="checkbox" checked={!!t.params[p.key]} onChange={(e) => updateTransformParam(tIdx, p.key, e.target.checked)} /><span className="mono" style={{ color: "var(--lg-ink-dim)" }}>enabled</span></label>)}
+														{p.type === "textarea" && (<textarea className="input" style={{ fontSize: 10, padding: "3px 6px", minHeight: 50, resize: "vertical", fontFamily: "var(--lg-mono)" }} placeholder={p.key === "mapping" ? "ILS=NIS\nUSD=USD" : p.key === "rules" ? "posted=delivered\ndraft=draft" : ""} value={String(t.params[p.key] ?? "")} onChange={(e) => updateTransformParam(tIdx, p.key, e.target.value)} />)}
+													</div>
+												))}
+											</div>
+										);
+									})}
+									<select className="input" style={{ fontSize: 10, padding: "4px 6px", color: "var(--lg-ink-dim)" }} value="" onChange={(e) => { if (e.target.value) addTransform(e.target.value); e.target.value = ""; }}>
+										<option value="">+ ADD TRANSFORM…</option>
+										{TRANSFORM_OPS.map((o) => (<option key={o.id} value={o.id}>{o.label}</option>))}
+									</select>
+								</div>
 							</>
 						)}
 					</div>
@@ -2427,9 +2657,26 @@ function RlMap({ onNext }: { onNext: () => void }) {
 				}
 			}
 
+			// Fetch existing config to preserve transforms set in Transform stage
+			let prevConfig: { tables?: { source_table: string; columns: { name: string; transforms?: { op: string; params: Record<string, unknown> }[] }[] }[] } = {};
+			try {
+				const cfgRes = await fetch(`/api/session/${uploadResult.sessionId}/config`);
+				if (cfgRes.ok) prevConfig = await cfgRes.json();
+			} catch { /* ignore */ }
+			const prevTransforms: Record<string, Record<string, { op: string; params: Record<string, unknown> }[]>> = {};
+			for (const tc of prevConfig.tables ?? []) {
+				for (const cc of tc.columns ?? []) {
+					if (cc.transforms && cc.transforms.length > 0) {
+						if (!prevTransforms[tc.source_table]) prevTransforms[tc.source_table] = {};
+						prevTransforms[tc.source_table][cc.name] = cc.transforms;
+					}
+				}
+			}
+
 			const tableConfigs = tables.map((t) => {
 				const tSchema = schema[t.name] ?? {};
 				const ddl = appliedDDL[t.name];
+				const tblTransforms = prevTransforms[t.name] ?? {};
 				const cols = Object.keys(tSchema).map((col) => ({
 					name: col,
 					data_type: ddl?.[col]
@@ -2439,6 +2686,7 @@ function RlMap({ onNext }: { onNext: () => void }) {
 							: String(tSchema[col] ?? "string"),
 					nullable: ddl?.[col] ? ddl[col].nullable : true,
 					include: true,
+					transforms: tblTransforms[col] ?? [],
 				}));
 				return {
 					source_table: t.name,
@@ -2735,7 +2983,7 @@ function RlMap({ onNext }: { onNext: () => void }) {
 // ---------- export ----------
 
 function RlExport({ onDone }: { onDone: () => void }) {
-	const { uploadResult, transformResult, loadResult, setLoadResult } = usePipelineCtx();
+	const { projectId, uploadResult, transformResult, loadResult, setLoadResult } = usePipelineCtx();
 	const [fmt, setFmt] = useState("json");
 	const [running, setRunning] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -2786,7 +3034,10 @@ function RlExport({ onDone }: { onDone: () => void }) {
 					{FORMATS.map((f) => (
 						<div
 							key={f.id}
-							onClick={() => !loadResult && setFmt(f.id)}
+							onClick={() => {
+								if (loadResult) setLoadResult(null);
+								setFmt(f.id);
+							}}
 							className={`rl-fmt-row ${fmt === f.id ? "active" : ""}`}
 						>
 							<div
@@ -2831,7 +3082,9 @@ function RlExport({ onDone }: { onDone: () => void }) {
 									<IDisk size={12} />
 									<div style={{ flex: 1, fontSize: 12 }}>{file}</div>
 									<a
-										href={`/api/download/${uploadResult?.sessionId}/${file}`}
+										href={projectId
+											? `/api/projects/${projectId}/download/${file}`
+											: `/api/download/${uploadResult?.sessionId}/${file}`}
 										download
 										className="btn btn-ghost"
 										style={{ padding: "4px 10px", fontSize: 10 }}
@@ -2888,6 +3141,9 @@ function RlExport({ onDone }: { onDone: () => void }) {
 			</div>
 
 			<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+				<div className="rl-mascot-slot">
+					<MascotLoad size={150} />
+				</div>
 				<div className="panel">
 					<div className="panel-head">
 						{loadResult ? "COMPLETE" : "READY TO RUN"}
@@ -2928,13 +3184,18 @@ function RlExport({ onDone }: { onDone: () => void }) {
 				)}
 
 				{!loadResult ? (
-					<button
-						className="btn btn-primary"
-						onClick={runLoad}
-						disabled={running || !uploadResult?.sessionId}
-					>
-						{running ? "EXPORTING…" : "▶ RUN PIPELINE"}
-					</button>
+					<div className="rl-run-cluster">
+						<div className="rl-mascot-slot rl-mascot-slot-sm">
+							<MascotDeploy size={130} />
+						</div>
+						<button
+							className="btn btn-primary"
+							onClick={runLoad}
+							disabled={running || !uploadResult?.sessionId}
+						>
+							{running ? "EXPORTING…" : "▶ RUN PIPELINE"}
+						</button>
+					</div>
 				) : (
 					<button
 						className="btn btn-primary"

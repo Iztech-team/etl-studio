@@ -1,7 +1,34 @@
 /* Pixel-art mascots with idle animations (bob + blink).
    Two characters only — the CRT monitor and the little ghost. */
 
+import mascotLoadSrc from "../assets/mascots/load.png";
+import mascotDeploySrc from "../assets/mascots/deploy.png";
+
 type SpriteProps = { size?: number };
+
+export function MascotLoad({ size = 140 }: SpriteProps) {
+	return (
+		<img
+			src={mascotLoadSrc}
+			alt=""
+			aria-hidden
+			className="sp sp-bob-slow rl-mascot-img"
+			style={{ height: size, width: "auto" }}
+		/>
+	);
+}
+
+export function MascotDeploy({ size = 120 }: SpriteProps) {
+	return (
+		<img
+			src={mascotDeploySrc}
+			alt=""
+			aria-hidden
+			className="sp sp-bob rl-mascot-img"
+			style={{ height: size, width: "auto" }}
+		/>
+	);
+}
 
 export function SpriteMonitor({ size = 64 }: SpriteProps) {
 	return (

@@ -1,7 +1,7 @@
 import csv
 import json
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Set
 
 
 class Loader:
@@ -13,11 +13,13 @@ class Loader:
         config: Dict[str, Any],
         out_dir: str,
         ddl_schema: Dict[str, Any] | None = None,
+        fk_edges: List[tuple] | None = None,
     ):
         self.tables: Dict[str, List[Dict]] = transformed.get("tables", {})
         self.config = config
         self.out_dir = out_dir
         self.ddl_schema = ddl_schema or {}
+        self.fk_edges = fk_edges or []
 
     # ------------------------------------------------------------------
     def run(self) -> Dict[str, Any]:
@@ -138,7 +140,39 @@ class Loader:
         escaped = str(v).replace("'", "''")
         return f"'{escaped}'"
 
-    @staticmethod
-    def _fk_sort(tables: List[str]) -> List[str]:
-        # Simple alphabetical ordering as a proxy; real FK graph would need schema metadata
-        return sorted(tables)
+    def _fk_sort(self, tables: List[str]) -> List[str]:
+        """Topological sort based on FK dependency edges.
+
+        Parents (referenced tables) come before children (referencing tables).
+        Falls back to alphabetical for tables with no FK info or on cycles.
+        """
+        table_set = set(tables)
+
+        # Build adjacency: child -> set of parents it depends on
+        deps: Dict[str, Set[str]] = {t: set() for t in tables}
+        for child, parent in self.fk_edges:
+            if child in table_set and parent in table_set and child != parent:
+                deps[child].add(parent)
+
+        # Kahn's algorithm (topological sort)
+        result: List[str] = []
+        ready = sorted([t for t in tables if not deps[t]])
+        remaining = {t: set(parents) for t, parents in deps.items() if parents}
+
+        while ready:
+            node = ready.pop(0)
+            result.append(node)
+            to_remove = []
+            for child, parents in remaining.items():
+                parents.discard(node)
+                if not parents:
+                    to_remove.append(child)
+            for child in sorted(to_remove):
+                del remaining[child]
+                ready.append(child)
+
+        # If there are remaining tables (cycle), append them alphabetically
+        if remaining:
+            result.extend(sorted(remaining.keys()))
+
+        return result

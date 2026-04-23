@@ -754,6 +754,20 @@ body { font-family: var(--lg-mono); }
 
 /* Sprites */
 .sp { display: block; image-rendering: pixelated; }
+.rl-mascot-img { image-rendering: pixelated; display: block; }
+.rl-mascot-slot {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  padding: 4px 0 0;
+}
+.rl-mascot-slot-sm { padding: 0; margin-bottom: -6px; }
+.rl-run-cluster {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
 .sp-bob { animation: sp-bob 1.4s ease-in-out infinite; }
 .sp-bob-slow { animation: sp-bob-slow 2.2s ease-in-out infinite; }
 .sp-eye {

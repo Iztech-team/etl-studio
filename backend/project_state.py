@@ -5,6 +5,7 @@ from pathlib import Path
 
 from core.extractor import Extractor
 from core.transformer import Transformer
+from utils.audit import AuditTrail
 
 DATA_DIR = Path(__file__).parent / "data"
 
@@ -15,6 +16,7 @@ PERSIST_KEYS = [
     "config",
     "load_result",
     "pre_extract",
+    "audit_trail",
 ]
 
 PHASE_ORDER = ["upload", "edit", "configure", "transform", "load", "stats"]
@@ -50,13 +52,28 @@ def save_state(project_id: str, session: dict) -> None:
 def load_state(project_id: str) -> dict:
     uploads_dir = project_uploads_dir(project_id)
 
-    extractor = Extractor(uploads_dir)
-    raw = extractor.extract_all()
-
     with open(state_path(project_id), "r", encoding="utf-8") as f:
         saved = json.load(f)
 
-    session: dict = {"raw": raw, "extractor": extractor, "project_id": project_id}
+    # Reconstruct audit trail from saved state
+    audit_trail = AuditTrail()
+    if "audit_trail" in saved:
+        audit_data = saved["audit_trail"]
+        audit_trail.source_type = audit_data.get("source_type", "upload")
+        audit_trail.source_name = audit_data.get("source_name", "")
+        audit_trail.created_at = audit_data.get("created_at", "")
+        audit_trail.events = audit_data.get("events", [])
+        audit_trail.stats = audit_data.get("stats", {})
+
+    extractor = Extractor(uploads_dir, audit_trail)
+    raw = extractor.extract_all()
+
+    session: dict = {
+        "raw": raw,
+        "extractor": extractor,
+        "project_id": project_id,
+        "audit_trail": audit_trail,
+    }
 
     for key in PERSIST_KEYS:
         if key in saved:
@@ -85,7 +102,7 @@ def load_state(project_id: str) -> dict:
 
     if phase_index >= transform_index:
         config = session.get("config", {})
-        transformer = Transformer(raw, config)
+        transformer = Transformer(raw, config, audit_trail)
         session["transformed"] = transformer.run()
         session["transformer"] = transformer
 
