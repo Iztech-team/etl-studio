@@ -559,6 +559,7 @@ function TablePreviewModal({
 	tableName: string;
 	onClose: () => void;
 }) {
+	const { uploadResult, setUploadResult } = usePipelineCtx();
 	const [page, setPage] = useState(1);
 	const [data, setData] = useState<PageData | null>(null);
 	const [loading, setLoading] = useState(true);
@@ -614,7 +615,28 @@ function TablePreviewModal({
 				const err = await res.json().catch(() => null);
 				throw new Error(err?.detail || "Save failed");
 			}
+			const saveData = await res.json();
 			setDirty(false);
+
+			// Propagate updated data to pipeline context
+			if (uploadResult && saveData.preview && saveData.schema) {
+				const updatedTables = uploadResult.tables.map((t) => ({
+					...t,
+					rowCount: saveData.stats?.[t.name]?.row_count ?? t.rowCount,
+					colCount: Object.keys(saveData.schema[t.name] ?? {}).length || t.colCount,
+					columns: Object.keys(saveData.schema[t.name] ?? {}).length > 0
+						? Object.keys(saveData.schema[t.name])
+						: t.columns,
+				}));
+				setUploadResult({
+					...uploadResult,
+					tables: updatedTables,
+					schema: saveData.schema,
+					stats: saveData.stats,
+					preview: saveData.preview,
+				});
+			}
+
 			// Refresh the current page
 			await fetchPage(page);
 		} catch (e) {
@@ -1277,16 +1299,29 @@ function RlSelect({ onNext }: { onNext: () => void }) {
 	);
 }
 
-type ColOp = "keep" | "rename" | "cast" | "drop";
+type ColOp = "keep" | "rename" | "cast" | "drop" | "add" | "fk";
 type ColEdit = {
 	name: string;
 	type: string;
 	op: ColOp;
 	targetName: string;
 	targetType: string;
+	isNew?: boolean;
+	nullable?: boolean;
+	defaultValue?: string;
+	fkSourceTable?: string;
+	fkSourceColumn?: string;
+	fkMatchColumn?: string;
+	fkLocalColumn?: string;
 };
 
-const CAST_TYPES = ["string", "integer", "float", "boolean"];
+const CAST_TYPES = [
+	"string", "integer", "float", "boolean",
+	"text", "varchar", "char",
+	"smallint", "bigint", "numeric", "decimal", "real", "double",
+	"date", "time", "timestamp", "datetime",
+	"uuid", "json", "blob",
+];
 
 function resolveType(colInfo: unknown): string {
 	if (typeof colInfo === "object" && colInfo) {
@@ -1307,6 +1342,10 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 
 	const [activeTable, setActiveTable] = useState<string>(tables[0]?.name ?? "");
 	const [sel, setSel] = useState(0);
+	const [renamingTable, setRenamingTable] = useState<string | null>(null);
+	const [tableNames, setTableNames] = useState<Record<string, string>>(() =>
+		Object.fromEntries(tables.map((t) => [t.name, t.name])),
+	);
 
 	// Per-table column edits state: { [tableName]: ColEdit[] }
 	const [allEdits, setAllEdits] = useState<Record<string, ColEdit[]>>(() => {
@@ -1351,12 +1390,65 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 		updateCol(idx, patch);
 	};
 
+	const addNewColumn = () => {
+		const id = `__new_${Date.now()}`;
+		const col: ColEdit = {
+			name: id,
+			type: "string",
+			op: "add",
+			targetName: "",
+			targetType: "string",
+			isNew: true,
+			nullable: true,
+			defaultValue: "",
+		};
+		setAllEdits((prev) => ({
+			...prev,
+			[activeTable]: [...(prev[activeTable] ?? []), col],
+		}));
+		setSel(cols.length);
+	};
+
+	const addFkColumn = () => {
+		const id = `__fk_${Date.now()}`;
+		const col: ColEdit = {
+			name: id,
+			type: "string",
+			op: "fk",
+			targetName: "",
+			targetType: "string",
+			isNew: true,
+			fkSourceTable: tables.find((t) => t.name !== activeTable)?.name ?? "",
+			fkSourceColumn: "",
+			fkMatchColumn: "",
+			fkLocalColumn: "",
+		};
+		setAllEdits((prev) => ({
+			...prev,
+			[activeTable]: [...(prev[activeTable] ?? []), col],
+		}));
+		setSel(cols.length);
+	};
+
+	const removeCol = (idx: number) => {
+		setAllEdits((prev) => {
+			const tableCols = [...(prev[activeTable] ?? [])];
+			tableCols.splice(idx, 1);
+			return { ...prev, [activeTable]: tableCols };
+		});
+		setSel((s) => Math.max(0, Math.min(s, cols.length - 2)));
+	};
+
 	const activePreview = (preview[activeTable] ?? []) as Record<string, unknown>[];
 	const kept = cols.filter((c) => c.op !== "drop");
+	const tableRenameCount = Object.entries(tableNames).filter(([k, v]) => k !== v && v.trim() !== "").length;
 	const opCounts = {
 		rename: cols.filter((c) => c.op === "rename").length,
 		cast: cols.filter((c) => c.op === "cast").length,
 		drop: cols.filter((c) => c.op === "drop").length,
+		add: cols.filter((c) => c.op === "add").length,
+		fk: cols.filter((c) => c.op === "fk").length,
+		tableRename: tableRenameCount,
 	};
 
 	const saveAndTransform = async () => {
@@ -1369,14 +1461,41 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 				const edits = allEdits[t.name] ?? [];
 				return {
 					source_table: t.name,
-					target_table: t.name,
-					columns: edits.map((e) => ({
-						name: e.name,
-						target_name: e.op === "rename" || e.op === "cast" ? e.targetName : undefined,
-						data_type: e.op === "cast" ? e.targetType : e.type,
-						nullable: true,
-						include: e.op !== "drop",
-					})),
+					target_table: tableNames[t.name] || t.name,
+					columns: edits.map((e) => {
+						if (e.op === "add") {
+							return {
+								name: e.name,
+								target_name: e.targetName,
+								data_type: e.targetType,
+								nullable: e.nullable ?? true,
+								default_value: !e.nullable ? (e.defaultValue ?? null) : null,
+								include: true,
+								is_new: true,
+							};
+						}
+						if (e.op === "fk") {
+							return {
+								name: e.name,
+								target_name: e.targetName,
+								data_type: e.targetType,
+								nullable: true,
+								include: true,
+								is_new: true,
+								fk_source_table: e.fkSourceTable,
+								fk_source_column: e.fkSourceColumn,
+								fk_match_column: e.fkMatchColumn,
+								fk_local_column: e.fkLocalColumn,
+							};
+						}
+						return {
+							name: e.name,
+							target_name: e.op === "rename" || e.op === "cast" ? e.targetName : undefined,
+							data_type: e.op === "cast" ? e.targetType : e.type,
+							nullable: true,
+							include: e.op !== "drop",
+						};
+					}),
 				};
 			});
 			const cfgRes = await fetch(
@@ -1418,19 +1537,67 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 			}}
 		>
 			{/* Table tabs + summary */}
-			<div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+			<div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
 				{tables.map((t) => (
-					<button
-						key={t.name}
-						className={`btn ${t.name === activeTable ? "btn-primary" : "btn-ghost"}`}
-						style={{ padding: "6px 12px", fontSize: 10 }}
-						onClick={() => {
-							setActiveTable(t.name);
-							setSel(0);
-						}}
-					>
-						{t.name.toUpperCase()}
-					</button>
+					<div key={t.name} style={{ display: "flex", alignItems: "center", gap: 2 }}>
+						{renamingTable === t.name ? (
+							<div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+								<input
+									className="input"
+									style={{ width: 120, padding: "4px 8px", fontSize: 10 }}
+									value={tableNames[t.name] ?? t.name}
+									onChange={(e) =>
+										setTableNames((prev) => ({ ...prev, [t.name]: e.target.value }))
+									}
+									onKeyDown={(e) => {
+										if (e.key === "Enter") setRenamingTable(null);
+										if (e.key === "Escape") {
+											setTableNames((prev) => ({ ...prev, [t.name]: t.name }));
+											setRenamingTable(null);
+										}
+									}}
+									autoFocus
+								/>
+								<button
+									className="btn btn-ghost"
+									style={{ padding: "4px 6px", fontSize: 9 }}
+									onClick={() => setRenamingTable(null)}
+								>
+									<ICheck size={8} />
+								</button>
+							</div>
+						) : (
+							<>
+								<button
+									className={`btn ${t.name === activeTable ? "btn-primary" : "btn-ghost"}`}
+									style={{ padding: "6px 12px", fontSize: 10 }}
+									onClick={() => {
+										setActiveTable(t.name);
+										setSel(0);
+									}}
+								>
+									{tableNames[t.name] !== t.name ? (
+										<>
+											<span style={{ textDecoration: "line-through", opacity: 0.5, marginRight: 4 }}>
+												{t.name.toUpperCase()}
+											</span>
+											{(tableNames[t.name] ?? t.name).toUpperCase()}
+										</>
+									) : (
+										t.name.toUpperCase()
+									)}
+								</button>
+								<button
+									className="btn btn-ghost"
+									style={{ padding: "2px 4px", fontSize: 8, opacity: 0.6 }}
+									onClick={() => setRenamingTable(t.name)}
+									title="Rename table"
+								>
+									✎
+								</button>
+							</>
+						)}
+					</div>
 				))}
 				<div style={{ flex: 1 }} />
 				<div
@@ -1452,10 +1619,10 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 						className="pixel"
 						style={{ fontSize: 12, color: "var(--lg-amber)" }}
 					>
-						{opCounts.rename + opCounts.cast + opCounts.drop}
+						{opCounts.rename + opCounts.cast + opCounts.drop + opCounts.add + opCounts.fk + opCounts.tableRename}
 					</span>
 					<span className="mono" style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}>
-						{opCounts.rename} rename · {opCounts.cast} cast · {opCounts.drop} drop
+						{opCounts.rename} rename · {opCounts.cast} cast · {opCounts.drop} drop{opCounts.add > 0 ? ` · ${opCounts.add} new` : ""}{opCounts.fk > 0 ? ` · ${opCounts.fk} fk` : ""}{opCounts.tableRename > 0 ? ` · ${opCounts.tableRename} tbl rename` : ""}
 					</span>
 				</div>
 			</div>
@@ -1463,8 +1630,24 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 			{/* Column list + edit panel */}
 			<div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 14 }}>
 				<div className="panel">
-					<div className="panel-head">
-						COLUMN EDITS — {activeTable.toUpperCase()}
+					<div className="panel-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+						<span>COLUMN EDITS — {activeTable.toUpperCase()}</span>
+						<div style={{ display: "flex", gap: 4 }}>
+							<button
+								className="btn btn-ghost"
+								style={{ padding: "3px 8px", fontSize: 9 }}
+								onClick={addNewColumn}
+							>
+								+ COLUMN
+							</button>
+							<button
+								className="btn btn-ghost"
+								style={{ padding: "3px 8px", fontSize: 9 }}
+								onClick={addFkColumn}
+							>
+								+ FK
+							</button>
+						</div>
 					</div>
 					<div className="panel-body" style={{ padding: 0 }}>
 						{cols.length === 0 ? (
@@ -1483,7 +1666,17 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 									style={{ cursor: "pointer" }}
 								>
 									<div style={{ flex: 1.4 }}>
-										{col.op === "rename" || col.op === "cast" ? (
+										{col.op === "add" || col.op === "fk" ? (
+											<span
+												style={{
+													color: "var(--lg-amber)",
+													fontFamily: "var(--lg-pixel)",
+													fontSize: 9,
+												}}
+											>
+												{col.targetName || "(unnamed)"}
+											</span>
+										) : col.op === "rename" || col.op === "cast" ? (
 											<>
 												<span
 													style={{
@@ -1535,8 +1728,12 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 													{col.targetType.toUpperCase()}
 												</span>
 											</>
+										) : col.op === "fk" ? (
+											<span style={{ color: "var(--lg-ink-mute)", fontSize: 9 }}>
+												{col.fkSourceTable ? `${col.fkSourceTable}.${col.fkSourceColumn || "?"}` : "—"}
+											</span>
 										) : (
-											col.type.toUpperCase()
+											(col.op === "add" ? col.targetType : col.type).toUpperCase()
 										)}
 									</div>
 									<div style={{ width: 80, textAlign: "right" }}>
@@ -1544,6 +1741,8 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 										{col.op === "rename" && <span className="badge badge-ok">RENAME</span>}
 										{col.op === "cast" && <span className="badge badge-warn">CAST</span>}
 										{col.op === "drop" && <span className="badge badge-err">DROP</span>}
+										{col.op === "add" && <span className="badge badge-solid">NEW</span>}
+										{col.op === "fk" && <span className="badge badge-solid">FK</span>}
 									</div>
 								</div>
 							))
@@ -1552,9 +1751,20 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 				</div>
 
 				<div className="panel">
-					<div className="panel-head">EDIT · {c?.name ?? "—"}</div>
+					<div className="panel-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+						<span>EDIT · {c ? (c.isNew ? (c.targetName || "(unnamed)") : c.name) : "—"}</span>
+						{c?.isNew && (
+							<button
+								className="btn btn-ghost"
+								style={{ padding: "2px 6px", fontSize: 9, color: "var(--lg-coral)" }}
+								onClick={() => removeCol(sel)}
+							>
+								<IX size={8} /> REMOVE
+							</button>
+						)}
+					</div>
 					<div className="panel-body">
-						{c && (
+						{c && !c.isNew && (
 							<>
 								<div
 									className="pixel"
@@ -1609,16 +1819,18 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 										<div
 											style={{
 												display: "grid",
-												gridTemplateColumns: "repeat(2,1fr)",
-												gap: 4,
+												gridTemplateColumns: "repeat(3,1fr)",
+												gap: 3,
 												marginBottom: 12,
+												maxHeight: 180,
+												overflowY: "auto",
 											}}
 										>
 											{CAST_TYPES.map((tp) => (
 												<button
 													key={tp}
 													className={`btn ${c.targetType === tp ? "btn-primary" : "btn-ghost"}`}
-													style={{ padding: "5px 8px", fontSize: 9, justifyContent: "flex-start" }}
+													style={{ padding: "4px 6px", fontSize: 8, justifyContent: "flex-start" }}
 													onClick={() => updateCol(sel, { targetType: tp })}
 												>
 													{tp.toUpperCase()}
@@ -1662,6 +1874,250 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 										}}
 									>
 										Pass-through · value and type preserved.
+									</div>
+								)}
+							</>
+						)}
+
+						{c?.op === "add" && (
+							<>
+								<div
+									className="pixel"
+									style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4, letterSpacing: "0.1em" }}
+								>
+									COLUMN NAME
+								</div>
+								<input
+									className="input"
+									style={{ marginBottom: 12 }}
+									value={c.targetName}
+									placeholder="new_column"
+									onChange={(e) => updateCol(sel, { targetName: e.target.value })}
+								/>
+
+								<div
+									className="pixel"
+									style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4, letterSpacing: "0.1em" }}
+								>
+									DATA TYPE
+								</div>
+								<div
+									style={{
+										display: "grid",
+										gridTemplateColumns: "repeat(3,1fr)",
+										gap: 3,
+										marginBottom: 12,
+										maxHeight: 180,
+										overflowY: "auto",
+									}}
+								>
+									{CAST_TYPES.map((tp) => (
+										<button
+											key={tp}
+											className={`btn ${c.targetType === tp ? "btn-primary" : "btn-ghost"}`}
+											style={{ padding: "4px 6px", fontSize: 8, justifyContent: "flex-start" }}
+											onClick={() => updateCol(sel, { targetType: tp })}
+										>
+											{tp.toUpperCase()}
+										</button>
+									))}
+								</div>
+
+								<div
+									className="pixel"
+									style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4, letterSpacing: "0.1em" }}
+								>
+									NULLABLE
+								</div>
+								<div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
+									<button
+										className={`btn ${c.nullable ? "btn-primary" : "btn-ghost"}`}
+										style={{ padding: "5px 10px", fontSize: 9, flex: 1, justifyContent: "center" }}
+										onClick={() => updateCol(sel, { nullable: true, defaultValue: "" })}
+									>
+										NULLABLE
+									</button>
+									<button
+										className={`btn ${!c.nullable ? "btn-primary" : "btn-ghost"}`}
+										style={{ padding: "5px 10px", fontSize: 9, flex: 1, justifyContent: "center" }}
+										onClick={() => updateCol(sel, { nullable: false })}
+									>
+										NOT NULL
+									</button>
+								</div>
+
+								{!c.nullable && (
+									<>
+										<div
+											className="pixel"
+											style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4, letterSpacing: "0.1em" }}
+										>
+											DEFAULT VALUE
+										</div>
+										<input
+											className="input"
+											value={c.defaultValue ?? ""}
+											placeholder="default value for all rows"
+											onChange={(e) => updateCol(sel, { defaultValue: e.target.value })}
+										/>
+									</>
+								)}
+
+								{c.nullable && (
+									<div
+										style={{
+											padding: 10,
+											border: "1px solid var(--lg-border)",
+											color: "var(--lg-ink-dim)",
+											fontSize: 11,
+										}}
+									>
+										All rows will have NULL for this column.
+									</div>
+								)}
+							</>
+						)}
+
+						{c?.op === "fk" && (
+							<>
+								<div
+									className="pixel"
+									style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4, letterSpacing: "0.1em" }}
+								>
+									COLUMN NAME
+								</div>
+								<input
+									className="input"
+									style={{ marginBottom: 12 }}
+									value={c.targetName}
+									placeholder="looked_up_column"
+									onChange={(e) => updateCol(sel, { targetName: e.target.value })}
+								/>
+
+								<div
+									className="pixel"
+									style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4, letterSpacing: "0.1em" }}
+								>
+									DATA TYPE
+								</div>
+								<div
+									style={{
+										display: "grid",
+										gridTemplateColumns: "repeat(3,1fr)",
+										gap: 3,
+										marginBottom: 12,
+										maxHeight: 180,
+										overflowY: "auto",
+									}}
+								>
+									{CAST_TYPES.map((tp) => (
+										<button
+											key={tp}
+											className={`btn ${c.targetType === tp ? "btn-primary" : "btn-ghost"}`}
+											style={{ padding: "4px 6px", fontSize: 8, justifyContent: "flex-start" }}
+											onClick={() => updateCol(sel, { targetType: tp })}
+										>
+											{tp.toUpperCase()}
+										</button>
+									))}
+								</div>
+
+								<div
+									className="pixel"
+									style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4, letterSpacing: "0.1em" }}
+								>
+									LOCAL COLUMN (FK)
+								</div>
+								<select
+									className="input"
+									style={{ marginBottom: 12 }}
+									value={c.fkLocalColumn ?? ""}
+									onChange={(e) => updateCol(sel, { fkLocalColumn: e.target.value })}
+								>
+									<option value="">— select column —</option>
+									{cols.filter((x) => !x.isNew).map((x) => (
+										<option key={x.name} value={x.name}>{x.name}</option>
+									))}
+								</select>
+
+								<div
+									className="pixel"
+									style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4, letterSpacing: "0.1em" }}
+								>
+									SOURCE TABLE
+								</div>
+								<select
+									className="input"
+									style={{ marginBottom: 12 }}
+									value={c.fkSourceTable ?? ""}
+									onChange={(e) => {
+										updateCol(sel, {
+											fkSourceTable: e.target.value,
+											fkMatchColumn: "",
+											fkSourceColumn: "",
+										});
+									}}
+								>
+									<option value="">— select table —</option>
+									{tables.map((t) => (
+										<option key={t.name} value={t.name}>{t.name}</option>
+									))}
+								</select>
+
+								{c.fkSourceTable && (
+									<>
+										<div
+											className="pixel"
+											style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4, letterSpacing: "0.1em" }}
+										>
+											MATCH COLUMN (in {c.fkSourceTable.toUpperCase()})
+										</div>
+										<select
+											className="input"
+											style={{ marginBottom: 12 }}
+											value={c.fkMatchColumn ?? ""}
+											onChange={(e) => updateCol(sel, { fkMatchColumn: e.target.value })}
+										>
+											<option value="">— select column —</option>
+											{(tables.find((t) => t.name === c.fkSourceTable)?.columns ?? []).map((col) => (
+												<option key={col} value={col}>{col}</option>
+											))}
+										</select>
+
+										<div
+											className="pixel"
+											style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4, letterSpacing: "0.1em" }}
+										>
+											VALUE COLUMN (pull from {c.fkSourceTable.toUpperCase()})
+										</div>
+										<select
+											className="input"
+											value={c.fkSourceColumn ?? ""}
+											onChange={(e) => updateCol(sel, { fkSourceColumn: e.target.value })}
+										>
+											<option value="">— select column —</option>
+											{(tables.find((t) => t.name === c.fkSourceTable)?.columns ?? []).map((col) => (
+												<option key={col} value={col}>{col}</option>
+											))}
+										</select>
+									</>
+								)}
+
+								{c.fkLocalColumn && c.fkSourceTable && c.fkMatchColumn && c.fkSourceColumn && (
+									<div
+										style={{
+											marginTop: 12,
+											padding: 10,
+											border: "1px solid var(--lg-amber)",
+											color: "var(--lg-ink-dim)",
+											fontSize: 10,
+											lineHeight: 1.6,
+											fontFamily: "var(--lg-mono)",
+										}}
+									>
+										{activeTable}.{c.fkLocalColumn} → {c.fkSourceTable}.{c.fkMatchColumn}
+										<br />
+										pull: {c.fkSourceTable}.{c.fkSourceColumn}
 									</div>
 								)}
 							</>
@@ -1729,7 +2185,7 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 									className="pixel"
 									style={{ fontSize: 9, color: "var(--lg-amber)", padding: "8px 10px", letterSpacing: "0.1em" }}
 								>
-									→ OUTPUT · {activeTable.toLowerCase()}
+									→ OUTPUT · {(tableNames[activeTable] || activeTable).toLowerCase()}
 								</div>
 								<div style={{ overflow: "auto" }}>
 									<table className="table">
@@ -1743,7 +2199,7 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 																: cl.op === "rename" ? "col-rename" : ""
 														}
 													>
-														{cl.targetName}
+														{cl.targetName || "(unnamed)"}
 														<div
 															style={{
 																fontFamily: "var(--lg-mono)",
@@ -1753,7 +2209,8 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 																letterSpacing: 0,
 															}}
 														>
-															{(cl.op === "cast" ? cl.targetType : cl.type).toUpperCase()}
+															{(cl.op === "cast" || cl.op === "add" || cl.op === "fk" ? cl.targetType : cl.type).toUpperCase()}
+															{cl.op === "fk" && " (FK)"}
 														</div>
 													</th>
 												))}
@@ -1770,7 +2227,11 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 																	: cl.op === "rename" ? "col-rename" : ""
 															}
 														>
-															{row[cl.name] != null ? String(row[cl.name]) : "—"}
+															{cl.op === "add"
+																? (cl.nullable ? <span style={{ color: "var(--lg-ink-mute)" }}>NULL</span> : (cl.defaultValue || "—"))
+																: cl.op === "fk"
+																	? <span style={{ color: "var(--lg-ink-mute)", fontStyle: "italic" }}>fk lookup</span>
+																	: (row[cl.name] != null ? String(row[cl.name]) : "—")}
 														</td>
 													))}
 												</tr>
@@ -1841,6 +2302,28 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 
 // ---------- map (configure) ----------
 
+type DDLColumn = {
+	inferred_type: string;
+	original_type: string;
+	nullable: boolean;
+};
+type DDLSchema = Record<string, Record<string, DDLColumn>>;
+type DDLEntry = {
+	id: string;
+	name: string;
+	schema: DDLSchema;
+	matchingTables: string[];
+	uploadedAt: string;
+};
+
+function loadDDLTemplates(): DDLEntry[] {
+	try {
+		const raw = localStorage.getItem("retro-legacy.v2.ddl-templates");
+		if (raw) return JSON.parse(raw) as DDLEntry[];
+	} catch {}
+	return [];
+}
+
 function RlMap({ onNext }: { onNext: () => void }) {
 	const { uploadResult, transformResult } = usePipelineCtx();
 	const [saving, setSaving] = useState(false);
@@ -1855,19 +2338,106 @@ function RlMap({ onNext }: { onNext: () => void }) {
 	const columns = Object.keys(activeSchema);
 	const previewRows = (transformPreview[activeTable] ?? []) as Record<string, unknown>[];
 
+	// DDL template support
+	const [ddlTemplates] = useState<DDLEntry[]>(loadDDLTemplates);
+	const [appliedDDL, setAppliedDDL] = useState<Record<string, DDLSchema[string]>>({});
+	const [ddlPickerOpen, setDdlPickerOpen] = useState(false);
+
+	const applyTemplate = (entry: DDLEntry, tableName: string) => {
+		const ddlTable = entry.schema[tableName];
+		if (ddlTable) {
+			setAppliedDDL((prev) => ({ ...prev, [tableName]: ddlTable }));
+		}
+		setDdlPickerOpen(false);
+	};
+
+	const clearDDL = (tableName: string) => {
+		setAppliedDDL((prev) => {
+			const next = { ...prev };
+			delete next[tableName];
+			return next;
+		});
+	};
+
+	// Find templates that have a matching table name
+	const matchingTemplates = ddlTemplates.filter((e) =>
+		Object.keys(e.schema).some((t) => t.toLowerCase() === activeTable.toLowerCase()),
+	);
+
+	const appliedCols = appliedDDL[activeTable];
+
+	const getColumnType = (col: string): string => {
+		if (appliedCols?.[col]) {
+			return appliedCols[col].original_type;
+		}
+		const colInfo = activeSchema[col];
+		if (typeof colInfo === "object" && colInfo) {
+			return String((colInfo as Record<string, unknown>).inferred_type ?? (colInfo as Record<string, unknown>).original_type ?? "TEXT");
+		}
+		return String(colInfo ?? "TEXT");
+	};
+
+	const getColumnNullable = (col: string): boolean => {
+		if (appliedCols?.[col]) {
+			return appliedCols[col].nullable;
+		}
+		return true;
+	};
+
 	const saveConfig = async () => {
 		if (!uploadResult?.sessionId) return;
 		setSaving(true);
 		setError(null);
 		try {
+			// If DDL was applied, upload it to backend session
+			const appliedTables = Object.keys(appliedDDL);
+			if (appliedTables.length > 0) {
+				// Build DDL schema for backend
+				const ddlPayload: Record<string, Record<string, DDLColumn>> = {};
+				for (const [tbl, cols] of Object.entries(appliedDDL)) {
+					ddlPayload[tbl] = cols;
+				}
+
+				// Use configure endpoint with DDL info embedded
+				// First upload the DDL schema as a blob to the upload-ddl endpoint
+				const ddlContent = appliedTables
+					.map((tbl) => {
+						const cols = appliedDDL[tbl];
+						const colDefs = Object.entries(cols)
+							.map(([name, col]) => `  "${name}" ${col.original_type}${col.nullable ? "" : " NOT NULL"}`)
+							.join(",\n");
+						return `CREATE TABLE "${tbl}" (\n${colDefs}\n);`;
+					})
+					.join("\n\n");
+
+				const ddlBlob = new Blob([ddlContent], { type: "text/plain" });
+				const ddlForm = new FormData();
+				ddlForm.append("files", ddlBlob, "template.sql");
+				const ddlRes = await fetch(`/api/upload-ddl/${uploadResult.sessionId}`, {
+					method: "POST",
+					body: ddlForm,
+				});
+				if (ddlRes.ok) {
+					// Apply DDL to the tables
+					await fetch(`/api/apply-ddl/${uploadResult.sessionId}`, {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ tables: appliedTables }),
+					});
+				}
+			}
+
 			const tableConfigs = tables.map((t) => {
 				const tSchema = schema[t.name] ?? {};
+				const ddl = appliedDDL[t.name];
 				const cols = Object.keys(tSchema).map((col) => ({
 					name: col,
-					data_type: typeof tSchema[col] === "object"
-						? String((tSchema[col] as Record<string, unknown>).inferred_type ?? "string")
-						: String(tSchema[col] ?? "string"),
-					nullable: true,
+					data_type: ddl?.[col]
+						? ddl[col].original_type
+						: typeof tSchema[col] === "object"
+							? String((tSchema[col] as Record<string, unknown>).inferred_type ?? "string")
+							: String(tSchema[col] ?? "string"),
+					nullable: ddl?.[col] ? ddl[col].nullable : true,
 					include: true,
 				}));
 				return {
@@ -1913,6 +2483,9 @@ function RlMap({ onNext }: { onNext: () => void }) {
 						onClick={() => setActiveTable(t.name)}
 					>
 						{t.name.toUpperCase()}
+						{appliedDDL[t.name] && (
+							<span className="badge badge-solid" style={{ marginLeft: 6, fontSize: 7 }}>DDL</span>
+						)}
 					</button>
 				))}
 				<div style={{ flex: 1 }} />
@@ -1923,8 +2496,11 @@ function RlMap({ onNext }: { onNext: () => void }) {
 
 			<div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 14 }}>
 				<div className="panel">
-					<div className="panel-head">
-						COLUMN MAPPING — {activeTable.toUpperCase()}
+					<div className="panel-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+						<span>COLUMN MAPPING — {activeTable.toUpperCase()}</span>
+						{appliedCols && (
+							<span className="badge badge-solid" style={{ fontSize: 8 }}>DDL APPLIED</span>
+						)}
 					</div>
 					<div className="panel-body" style={{ padding: 0 }}>
 						{columns.length === 0 ? (
@@ -1936,10 +2512,9 @@ function RlMap({ onNext }: { onNext: () => void }) {
 							</div>
 						) : (
 							columns.map((col) => {
-								const colInfo = activeSchema[col];
-								const typeStr = typeof colInfo === "object" && colInfo
-									? String((colInfo as Record<string, unknown>).inferred_type ?? (colInfo as Record<string, unknown>).original_type ?? "TEXT")
-									: String(colInfo ?? "TEXT");
+								const typeStr = getColumnType(col);
+								const nullable = getColumnNullable(col);
+								const hasDDLOverride = !!appliedCols?.[col];
 								return (
 									<div key={col} className="rl-col-row">
 										<div style={{ flex: 1.4 }}>
@@ -1955,10 +2530,10 @@ function RlMap({ onNext }: { onNext: () => void }) {
 										</div>
 										<div
 											style={{
-												flex: 0.6,
+												flex: 0.8,
 												fontFamily: "var(--lg-mono)",
 												fontSize: 10,
-												color: "var(--lg-ink-dim)",
+												color: hasDDLOverride ? "var(--lg-amber)" : "var(--lg-ink-dim)",
 											}}
 										>
 											{typeStr.toUpperCase()}
@@ -1977,8 +2552,10 @@ function RlMap({ onNext }: { onNext: () => void }) {
 												{col.toLowerCase()}
 											</span>
 										</div>
-										<div style={{ width: 60, textAlign: "right" }}>
-											<span className="badge badge-ok">INCLUDE</span>
+										<div style={{ width: 90, textAlign: "right", display: "flex", gap: 4, justifyContent: "flex-end" }}>
+											<span className={`badge ${nullable ? "badge-mute" : "badge-warn"}`}>
+												{nullable ? "NULL" : "NOT NULL"}
+											</span>
 										</div>
 									</div>
 								);
@@ -2003,6 +2580,91 @@ function RlMap({ onNext }: { onNext: () => void }) {
 							</dl>
 						</div>
 					</div>
+
+					{/* DDL Template section */}
+					<div className="panel">
+						<div className="panel-head">DDL TEMPLATE</div>
+						<div className="panel-body">
+							{appliedCols ? (
+								<>
+									<div className="mono" style={{ fontSize: 11, color: "var(--lg-ink-dim)", marginBottom: 8 }}>
+										Schema overridden with DDL types and nullability constraints.
+									</div>
+									<button
+										className="btn btn-ghost"
+										style={{ padding: "4px 10px", fontSize: 10, color: "var(--lg-coral)" }}
+										onClick={() => clearDDL(activeTable)}
+									>
+										<IX size={8} /> REMOVE DDL
+									</button>
+								</>
+							) : ddlTemplates.length === 0 ? (
+								<div className="mono" style={{ fontSize: 11, color: "var(--lg-ink-mute)", lineHeight: 1.6 }}>
+									No DDL templates uploaded. Go to Templates to upload .SQL files with CREATE TABLE statements.
+								</div>
+							) : (
+								<>
+									<div className="mono" style={{ fontSize: 11, color: "var(--lg-ink-dim)", marginBottom: 8, lineHeight: 1.6 }}>
+										Apply a DDL template to override column types and nullability for this table.
+									</div>
+									{ddlPickerOpen ? (
+										<div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+											{ddlTemplates.map((entry) => {
+												const ddlTableNames = Object.keys(entry.schema);
+												const match = ddlTableNames.find(
+													(t) => t.toLowerCase() === activeTable.toLowerCase(),
+												);
+												return (
+													<div
+														key={entry.id}
+														className="rl-col-row"
+														style={{ cursor: match ? "pointer" : "default", opacity: match ? 1 : 0.4 }}
+														onClick={() => match && applyTemplate(entry, match)}
+													>
+														<div style={{ flex: 1 }}>
+															<div
+																className="pixel"
+																style={{ fontSize: 9, color: "var(--lg-amber)" }}
+															>
+																{entry.name}
+															</div>
+															<div
+																className="mono"
+																style={{ fontSize: 9, color: "var(--lg-ink-mute)", marginTop: 2 }}
+															>
+																{ddlTableNames.length} tables · {match ? "MATCH" : "no match"}
+															</div>
+														</div>
+														{match && (
+															<span className="badge badge-ok" style={{ fontSize: 8 }}>APPLY</span>
+														)}
+													</div>
+												);
+											})}
+											<button
+												className="btn btn-ghost"
+												style={{ padding: "4px 10px", fontSize: 10, marginTop: 4 }}
+												onClick={() => setDdlPickerOpen(false)}
+											>
+												CANCEL
+											</button>
+										</div>
+									) : (
+										<button
+											className="btn btn-ghost"
+											style={{ padding: "5px 10px", fontSize: 10 }}
+											onClick={() => setDdlPickerOpen(true)}
+										>
+											{matchingTemplates.length > 0
+												? `APPLY TEMPLATE (${matchingTemplates.length} match)`
+												: "BROWSE TEMPLATES"}
+										</button>
+									)}
+								</>
+							)}
+						</div>
+					</div>
+
 					{transformResult && (
 						<div className="panel">
 							<div className="panel-head">TRANSFORM STATS</div>
@@ -2082,6 +2744,7 @@ function RlExport({ onDone }: { onDone: () => void }) {
 
 	const FORMATS = [
 		{ id: "json", label: "JSON", sub: "One object per row" },
+		{ id: "csv", label: "CSV", sub: "One file per table" },
 		{ id: "sql", label: "SQL", sub: "CREATE + INSERT statements" },
 	];
 
@@ -2319,7 +2982,7 @@ export function RlPipeline({
 		<PipelineProvider projectId={project?.id ?? null} resumed={resumed}>
 			<div className="rl-page">
 				<RlTopbar
-					title={project?.name?.toUpperCase() || "GUEST SESSION"}
+					title={project?.name?.toUpperCase() || "PIPELINE"}
 					sub={
 						project
 							? `PHASE: ${project.phase.toUpperCase()}`

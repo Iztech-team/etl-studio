@@ -1,3 +1,4 @@
+import csv
 import json
 import os
 from typing import Any, Dict, List
@@ -49,6 +50,24 @@ class Loader:
             with open(combined_path, "w", encoding="utf-8") as f:
                 json.dump(combined, f, indent=2, default=str)
             output_files.append("all_tables.json")
+
+        elif fmt == "csv":
+            for table in table_order:
+                rows = self.tables[table]
+                if not rows:
+                    continue
+                fname = f"{table}.csv"
+                path = os.path.join(self.out_dir, fname)
+                try:
+                    cols = list(rows[0].keys())
+                    with open(path, "w", encoding="utf-8", newline="") as f:
+                        writer = csv.DictWriter(f, fieldnames=cols)
+                        writer.writeheader()
+                        writer.writerows(rows)
+                    output_files.append(fname)
+                    rows_written[table] = len(rows)
+                except Exception as e:
+                    errors.append(f"{table}: {e}")
 
         elif fmt == "sql":
             sql_lines: List[str] = []

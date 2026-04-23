@@ -32,8 +32,6 @@ from db import (
     rename_project,
     delete_project,
     update_project_phase,
-    register_user,
-    login_user,
 )
 from project_state import (
     save_state,
@@ -44,7 +42,6 @@ from project_state import (
     delete_project_files,
 )
 from models.project_schemas import (
-    RegisterRequest,
     LoginRequest,
     AuthResponse,
     CreateProjectRequest,
@@ -120,30 +117,95 @@ async def dashboard_stats(username: str):
     }
 
 
-@app.post("/api/auth/register", response_model=AuthResponse)
-async def register(body: RegisterRequest):
-    if not body.username.strip() or not body.password.strip():
-        raise HTTPException(400, "Username and password are required")
-    if len(body.password) < 4:
-        raise HTTPException(400, "Password must be at least 4 characters")
-    try:
-        user = register_user(
-            body.username.strip().lower(),
-            body.password,
-            body.display_name.strip() or body.username.strip(),
+@app.get("/api/history")
+async def get_history(username: str):
+    """Return pipeline run history derived from project states."""
+    from datetime import datetime as _dt
+
+    projects = list_projects(username)
+    rows = []
+    for p in projects:
+        state = load_state(p["id"])
+        raw = state.get("raw", {})
+        transformed = state.get("transformed", {})
+        load_result = state.get("load_result", {})
+
+        total_rows = 0
+        if load_result and isinstance(load_result, dict):
+            rw = load_result.get("rows_written", {})
+            total_rows = sum(rw.values()) if isinstance(rw, dict) else 0
+        elif transformed and isinstance(transformed, dict):
+            total_rows = transformed.get("total_rows", 0)
+        elif raw.get("tables"):
+            total_rows = sum(len(v) for v in raw["tables"].values())
+
+        # Determine status
+        phase = p["phase"]
+        if phase in ("stats", "load"):
+            status = "done"
+        elif phase == "upload":
+            status = "running" if raw.get("tables") else "running"
+        else:
+            status = "running"
+
+        # Check for errors in load_result
+        if load_result and isinstance(load_result, dict):
+            if load_result.get("errors"):
+                status = "error"
+
+        # Parse timestamps
+        try:
+            dt = _dt.fromisoformat(p["updated_at"])
+            time_str = dt.strftime("%H:%M")
+            date_str = dt.strftime("%Y-%m-%d")
+        except (ValueError, TypeError):
+            time_str = "—"
+            date_str = "—"
+
+        # Build note
+        note = ""
+        if transformed and isinstance(transformed, dict):
+            parts = []
+            enc = transformed.get("encoding_conversions", 0)
+            tc = transformed.get("type_conversions", 0)
+            if enc:
+                parts.append(f"{enc} enc fixes")
+            if tc:
+                parts.append(f"{tc} type conv")
+            note = ", ".join(parts)
+        if load_result and isinstance(load_result, dict) and load_result.get("errors"):
+            note = "; ".join(load_result["errors"][:2])
+
+        rows.append(
+            {
+                "t": time_str,
+                "d": date_str,
+                "project": p["name"],
+                "stage": phase.upper(),
+                "status": status,
+                "rows": total_rows,
+                "note": note,
+            }
         )
-    except ValueError as e:
-        raise HTTPException(409, str(e))
-    return AuthResponse(**user)
+
+    # Sort newest first
+    rows.sort(key=lambda r: (r["d"], r["t"]), reverse=True)
+    return {"history": rows}
+
+
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "admin"
+ADMIN_DISPLAY_NAME = "Admin"
 
 
 @app.post("/api/auth/login", response_model=AuthResponse)
 async def login_endpoint(body: LoginRequest):
-    try:
-        user = login_user(body.username.strip().lower(), body.password)
-    except ValueError:
-        raise HTTPException(401, "Invalid username or password")
-    return AuthResponse(**user)
+    if (
+        body.username.strip().lower() == ADMIN_USERNAME
+        and body.password == ADMIN_PASSWORD
+    ):
+        return AuthResponse(username=ADMIN_USERNAME, display_name=ADMIN_DISPLAY_NAME)
+    raise HTTPException(401, "Invalid username or password")
 
 
 @app.post("/api/projects", response_model=ProjectResponse)
@@ -458,7 +520,7 @@ async def get_table_page(
     }
 
 
-@app.post("/api/table-data/{session_id}", response_model=EditDataResponse)
+@app.post("/api/table-data/{session_id}")
 async def save_table_data(session_id: str, body: EditDataRequest):
     """Replace table rows with edited data and recompute schema/stats."""
     if session_id not in sessions:
@@ -488,7 +550,12 @@ async def save_table_data(session_id: str, body: EditDataRequest):
     raw["schema"] = extractor._schema
 
     _auto_save(session_id, "edit")
-    return EditDataResponse(ok=True, stats=stats)
+    return {
+        "ok": True,
+        "stats": stats,
+        "preview": raw["preview"],
+        "schema": raw["schema"],
+    }
 
 
 @app.post("/api/configure/{session_id}", response_model=ConfigureResponse)

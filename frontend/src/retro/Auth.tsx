@@ -19,12 +19,6 @@ export type AuthUser = {
 type AuthState = {
 	user: AuthUser | null;
 	login: (username: string, password: string) => Promise<boolean>;
-	register: (
-		username: string,
-		password: string,
-		displayName: string,
-	) => Promise<string | null>;
-	loginAsGuest: () => void;
 	logout: () => void;
 };
 
@@ -39,7 +33,7 @@ function makeAuthUser(data: {
 		username: data.username,
 		displayName: dn.toUpperCase(),
 		initials: dn.slice(0, 2).toUpperCase(),
-		role: data.username === "__guest__" ? "GUEST · SESSION" : "USER · ONLINE",
+		role: "USER · ONLINE",
 	};
 }
 
@@ -80,43 +74,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 		}
 	};
 
-	const register = async (
-		username: string,
-		password: string,
-		displayName: string,
-	): Promise<string | null> => {
-		try {
-			const res = await fetch("/api/auth/register", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					username,
-					password,
-					display_name: displayName,
-				}),
-			});
-			if (!res.ok) {
-				const err = await res.json().catch(() => null);
-				return err?.detail || "Registration failed";
-			}
-			const data = await res.json();
-			setUser(makeAuthUser(data));
-			return null;
-		} catch {
-			return "Network error";
-		}
-	};
-
-	const loginAsGuest = () => {
-		setUser(
-			makeAuthUser({ username: "__guest__", display_name: "GUEST" }),
-		);
-	};
-
 	const logout = () => setUser(null);
 
 	return (
-		<AuthContext.Provider value={{ user, login, register, loginAsGuest, logout }}>
+		<AuthContext.Provider value={{ user, login, logout }}>
 			{children}
 		</AuthContext.Provider>
 	);
@@ -128,14 +89,10 @@ export function useAuth() {
 	return ctx;
 }
 
-type Mode = "login" | "register";
-
 export function LoginScreen() {
-	const { login, register, loginAsGuest } = useAuth();
-	const [mode, setMode] = useState<Mode>("login");
+	const { login } = useAuth();
 	const [username, setUsername] = useState("");
 	const [password, setPassword] = useState("");
-	const [displayName, setDisplayName] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [shakeKey, setShakeKey] = useState(0);
@@ -155,20 +112,6 @@ export function LoginScreen() {
 		if (!ok) shake("ACCESS DENIED · CHECK CREDENTIALS");
 	};
 
-	const submitRegister = async (e: FormEvent) => {
-		e.preventDefault();
-		if (!username.trim() || !password.trim()) return;
-		setLoading(true);
-		setError(null);
-		const err = await register(
-			username,
-			password,
-			displayName || username,
-		);
-		setLoading(false);
-		if (err) shake(err.toUpperCase());
-	};
-
 	return (
 		<div className="legacy-app rl-login-shell">
 			<div className="rl-login-card corners">
@@ -182,9 +125,7 @@ export function LoginScreen() {
 				</div>
 				<div className="rl-login-head">
 					<div className="pixel rl-login-brand">LEGACY</div>
-					<div className="rl-login-sub">
-						ETL · {mode === "login" ? "SIGN IN" : "REGISTER"}
-					</div>
+					<div className="rl-login-sub">ETL · SIGN IN</div>
 				</div>
 				<div
 					className="mono"
@@ -195,15 +136,10 @@ export function LoginScreen() {
 						lineHeight: 1.7,
 					}}
 				>
-					{mode === "login"
-						? "Enter credentials to access the legacy migration system."
-						: "Create an account to save and manage your projects."}
+					Enter credentials to access the legacy migration system.
 				</div>
 
-				<form
-					onSubmit={mode === "login" ? submitLogin : submitRegister}
-					noValidate
-				>
+				<form onSubmit={submitLogin} noValidate>
 					<div className="rl-login-field">
 						<label htmlFor="rl-user">USERNAME</label>
 						<input
@@ -225,9 +161,7 @@ export function LoginScreen() {
 							id="rl-pass"
 							className="input"
 							type="password"
-							autoComplete={
-								mode === "login" ? "current-password" : "new-password"
-							}
+							autoComplete="current-password"
 							value={password}
 							onChange={(e) => {
 								setPassword(e.target.value);
@@ -236,23 +170,6 @@ export function LoginScreen() {
 							placeholder="•••••••••••"
 						/>
 					</div>
-
-					{mode === "register" && (
-						<div className="rl-login-field">
-							<label htmlFor="rl-display">
-								DISPLAY NAME{" "}
-								<span style={{ opacity: 0.5, fontSize: 9 }}>(OPTIONAL)</span>
-							</label>
-							<input
-								id="rl-display"
-								className="input"
-								autoComplete="off"
-								value={displayName}
-								onChange={(e) => setDisplayName(e.target.value)}
-								placeholder="how you want to be shown"
-							/>
-						</div>
-					)}
 
 					{error && (
 						<div key={shakeKey} className="rl-login-error">
@@ -266,45 +183,9 @@ export function LoginScreen() {
 						disabled={loading}
 						style={{ width: "100%", justifyContent: "center", marginTop: 10 }}
 					>
-						{loading
-							? "..."
-							: mode === "login"
-								? "SIGN IN"
-								: "CREATE ACCOUNT"}{" "}
-						<IArrow size={10} />
+						{loading ? "..." : "SIGN IN"} <IArrow size={10} />
 					</button>
 				</form>
-
-				<div
-					style={{
-						display: "flex",
-						justifyContent: "space-between",
-						alignItems: "center",
-						marginTop: 14,
-					}}
-				>
-					<button
-						type="button"
-						className="link"
-						style={{ fontSize: 10 }}
-						onClick={() => {
-							setMode(mode === "login" ? "register" : "login");
-							setError(null);
-						}}
-					>
-						{mode === "login"
-							? "NO ACCOUNT? REGISTER"
-							: "ALREADY REGISTERED? SIGN IN"}
-					</button>
-					<button
-						type="button"
-						className="link"
-						style={{ fontSize: 10 }}
-						onClick={loginAsGuest}
-					>
-						GUEST SESSION →
-					</button>
-				</div>
 
 				<div
 					className="pixel"

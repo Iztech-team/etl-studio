@@ -9,6 +9,12 @@ class ColumnConfig(BaseModel):
     nullable: bool = True
     include: bool = True
     reference_map: Optional[Dict[str, Any]] = None
+    is_new: bool = False
+    default_value: Optional[Any] = None
+    fk_source_table: Optional[str] = None
+    fk_source_column: Optional[str] = None
+    fk_match_column: Optional[str] = None
+    fk_local_column: Optional[str] = None
 
 
 class TableConfig(BaseModel):

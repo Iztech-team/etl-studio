@@ -18,9 +18,38 @@ class Transformer:
         self._transformed: Dict[str, List[Dict]] = {}
 
     # ------------------------------------------------------------------
+    def _build_fk_lookups(self, table_configs: Dict[str, Any]) -> Dict[tuple, Dict]:
+        """Pre-build lookup dicts for FK columns across all table configs."""
+        fk_lookups: Dict[tuple, Dict] = {}
+        for tc in table_configs.values():
+            for cc in tc.get("columns", []):
+                fk_table = cc.get("fk_source_table")
+                fk_source_col = cc.get("fk_source_column")
+                fk_match_col = cc.get("fk_match_column")
+                if not (fk_table and fk_source_col and fk_match_col):
+                    continue
+                key = (fk_table, fk_match_col, fk_source_col)
+                if key in fk_lookups:
+                    continue
+                source_rows = self.tables.get(fk_table, [])
+                lookup: Dict[Any, Any] = {}
+                for row in source_rows:
+                    match_val = row.get(fk_match_col)
+                    if match_val is not None:
+                        lookup[match_val] = row.get(fk_source_col)
+                fk_lookups[key] = lookup
+                if not source_rows:
+                    self.warnings.append(f"FK lookup: table '{fk_table}' has no rows")
+        return fk_lookups
+
+    # ------------------------------------------------------------------
     def run(self) -> Dict[str, Any]:
-        null_values = set(self.config.get("null_values", ["", "NULL", "null", "N/A", "n/a"]))
+        null_values = set(
+            self.config.get("null_values", ["", "NULL", "null", "N/A", "n/a"])
+        )
         table_configs = {tc["source_table"]: tc for tc in self.config.get("tables", [])}
+
+        fk_lookups = self._build_fk_lookups(table_configs)
 
         total_rows = 0
         for table_name, rows in self.tables.items():
@@ -30,10 +59,14 @@ class Transformer:
             new_rows = []
             for row in rows:
                 new_row: Dict[str, Any] = {}
+
+                # --- process existing columns ---
                 for col, val in row.items():
                     cc = col_configs.get(col, {})
                     if not cc.get("include", True):
                         continue
+                    if cc.get("is_new"):
+                        continue  # handled below
 
                     target_col = cc.get("target_name") or col
 
@@ -58,13 +91,63 @@ class Transformer:
                     # 4. Type conversion
                     if val is not None:
                         dtype = cc.get("data_type") or (
-                            self.schema.get(table_name, {}).get(col, {}).get("inferred_type", "string")
+                            self.schema.get(table_name, {})
+                            .get(col, {})
+                            .get("inferred_type", "string")
                         )
                         val, converted = self._coerce(val, dtype)
                         if converted:
                             self._type_conversions += 1
 
                     new_row[target_col] = val
+
+                # --- process new columns (is_new=True, no FK) ---
+                for cc_name, cc in col_configs.items():
+                    if not cc.get("is_new"):
+                        continue
+                    if not cc.get("include", True):
+                        continue
+                    if cc.get("fk_source_table"):
+                        continue  # FK columns handled next
+
+                    target_col = cc.get("target_name") or cc_name
+                    if cc.get("nullable", True) and cc.get("default_value") is None:
+                        val = None
+                    else:
+                        val = cc.get("default_value")
+                        if val is not None:
+                            val, _ = self._coerce(val, cc.get("data_type", "string"))
+                    new_row[target_col] = val
+
+                # --- process FK columns ---
+                for cc_name, cc in col_configs.items():
+                    if not cc.get("is_new"):
+                        continue
+                    if not cc.get("include", True):
+                        continue
+                    fk_table = cc.get("fk_source_table")
+                    fk_source_col = cc.get("fk_source_column")
+                    fk_match_col = cc.get("fk_match_column")
+                    fk_local_col = cc.get("fk_local_column")
+                    if not (
+                        fk_table and fk_source_col and fk_match_col and fk_local_col
+                    ):
+                        continue
+
+                    target_col = cc.get("target_name") or cc_name
+                    lookup_key = (fk_table, fk_match_col, fk_source_col)
+                    lookup = fk_lookups.get(lookup_key, {})
+                    local_val = row.get(fk_local_col)
+                    val = lookup.get(local_val)
+
+                    if val is not None:
+                        dtype = cc.get("data_type", "string")
+                        val, converted = self._coerce(val, dtype)
+                        if converted:
+                            self._type_conversions += 1
+
+                    new_row[target_col] = val
+
                 new_rows.append(new_row)
 
             target_name = tc.get("target_table") or table_name
@@ -95,15 +178,52 @@ class Transformer:
     # ------------------------------------------------------------------
     @staticmethod
     def _coerce(val: Any, dtype: str):
+        dtype = dtype.lower()
         try:
-            if dtype == "integer":
+            # Integer family
+            if dtype in ("integer", "smallint", "bigint"):
                 return int(float(str(val).replace(",", ""))), True
-            if dtype == "float":
+            # Float family
+            if dtype in ("float", "real", "double", "numeric", "decimal"):
                 return float(str(val).replace(",", "")), True
+            # Boolean
             if dtype == "boolean":
                 return str(val).lower() in ("true", "1", "yes"), True
-            if dtype == "string":
+            # String family
+            if dtype in ("string", "text", "varchar", "char"):
                 return str(val), False
+            # Date/time family — keep as string but validate format
+            if dtype in ("date", "time", "timestamp", "datetime"):
+                s = str(val).strip()
+                if dtype == "date":
+                    from datetime import date as _d
+
+                    _d.fromisoformat(s[:10])
+                elif dtype == "time":
+                    from datetime import time as _t
+
+                    _t.fromisoformat(s)
+                elif dtype in ("timestamp", "datetime"):
+                    from datetime import datetime as _dt
+
+                    _dt.fromisoformat(s)
+                return s, True
+            # UUID — validate and normalize
+            if dtype == "uuid":
+                import uuid as _uuid
+
+                return str(_uuid.UUID(str(val))), True
+            # JSON — parse to validate, keep as string
+            if dtype == "json":
+                import json
+
+                if isinstance(val, str):
+                    json.loads(val)
+                    return val, False
+                return json.dumps(val, default=str), True
+            # Blob — pass through as-is
+            if dtype == "blob":
+                return val, False
         except Exception:
             pass
         return val, False

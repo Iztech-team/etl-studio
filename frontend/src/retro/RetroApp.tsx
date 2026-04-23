@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./retro.css";
 import { AuthProvider, LoginScreen, useAuth } from "./Auth";
 import { RL_STAGES, type Project, type ResumedSession, type StageId } from "./data";
@@ -56,6 +56,15 @@ function Shell() {
 	const [stage, setStage] = useState<StageId>(loadStage);
 	const [showNewModal, setShowNewModal] = useState(false);
 
+	const prevUser = useRef(user);
+	useEffect(() => {
+		if (!prevUser.current && user) {
+			setRoute({ view: "projects" });
+			setStage("upload");
+		}
+		prevUser.current = user;
+	}, [user]);
+
 	useEffect(() => {
 		localStorage.setItem(LS_ROUTE, JSON.stringify(route));
 	}, [route]);
@@ -96,14 +105,6 @@ function Shell() {
 	};
 
 	const openNew = () => {
-		const isGuest = user.username === "__guest__";
-
-		if (isGuest) {
-			setStage("upload");
-			setRoute({ view: "pipeline", project: null, resumed: null });
-			return;
-		}
-
 		setShowNewModal(true);
 	};
 

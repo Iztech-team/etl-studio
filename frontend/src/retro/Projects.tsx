@@ -58,10 +58,8 @@ export function RlProjects({
 		avg_quality_score: number;
 	} | null>(null);
 
-	const isGuest = user?.username === "__guest__";
-
 	useEffect(() => {
-		if (!user || isGuest) {
+		if (!user) {
 			setProjects([]);
 			setLoading(false);
 			return;
@@ -81,7 +79,7 @@ export function RlProjects({
 			.then((r) => r.json())
 			.then((data) => setDashStats(data))
 			.catch(() => {});
-	}, [user, isGuest]);
+	}, [user]);
 
 	const [renameTarget, setRenameTarget] = useState<string | null>(null);
 
@@ -133,11 +131,7 @@ export function RlProjects({
 		<div className="rl-page">
 			<RlTopbar
 				title="PROJECTS"
-				sub={
-					isGuest
-						? "GUEST SESSION · NOTHING IS SAVED"
-						: "ONE LEGACY DATABASE PER PROJECT · ONE PIPELINE EACH"
-				}
+				sub="ONE LEGACY DATABASE PER PROJECT · ONE PIPELINE EACH"
 				right={
 					<button className="btn btn-primary" onClick={onNew}>
 						<IPlus size={10} /> NEW PROJECT
@@ -199,20 +193,18 @@ export function RlProjects({
 				</div>
 			</div>
 
-			{!isGuest && (
-				<div className="rl-section-head">
-					<div
-						className="pixel"
-						style={{
-							fontSize: 10,
-							color: "var(--lg-ink-dim)",
-							letterSpacing: "0.1em",
-						}}
-					>
-						* YOUR PROJECTS *
-					</div>
+			<div className="rl-section-head">
+				<div
+					className="pixel"
+					style={{
+						fontSize: 10,
+						color: "var(--lg-ink-dim)",
+						letterSpacing: "0.1em",
+					}}
+				>
+					* YOUR PROJECTS *
 				</div>
-			)}
+			</div>
 
 			{loading ? (
 				<div
@@ -242,7 +234,7 @@ export function RlProjects({
 						{error}
 					</div>
 				</div>
-			) : isEmpty && !isGuest ? (
+			) : isEmpty ? (
 				<div className="panel">
 					<div className="rl-empty">
 						<Sparkles />
@@ -259,7 +251,7 @@ export function RlProjects({
 						</button>
 					</div>
 				</div>
-			) : !isGuest ? (
+			) : (
 				<div className="rl-proj-grid">
 					{projects.map((p) => (
 						<RlProjectCard
@@ -271,7 +263,7 @@ export function RlProjects({
 						/>
 					))}
 				</div>
-			) : null}
+			)}
 
 			{renameTarget && (
 				<RlPromptModal
