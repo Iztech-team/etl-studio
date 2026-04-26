@@ -6,9 +6,10 @@ import type {
   LoadResponse,
   StatsResponse,
   PreExtractResponse,
+  SchemaEditState,
 } from '../types/api'
 
-export const PHASES = ['pre-extract', 'upload', 'edit', 'configure', 'transform', 'load', 'stats'] as const
+export const PHASES = ['pre-extract', 'upload', 'edit', 'schema-edit', 'configure', 'transform', 'load', 'stats'] as const
 export type Phase = (typeof PHASES)[number]
 
 export type AppMode = 'landing' | 'project' | 'guest'
@@ -27,6 +28,7 @@ interface PipelineState {
   statsResult: StatsResponse | null
   loading: boolean
   error: string | null
+  schemaEditState?: SchemaEditState
 }
 
 type Action =
@@ -45,6 +47,11 @@ type Action =
   | { type: 'SET_LOAD'; result: LoadResponse }
   | { type: 'SET_STATS'; result: StatsResponse }
   | { type: 'GO_TO_PHASE'; phase: Phase }
+  | { type: 'SCHEMA_EDIT_INIT'; payload: { inferred_schema: Record<string, import('../types/api').TableSchema> } }
+  | { type: 'SCHEMA_EDIT_RENAME_TABLE'; payload: { tableName: string; newName: string } }
+  | { type: 'SCHEMA_EDIT_DROP_TABLE'; payload: { tableName: string } }
+  | { type: 'SCHEMA_EDIT_APPLY' }
+  | { type: 'SCHEMA_EDIT_SKIP' }
   | { type: 'RESET' }
 
 const initialState: PipelineState = {
@@ -141,6 +148,66 @@ function reducer(state: PipelineState, action: Action): PipelineState {
       return { ...state, statsResult: action.result, loading: false }
     case 'GO_TO_PHASE':
       return { ...state, phase: action.phase }
+    case 'SCHEMA_EDIT_INIT':
+      return {
+        ...state,
+        phase: 'schema-edit',
+        schemaEditState: {
+          originalSchema: action.payload.inferred_schema || {},
+          editedSchema: action.payload.inferred_schema || {},
+          selectedTable: null,
+          expandedTables: new Set(),
+          searchFilter: '',
+          droppedTables: new Set(),
+          droppedColumns: new Map(),
+          renamedTables: new Map(),
+          renamedColumns: new Map(),
+          reorderedColumns: new Map(),
+          nullableOverrides: new Map(),
+          ddlApplied: false,
+          ddlSource: null,
+          modified: false
+        }
+      }
+    case 'SCHEMA_EDIT_RENAME_TABLE':
+      return {
+        ...state,
+        schemaEditState: {
+          ...state.schemaEditState!,
+          renamedTables: new Map(state.schemaEditState!.renamedTables).set(
+            action.payload.tableName,
+            action.payload.newName
+          ),
+          modified: true
+        }
+      }
+    case 'SCHEMA_EDIT_DROP_TABLE':
+      return {
+        ...state,
+        schemaEditState: {
+          ...state.schemaEditState!,
+          droppedTables: new Set(
+            state.schemaEditState!.droppedTables.has(action.payload.tableName)
+              ? [...state.schemaEditState!.droppedTables].filter(t => t !== action.payload.tableName)
+              : [...state.schemaEditState!.droppedTables, action.payload.tableName]
+          ),
+          modified: true
+        }
+      }
+    case 'SCHEMA_EDIT_APPLY':
+      return {
+        ...state,
+        phase: 'configure',
+        schemaEditState: {
+          ...state.schemaEditState!,
+          modified: false
+        }
+      }
+    case 'SCHEMA_EDIT_SKIP':
+      return {
+        ...state,
+        phase: 'configure'
+      }
     case 'RESET':
       return initialState
   }
