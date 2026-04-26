@@ -3462,6 +3462,16 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 						setOp(sel, c.op === "cast" ? "keep" : "cast");
 					}
 					break;
+				case "r":
+					if (e.altKey) {
+						e.preventDefault();
+						setRenamingTable(activeTable);
+					} else if (c && !c.isNew && c.op !== "drop") {
+						e.preventDefault();
+						const inp = document.querySelector('[data-rename-input]') as HTMLInputElement;
+						inp?.focus();
+					}
+					break;
 			}
 		};
 		window.addEventListener("keydown", handleKeyDown);

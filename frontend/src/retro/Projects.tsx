@@ -316,6 +316,7 @@ export function RlProjects({
 								<div><strong>↑ / ↓</strong> · Navigate columns</div>
 								<div><strong>D</strong> · Toggle DROP</div>
 								<div><strong>C</strong> · Toggle CAST</div>
+								<div><strong>R</strong> · Focus rename field</div>
 							</div>
 						</div>
 						<div>
