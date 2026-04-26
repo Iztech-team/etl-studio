@@ -139,11 +139,13 @@ function EditableTable({
   rows,
   schema,
   onUpdate,
+  renamedColumns = new Map(),
 }: {
   table: string
   rows: Row[]
   schema: Record<string, ColumnSchema>
   onUpdate: (rows: Row[]) => void
+  renamedColumns?: Map<string, string>
 }) {
   const columns = rows.length > 0 ? Object.keys(rows[0]) : Object.keys(schema)
 
@@ -198,9 +200,10 @@ function EditableTable({
                 </th>
                 {columns.map((col) => {
                   const colSchema = schema[col]
+                  const displayName = renamedColumns.get(col) || col
                   return (
                     <th key={col} className="px-2 py-2 text-left whitespace-nowrap">
-                      <div className="text-xs font-semibold text-primary">{col}</div>
+                      <div className="text-xs font-semibold text-primary">{displayName}</div>
                       {colSchema && (
                         <div className="text-[10px] text-muted-foreground font-normal">
                           {colSchema.inferred_type}
@@ -266,6 +269,10 @@ export default function EditPhase() {
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
 
+  // Get schema edit state for filtering/renaming
+  const droppedTables = state.schemaEditState?.droppedTables ?? new Set()
+  const renamedColumns = state.schemaEditState?.renamedColumns ?? new Map()
+
   useEffect(() => {
     if (!state.sessionId) return
     let cancelled = false
@@ -312,7 +319,8 @@ export default function EditPhase() {
   }
 
   const totalRows = Object.values(tableData).reduce((sum, rows) => sum + rows.length, 0)
-  const tableNames = Object.keys(tableData)
+  // Filter out dropped tables from schema-edit phase
+  const tableNames = Object.keys(tableData).filter(t => !droppedTables.has(t))
 
   if (!loaded) {
     return (
@@ -355,6 +363,7 @@ export default function EditPhase() {
           rows={tableData[table]}
           schema={schema[table] ?? {}}
           onUpdate={(rows) => updateTable(table, rows)}
+          renamedColumns={renamedColumns.get(table) || new Map()}
         />
       ))}
 

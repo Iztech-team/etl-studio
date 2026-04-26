@@ -18,17 +18,30 @@ export default function ConfigurePhase() {
   const { state, dispatch } = usePipeline()
   const schema = state.uploadResult?.inferred_schema ?? {}
 
+  // Get schema edit state for applying renames
+  const droppedTables = state.schemaEditState?.droppedTables ?? new Set()
+  const renamedTables = state.schemaEditState?.renamedTables ?? new Map()
+  const renamedColumns = state.schemaEditState?.renamedColumns ?? new Map()
+
   const [nullValues, setNullValues] = useState('NULL, null, N/A, n/a')
   const [tableConfigs, setTableConfigs] = useState<Record<string, ColumnConfig[]>>(() => {
     const configs: Record<string, ColumnConfig[]> = {}
     for (const [table, cols] of Object.entries(schema)) {
-      configs[table] = Object.entries(cols).map(([name, info]) => ({
-        name,
-        target_name: name,
-        data_type: info.inferred_type,
-        nullable: info.nullable,
-        include: true,
-      }))
+      // Skip dropped tables
+      if (droppedTables.has(table)) continue
+
+      const tableRenamedColumns = renamedColumns.get(table) || new Map()
+      configs[table] = Object.entries(cols).map(([name, info]) => {
+        // Apply column renames from schema edit
+        const targetName = tableRenamedColumns.get(name) || name
+        return {
+          name,
+          target_name: targetName,
+          data_type: info.inferred_type,
+          nullable: info.nullable,
+          include: true,
+        }
+      })
     }
     return configs
   })
@@ -255,12 +268,19 @@ export default function ConfigurePhase() {
 
       <div className="space-y-4">
         {Object.entries(tableConfigs).map(([table, columns]) => {
+          // Skip dropped tables in display
+          if (droppedTables.has(table)) return null
+
           const included = columns.filter(c => c.include).length
+          const displayTableName = renamedTables.get(table) || table
           return (
             <Card key={table}>
               <CardHeader>
                 <CardTitle className="text-sm">
-                  <span className="text-primary">{table}</span>
+                  <span className="text-primary">{displayTableName}</span>
+                  {table !== displayTableName && (
+                    <span className="text-muted-foreground text-xs ml-2">({table})</span>
+                  )}
                   <span className="text-accent ml-2 font-mono text-xs">[{included}/{columns.length}]</span>
                   {appliedDdlTables.has(table) && (
                     <span className="text-xs text-primary/60 ml-2">[DDL]</span>
