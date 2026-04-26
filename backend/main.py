@@ -178,33 +178,27 @@ def save_template(
     project_id: str, name: str, ddl_content: str, created_by: Optional[str] = None
 ) -> str:
     """Save a new DDL template. Returns template ID."""
-    conn = _get_conn()
     template_id = str(uuid.uuid4())
     created_at = datetime.utcnow().isoformat()
 
     try:
-        conn.execute(
-            """
-            INSERT INTO ddl_templates (id, project_id, name, ddl_content, created_at, created_by)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """,
-            (template_id, project_id, name, ddl_content, created_at, created_by),
-        )
-        conn.commit()
+        with _get_conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO ddl_templates (id, project_id, name, ddl_content, created_at, created_by)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """,
+                (template_id, project_id, name, ddl_content, created_at, created_by),
+            )
+            conn.commit()
         return template_id
     except Exception as e:
-        conn.rollback()
-        raise HTTPException(
-            status_code=400, detail=f"Failed to save template: {str(e)}"
-        )
-    finally:
-        conn.close()
+        raise ValueError(f"Failed to save template: {str(e)}")
 
 
 def list_templates(project_id: str) -> List[dict]:
     """List all templates for a project."""
-    conn = _get_conn()
-    try:
+    with _get_conn() as conn:
         rows = conn.execute(
             """
             SELECT id, project_id, name, ddl_content, created_at, created_by
@@ -228,14 +222,11 @@ def list_templates(project_id: str) -> List[dict]:
                 }
             )
         return templates
-    finally:
-        conn.close()
 
 
 def get_template(template_id: str) -> dict:
     """Get a template by ID."""
-    conn = _get_conn()
-    try:
+    with _get_conn() as conn:
         row = conn.execute(
             """
             SELECT id, project_id, name, ddl_content, created_at, created_by
@@ -246,7 +237,7 @@ def get_template(template_id: str) -> dict:
         ).fetchone()
 
         if not row:
-            raise HTTPException(status_code=404, detail="Template not found")
+            raise ValueError("Template not found")
 
         return {
             "id": row[0],
@@ -256,19 +247,14 @@ def get_template(template_id: str) -> dict:
             "created_at": row[4],
             "created_by": row[5],
         }
-    finally:
-        conn.close()
 
 
 def delete_template(template_id: str) -> bool:
     """Delete a template by ID."""
-    conn = _get_conn()
-    try:
+    with _get_conn() as conn:
         conn.execute("DELETE FROM ddl_templates WHERE id = ?", (template_id,))
         conn.commit()
-        return True
-    finally:
-        conn.close()
+    return True
 
 
 @app.get("/api/health")
@@ -1551,34 +1537,40 @@ async def download_project_file(project_id: str, filename: str):
 # ---------------------------------------------------------------------------
 
 
-@app.post("/api/templates")
-async def create_template(request: CreateTemplateRequest, project_id: str = Query(...)):
+@app.post("/api/projects/{project_id}/templates")
+async def create_template(project_id: str, request: CreateTemplateRequest):
     """Save a new DDL template."""
-    template_id = save_template(
-        project_id=project_id,
-        name=request.name,
-        ddl_content=request.ddl_content,
-        created_by=request.created_by,
-    )
-    return {"id": template_id, "message": "Template saved"}
+    try:
+        template_id = save_template(
+            project_id=project_id,
+            name=request.name,
+            ddl_content=request.ddl_content,
+            created_by=request.created_by,
+        )
+        return {"id": template_id, "message": "Template saved"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.get("/api/templates")
-async def list_project_templates(project_id: str = Query(...)):
+@app.get("/api/projects/{project_id}/templates")
+async def list_project_templates(project_id: str):
     """List all templates for a project."""
     templates = list_templates(project_id)
     return {"templates": templates, "total": len(templates)}
 
 
-@app.get("/api/templates/{template_id}")
-async def get_single_template(template_id: str):
+@app.get("/api/projects/{project_id}/templates/{template_id}")
+async def get_single_template(project_id: str, template_id: str):
     """Get a specific template."""
-    template = get_template(template_id)
-    return template
+    try:
+        template = get_template(template_id)
+        return template
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
-@app.delete("/api/templates/{template_id}")
-async def delete_single_template(template_id: str):
+@app.delete("/api/projects/{project_id}/templates/{template_id}")
+async def delete_single_template(project_id: str, template_id: str):
     """Delete a template."""
     delete_template(template_id)
     return {"message": "Template deleted"}
