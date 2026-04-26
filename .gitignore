@@ -40,3 +40,7 @@ docs/superpowers/
 # Playwright / test artifacts
 .playwright-mcp/
 /*.png
+
+# Migration planning docs (internal reference)
+ETL_CAPABILITIES_ROADMAP.md
+migration_mapping_IB_to_Baraka_v18.docx
