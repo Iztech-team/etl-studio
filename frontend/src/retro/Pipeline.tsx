@@ -1303,8 +1303,8 @@ function TablePreviewModal({
 		>
 			<div
 				style={{
-					background: "#15110c",
-					border: `2px solid ${editing ? "#ff6b57" : "#ffb347"}`,
+					background: "var(--lg-bg)",
+					border: `2px solid ${editing ? "var(--lg-coral)" : "var(--lg-amber)"}`,
 					boxShadow: "0 12px 40px rgba(0,0,0,0.65)",
 					width: "min(1200px, 92vw)",
 					height: "min(720px, 86vh)",
@@ -1312,7 +1312,7 @@ function TablePreviewModal({
 					display: "flex",
 					flexDirection: "column",
 					overflow: "hidden",
-					color: "var(--lg-ink, #ddd)",
+					color: "var(--lg-ink)",
 				}}
 				onClick={(e) => e.stopPropagation()}
 			>
@@ -2529,15 +2529,15 @@ function TransformModal({
 			<div
 				onClick={(e) => e.stopPropagation()}
 				style={{
-					background: "#15110c",
-					border: "2px solid #ffb347",
+					background: "var(--lg-bg)",
+					border: "2px solid var(--lg-amber)",
 					boxShadow: "0 12px 40px rgba(0,0,0,0.65)",
 					width: "min(560px, 92vw)",
 					maxHeight: "85vh",
 					display: "flex",
 					flexDirection: "column",
 					overflow: "hidden",
-					color: "var(--lg-ink, #ddd)",
+					color: "var(--lg-ink)",
 				}}
 			>
 				{/* Header */}
