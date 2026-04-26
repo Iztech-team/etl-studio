@@ -174,3 +174,28 @@ class ApplyDDLTableResult(BaseModel):
 class ApplyDDLResponse(BaseModel):
     ok: bool
     results: List[ApplyDDLTableResult]
+
+
+class DDLTemplate(BaseModel):
+    id: str
+    project_id: str
+    name: str
+    ddl_content: str
+    created_at: str
+    created_by: Optional[str] = None
+
+
+class CreateTemplateRequest(BaseModel):
+    name: str
+    ddl_content: str
+    created_by: Optional[str] = None
+
+
+class UpdateTemplateRequest(BaseModel):
+    name: Optional[str] = None
+    ddl_content: Optional[str] = None
+
+
+class TemplateListResponse(BaseModel):
+    templates: List[DDLTemplate]
+    total: int
