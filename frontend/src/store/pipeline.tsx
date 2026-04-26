@@ -54,6 +54,7 @@ type Action =
   | { type: 'SCHEMA_EDIT_DROP_COLUMN'; payload: { tableName: string; colName: string } }
   | { type: 'SCHEMA_EDIT_TOGGLE_NULLABLE'; payload: { tableName: string; colName: string; nullable: boolean } }
   | { type: 'SCHEMA_EDIT_REORDER_COLUMN'; payload: { tableName: string; colName: string; direction: 'up' | 'down' } }
+  | { type: 'SCHEMA_EDIT_APPLY_DDL'; payload: import('../types/api').DDLUploadResponse }
   | { type: 'SCHEMA_EDIT_APPLY' }
   | { type: 'SCHEMA_EDIT_SKIP' }
   | { type: 'RESET' }
@@ -270,6 +271,16 @@ function reducer(state: PipelineState, action: Action): PipelineState {
         ...state,
         schemaEditState: {
           ...state.schemaEditState!,
+          modified: true
+        }
+      }
+    case 'SCHEMA_EDIT_APPLY_DDL':
+      return {
+        ...state,
+        schemaEditState: {
+          ...state.schemaEditState!,
+          ddlApplied: true,
+          ddlSource: 'uploaded_ddl',
           modified: true
         }
       }

@@ -4,19 +4,26 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { PhaseHeader, Spinner } from './ui'
-import type { ColumnSchema, TableSchema } from '../types/api'
+import type { ColumnSchema, TableSchema, DDLUploadResponse } from '../types/api'
+import { uploadAndParseDDL, saveTemplate } from '../api/client'
 
 export default function SchemaEditPhase() {
   const { state, dispatch } = usePipeline()
 
   // Get schema from uploadResult, falling back to empty object
   const inferred_schema = state.uploadResult?.inferred_schema ?? {}
-  const foreign_keys = state.uploadResult?.foreign_keys ?? []
+  const foreign_keys: any[] = []
 
   // Local UI state
   const [searchFilter, setSearchFilter] = useState('')
   const [selectedTable, setSelectedTable] = useState<string | null>(null)
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set())
+  const [ddlModalOpen, setDdlModalOpen] = useState(false)
+  const [ddlPreview, setDdlPreview] = useState<DDLUploadResponse | null>(null)
+  const [ddlLoading, setDdlLoading] = useState(false)
+  const [saveTemplateModalOpen, setSaveTemplateModalOpen] = useState(false)
+  const [templateName, setTemplateName] = useState('')
+  const [templateLoading, setTemplateLoading] = useState(false)
 
   // Schema edit state from pipeline
   const schemaEditState = state.schemaEditState
@@ -31,7 +38,7 @@ export default function SchemaEditPhase() {
     if (!schemaEditState) {
       dispatch({
         type: 'SCHEMA_EDIT_INIT',
-        payload: { inferred_schema }
+        payload: { inferred_schema: inferred_schema as any }
       })
     }
   }, [])
@@ -114,6 +121,111 @@ export default function SchemaEditPhase() {
     dispatch({ type: 'SCHEMA_EDIT_APPLY' })
   }, [dispatch])
 
+  const handleDDLUpload = useCallback(async (file: File) => {
+    setDdlLoading(true)
+    try {
+      const result = await uploadAndParseDDL(state.sessionId!, file)
+      setDdlPreview(result)
+      setDdlModalOpen(true)
+    } catch (error) {
+      alert('DDL parsing failed: ' + (error instanceof Error ? error.message : String(error)))
+    } finally {
+      setDdlLoading(false)
+    }
+  }, [state.sessionId])
+
+  const handleApplyDDL = useCallback(() => {
+    if (ddlPreview) {
+      dispatch({
+        type: 'SCHEMA_EDIT_APPLY_DDL',
+        payload: ddlPreview
+      })
+      setDdlModalOpen(false)
+      setDdlPreview(null)
+    }
+  }, [ddlPreview, dispatch])
+
+  const handleSaveTemplate = useCallback(async () => {
+    if (!templateName.trim()) {
+      alert('Template name required')
+      return
+    }
+
+    if (!state.projectId) {
+      alert('No project ID')
+      return
+    }
+
+    setTemplateLoading(true)
+    try {
+      const ddlContent = JSON.stringify(state.schemaEditState?.editedSchema, null, 2)
+      await saveTemplate(state.projectId, templateName, ddlContent)
+      alert('Template saved!')
+      setSaveTemplateModalOpen(false)
+      setTemplateName('')
+    } catch (error) {
+      alert('Failed to save template: ' + (error instanceof Error ? error.message : String(error)))
+    } finally {
+      setTemplateLoading(false)
+    }
+  }, [templateName, state.projectId, state.schemaEditState?.editedSchema])
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only when phase is active
+      if (state.phase !== 'schema-edit') return
+
+      const key = e.key.toLowerCase()
+
+      // Navigate tables with arrow keys
+      if (key === 'arrowup' || key === 'arrowdown') {
+        e.preventDefault()
+        const tables = Object.keys(inferred_schema)
+        const filtered = tables.filter(t => t.toLowerCase().includes(searchFilter.toLowerCase()))
+        const currentIdx = filtered.indexOf(selectedTable || '')
+
+        if (key === 'arrowup' && currentIdx > 0) {
+          setSelectedTable(filtered[currentIdx - 1])
+        } else if (key === 'arrowdown' && currentIdx < filtered.length - 1) {
+          setSelectedTable(filtered[currentIdx + 1])
+        }
+      }
+
+      // Rename with R
+      if (key === 'r' && selectedTable) {
+        e.preventDefault()
+        handleRenameTable(selectedTable)
+      }
+
+      // Drop with D
+      if (key === 'd' && selectedTable) {
+        e.preventDefault()
+        handleDropTable(selectedTable)
+      }
+
+      // Expand with Space
+      if (key === ' ' && selectedTable) {
+        e.preventDefault()
+        setExpandedTables(prev => {
+          const next = new Set(prev)
+          if (next.has(selectedTable)) next.delete(selectedTable)
+          else next.add(selectedTable)
+          return next
+        })
+      }
+
+      // Skip with Esc
+      if (key === 'escape') {
+        e.preventDefault()
+        dispatch({ type: 'SCHEMA_EDIT_SKIP' })
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selectedTable, searchFilter, inferred_schema, state.phase, dispatch, handleRenameTable, handleDropTable])
+
   // Filter tables based on search
   const filteredTables = Object.keys(inferred_schema).filter(tableName =>
     tableName.toLowerCase().includes(searchFilter.toLowerCase())
@@ -124,9 +236,8 @@ export default function SchemaEditPhase() {
   return (
     <div className="space-y-6">
       <PhaseHeader
-        phase="schema-edit"
         title="Schema Editor"
-        subtitle="Rename tables/columns, drop tables, reorder columns (optional step)"
+        description="Rename tables/columns, drop tables, reorder columns (optional step)"
       />
 
       <Card>
@@ -140,7 +251,21 @@ export default function SchemaEditPhase() {
               className="w-64"
             />
             <Button variant="outline" size="sm">↻</Button>
-            <Button variant="outline" size="sm">[DDL↑]</Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => document.getElementById('ddl-input')?.click()}
+              disabled={ddlLoading}
+            >
+              {ddlLoading ? '...' : '[DDL↑]'}
+            </Button>
+            <input
+              id="ddl-input"
+              type="file"
+              accept=".sql"
+              style={{ display: 'none' }}
+              onChange={(e) => e.target.files && handleDDLUpload(e.target.files[0])}
+            />
           </div>
         </CardHeader>
         <CardContent>
@@ -278,8 +403,78 @@ export default function SchemaEditPhase() {
         </Card>
       )}
 
+      {/* DDL Preview Modal */}
+      {ddlModalOpen && ddlPreview && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <Card className="w-full max-w-2xl max-h-96 overflow-auto">
+            <CardHeader>
+              <CardTitle>DDL Preview</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="text-sm">
+                <p>Found {ddlPreview.matching_tables.length} matching tables in DDL</p>
+              </div>
+              <div className="max-h-64 overflow-auto border rounded p-2 text-xs bg-gray-50">
+                <pre>{JSON.stringify(ddlPreview.ddl_schema, null, 2)}</pre>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="default" onClick={handleApplyDDL}>
+                  Apply
+                </Button>
+                <Button variant="outline" onClick={() => {
+                  setDdlModalOpen(false)
+                  setDdlPreview(null)
+                }}>
+                  Cancel
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Save Template Modal */}
+      {saveTemplateModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <Card className="w-96">
+            <CardHeader>
+              <CardTitle>Save as Template</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Input
+                placeholder="Template name (e.g., 'Baraka v18 Standard')"
+                value={templateName}
+                onChange={(e) => setTemplateName(e.target.value)}
+              />
+              <div className="flex gap-2">
+                <Button
+                  variant="default"
+                  onClick={handleSaveTemplate}
+                  disabled={templateLoading || !templateName.trim()}
+                >
+                  {templateLoading ? 'Saving...' : 'Save'}
+                </Button>
+                <Button variant="outline" onClick={() => {
+                  setSaveTemplateModalOpen(false)
+                  setTemplateName('')
+                }}>
+                  Cancel
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       {/* Action buttons */}
       <div className="flex gap-2">
+        <Button
+          onClick={() => setSaveTemplateModalOpen(true)}
+          variant="outline"
+          disabled={!state.schemaEditState?.modified}
+        >
+          Save as Template
+        </Button>
         <Button onClick={handleApply} variant="default">
           Apply Changes
         </Button>
