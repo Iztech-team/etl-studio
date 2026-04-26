@@ -20,21 +20,91 @@ class Extractor:
 
     # ------------------------------------------------------------------
     def extract_all(self) -> Dict[str, Any]:
-        files = os.listdir(self.session_dir)
+        """Synchronous wrapper around extract_all_iter — drains the generator
+        and returns the final result. Use the iter version directly when you
+        want to surface per-table progress (e.g. streaming resume)."""
+        result: Dict[str, Any] = {}
+        for event_type, payload in self.extract_all_iter():
+            if event_type == "done":
+                result = payload
+        return result
+
+    def extract_all_iter(self):
+        """Generator yielding progress events as files are parsed.
+
+        Events:
+          ('start', {'tables': [name, ...], 'total': N})    listdir done
+          ('table_done', {                                   one file parsed
+              'name': str,
+              'rowCount': int,
+              'columns': [str, ...],
+          })
+          ('done', {                                         all done; full result
+              'tables', 'schema', 'stats', 'preview', 'ddl_schema'
+          })
+
+        SQL files may produce multiple tables per file — we emit a
+        'table_done' for each parsed relation so the client sees each
+        one tick in.
+        """
+        files = sorted(os.listdir(self.session_dir))
+        # Best-effort up-front list: we know csv/excel filenames map to
+        # tables; SQL files are unknown until parsed. Worth surfacing the
+        # csv/excel ones immediately so the client can show "X / N".
+        upfront_names = []
+        for fname in files:
+            ext = fname.lower().rsplit(".", 1)[-1]
+            if ext == "csv":
+                upfront_names.append(fname.rsplit(".", 1)[0])
+            elif ext in ("xlsx", "xls"):
+                upfront_names.append(fname.rsplit(".", 1)[0])
+        yield "start", {
+            "tables": upfront_names,
+            "total": len(upfront_names),
+        }
+
         for fname in files:
             path = os.path.join(self.session_dir, fname)
             ext = fname.lower().rsplit(".", 1)[-1]
             if ext == "csv":
                 self._extract_csv(path, fname)
+                table_name = fname.rsplit(".", 1)[0]
+                rows = self._raw_tables.get(table_name, [])
+                yield "table_done", {
+                    "name": table_name,
+                    "rowCount": len(rows),
+                    "columns": list(rows[0].keys()) if rows else [],
+                }
             elif ext in ("xlsx", "xls"):
+                # _extract_excel may add multiple sheets as separate tables.
+                # Snapshot the table set before/after to figure out which
+                # entries it produced, then emit one event per new table.
+                before = set(self._raw_tables.keys())
                 self._extract_excel(path, fname)
+                added = [t for t in self._raw_tables if t not in before]
+                for table_name in added:
+                    rows = self._raw_tables.get(table_name, [])
+                    yield "table_done", {
+                        "name": table_name,
+                        "rowCount": len(rows),
+                        "columns": list(rows[0].keys()) if rows else [],
+                    }
             elif ext == "sql":
+                before = set(self._raw_tables.keys())
                 self._extract_sql(path, fname)
+                added = [t for t in self._raw_tables if t not in before]
+                for table_name in added:
+                    rows = self._raw_tables.get(table_name, [])
+                    yield "table_done", {
+                        "name": table_name,
+                        "rowCount": len(rows),
+                        "columns": list(rows[0].keys()) if rows else [],
+                    }
 
         self._infer_schema()
         self._compute_stats()
 
-        return {
+        yield "done", {
             "tables": self._raw_tables,
             "schema": self._schema,
             "stats": self._stats,

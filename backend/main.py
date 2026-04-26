@@ -1,6 +1,8 @@
+import asyncio
+import json
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 import os, shutil, uuid
 from datetime import timezone
 from typing import List
@@ -125,23 +127,33 @@ async def health():
 
 @app.get("/api/dashboard-stats")
 async def dashboard_stats(username: str):
-    """Aggregate stats across all projects for a user."""
+    """Aggregate stats across all projects for a user.
+
+    Only inspects projects already cached in memory. Loading state from
+    disk for every project on every dashboard hit was blocking the event
+    loop for ~100s with the AlArabi 257-table dataset, which froze the
+    projects list and made open-project clicks appear to do nothing.
+    Quality for a project becomes visible after it's been opened once
+    (which populates the in-memory session cache).
+    """
     db_stats = db_get_dashboard_stats(username)
     total_rows = db_stats.get("total_rows_migrated", 0)
 
-    # Quality score still needs state files (computed from raw data)
     projects = list_projects(username)
+    project_ids = {p["id"] for p in projects}
     quality_scores: list[float] = []
-    for p in projects:
-        try:
-            state = load_state(p["id"])
-            raw = state.get("raw", {})
-            if raw.get("tables"):
-                from utils.stats import StatsEngine
+    for sess in sessions.values():
+        pid = sess.get("project_id")
+        if not pid or pid not in project_ids:
+            continue
+        if not sess.get("raw", {}).get("tables"):
+            continue
+        from utils.stats import StatsEngine
 
-                engine = StatsEngine(state)
-                stats = engine.compute()
-                quality_scores.append(stats["quality_score"])
+        try:
+            engine = StatsEngine(sess)
+            stats = engine.compute()
+            quality_scores.append(stats["quality_score"])
         except Exception:
             pass
     avg_quality = (
@@ -247,15 +259,7 @@ async def delete_project_endpoint(project_id: str):
     return {"ok": True}
 
 
-@app.post("/api/projects/{project_id}/resume")
-async def resume_project(project_id: str):
-    project = get_project(project_id)
-    if not project:
-        raise HTTPException(404, "Project not found")
-    session_id = str(uuid.uuid4())
-    session = load_state(project_id)
-    session["project_id"] = project_id
-    sessions[session_id] = session
+def _resume_payload(project: dict, session_id: str, session: dict) -> dict:
     raw = session.get("raw", {})
     return {
         "session_id": session_id,
@@ -270,6 +274,93 @@ async def resume_project(project_id: str):
         "transform": session.get("transformed"),
         "load_result": session.get("load_result"),
     }
+
+
+@app.post("/api/projects/{project_id}/resume")
+async def resume_project(project_id: str):
+    """Streaming NDJSON: emits per-table progress as CSVs are parsed.
+
+    Events:
+      {"event": "start", "project": {...}, "tables": [name, ...], "total": N}
+      {"event": "table_done", "name": "T", "rowCount": 1234, "columns": [...]}
+      ...
+      {"event": "done", ...resume payload}
+      OR {"event": "error", "message": "..."}
+
+    The warm path (in-memory cache hit) emits all events at once so the
+    client UI tick-tocks the same way regardless of cold/warm.
+    """
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    from project_state import load_state_iter
+
+    def encode(obj: dict) -> bytes:
+        return (json.dumps(obj, ensure_ascii=False, default=str) + "\n").encode("utf-8")
+
+    async def stream():
+        try:
+            # Warm path: a session for this project already lives in memory.
+            for sid, sess in sessions.items():
+                if sess.get("project_id") == project_id and sess.get("raw"):
+                    tables = sess["raw"].get("tables", {})
+                    table_names = list(tables.keys())
+                    yield encode({
+                        "event": "start",
+                        "project": project,
+                        "tables": table_names,
+                        "total": len(table_names),
+                        "warm": True,
+                    })
+                    for name in table_names:
+                        rows = tables.get(name, [])
+                        yield encode({
+                            "event": "table_done",
+                            "name": name,
+                            "rowCount": len(rows),
+                            "columns": list(rows[0].keys()) if rows else [],
+                        })
+                    yield encode({"event": "done", **_resume_payload(project, sid, sess)})
+                    return
+
+            # Cold path: drive load_state_iter on a worker thread and
+            # forward events as they arrive. The sentinel pattern keeps
+            # StopIteration from leaking through asyncio.to_thread.
+            session_id = str(uuid.uuid4())
+            session: dict = {}
+
+            SENTINEL = object()
+            it = load_state_iter(project_id)
+
+            def safe_next():
+                try:
+                    return next(it)
+                except StopIteration:
+                    return SENTINEL
+
+            yield encode({"event": "start", "project": project, "tables": [], "total": 0})
+
+            # Note: we may emit a second 'start' from the iterator below
+            # (with the actual table list once listdir runs). The frontend
+            # treats 'start' as updating its known total, so that's fine.
+            while True:
+                event = await asyncio.to_thread(safe_next)
+                if event is SENTINEL:
+                    break
+                event_type, payload = event
+                if event_type == "done":
+                    session = payload
+                    continue
+                yield encode({"event": event_type, **payload})
+
+            session["project_id"] = project_id
+            sessions[session_id] = session
+            yield encode({"event": "done", **_resume_payload(project, session_id, session)})
+        except Exception as e:
+            yield encode({"event": "error", "message": f"Failed to resume: {e}"})
+
+    return StreamingResponse(stream(), media_type="application/x-ndjson")
 
 
 @app.post("/api/projects/{project_id}/save")
@@ -300,12 +391,68 @@ def _is_db_file(filename: str) -> bool:
     return _detect_db_type(filename) is not None
 
 
-@app.post("/api/pre-extract", response_model=PreExtractResponse)
-async def pre_extract(
+# ---------------------------------------------------------------------------
+# DB upload + extraction (two-phase, with replayable progress stream)
+#
+# Flow:
+#   POST /api/upload-db                  -> uploads file, returns session_id
+#   POST /api/extract/{session_id}       -> kicks off extraction in background
+#   GET  /api/extract/{session_id}/status -> snapshot (status, progress, result)
+#   GET  /api/extract/{session_id}/stream -> NDJSON stream with full replay,
+#                                            ends when extraction is done/error
+#
+# Extraction runs as an asyncio task and pushes events into extraction_states.
+# Multiple clients can connect to the stream — each gets the full event log
+# from index 0, then live updates until the terminal event. That's how the
+# user can navigate away and reconnect without losing progress.
+# ---------------------------------------------------------------------------
+
+extraction_states: dict[str, dict] = {}
+
+
+def _new_extraction_state() -> dict:
+    return {
+        "status": "pending",      # pending | extracting | done | error
+        "events": [],             # list of dicts (one per yielded event)
+        "result": None,           # final PreExtractResponse-shaped dict
+        "error": None,
+        "started_at": None,
+        "finished_at": None,
+        "filename": None,
+        "project_id": None,
+        "current_table": None,
+        "tables_done": 0,
+        "tables_total": 0,
+    }
+
+
+def _safe_next_factory(sentinel: object):
+    """Wrap next() so StopIteration becomes a sentinel return value.
+
+    asyncio cannot let StopIteration propagate out of a coroutine — it
+    has special meaning to the event loop and gets converted into a
+    RuntimeError ("StopIteration interacts badly with generators..."),
+    so we catch it inside the worker thread and signal end-of-stream
+    via a unique sentinel instead.
+    """
+    def safe_next(gen):
+        try:
+            return next(gen)
+        except StopIteration:
+            return sentinel
+    return safe_next
+
+
+@app.post("/api/upload-db")
+async def upload_db(
     file: UploadFile = File(...),
-    password: str | None = Form(None),
     project_id: str | None = Form(None),
 ):
+    """Upload a database file. Does NOT extract — call /api/extract next.
+
+    Returns session_id, file metadata. The session is created in a
+    'pending_db' state with the on-disk path.
+    """
     db_type = _detect_db_type(file.filename or "")
     if not db_type:
         raise HTTPException(
@@ -323,7 +470,7 @@ async def pre_extract(
 
     dest = os.path.join(session_dir, file.filename)
     with open(dest, "wb") as out:
-        while chunk := await file.read(8 * 1024 * 1024):  # 8 MB chunks
+        while chunk := await file.read(8 * 1024 * 1024):
             out.write(chunk)
 
     file_size = os.path.getsize(dest)
@@ -334,74 +481,242 @@ async def pre_extract(
         db_type=db_type,
     )
 
-    # Extract tables from DB into CSVs
-    from core.db_extractor import extract_db_to_csvs
-
-    # Create audit trail for DB extraction
-    audit_trail = AuditTrail(source_type="db", source_name=file.filename)
-    audit_trail.log_extraction_started(db_type, 0)
-
-    try:
-        csv_files = extract_db_to_csvs(dest, db_type, session_dir, password)
-    except ImportError as e:
-        audit_trail.log_extraction_error(str(e))
-        raise HTTPException(400, str(e))
-    except Exception as e:
-        audit_trail.log_extraction_error(str(e))
-        raise HTTPException(400, f"Failed to extract database: {e}")
-
-    if not csv_files:
-        audit_trail.log_extraction_error("No tables found in the database file")
-        raise HTTPException(400, "No tables found in the database file")
-
-    # Remove the original DB file so Extractor only sees CSVs
-    os.remove(dest)
-
-    # Run the standard Extractor on the generated CSVs with audit trail
-    extractor = Extractor(session_dir, audit_trail)
-    result = extractor.extract_all()
-
-    audit_trail.log_extraction_completed(
-        list(result.get("tables", {}).keys()),
-        sum(len(rows) for rows in result.get("tables", {}).values()),
-    )
-
-    saved_files = [
-        {
-            "name": f,
-            "path": os.path.join(session_dir, f),
-            "size": os.path.getsize(os.path.join(session_dir, f)),
-        }
-        for f in csv_files
-    ]
-
     sessions[session_id] = {
         "project_id": project_id,
-        "pre_extract": {
-            "file": file_info.dict(),
-            "password": password is not None,
+        "pending_db": {
+            "file_path": dest,
+            "session_dir": session_dir,
+            "filename": file.filename,
+            "size": file_size,
             "db_type": db_type,
         },
-        "extractor": extractor,
-        "raw": result,
-        "files": saved_files,
-        "ddl_schema": result.get("ddl_schema", {}),
-        "applied_ddl": [],
-        "audit_trail": audit_trail,
+    }
+    state = _new_extraction_state()
+    state["filename"] = file.filename
+    state["project_id"] = project_id
+    extraction_states[session_id] = state
+
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "file": file_info.dict(),
     }
 
-    _auto_save(session_id, "pre-extract")
-    return PreExtractResponse(
-        ok=True,
-        session_id=session_id,
-        file=file_info,
-        tables_extracted=list(result.get("tables", {}).keys()),
-        csv_files=csv_files,
-        preview=result.get("preview", {}),
-        inferred_schema=result.get("schema", {}),
-        stats=result.get("stats", {}),
-        ddl_schema=result.get("ddl_schema", {}),
-    )
+
+@app.post("/api/extract/{session_id}")
+async def start_extract(
+    session_id: str,
+    password: str | None = Form(None),
+):
+    """Kick off extraction for a previously uploaded DB. Returns immediately.
+
+    Idempotent if extraction is already in flight or done — returns the
+    current status without restarting. If a previous attempt errored,
+    calling again resets state and tries again.
+    """
+    if session_id not in sessions:
+        raise HTTPException(404, "Session not found")
+    s = sessions[session_id]
+    pending = s.get("pending_db")
+    if not pending and "raw" not in s:
+        raise HTTPException(400, "No database file pending extraction for this session")
+
+    state = extraction_states.get(session_id)
+    if state and state["status"] == "extracting":
+        return {"ok": True, "status": "extracting", "session_id": session_id}
+    if state and state["status"] == "done":
+        return {"ok": True, "status": "done", "session_id": session_id}
+
+    from datetime import datetime as _dt
+
+    new_state = _new_extraction_state()
+    new_state["status"] = "extracting"
+    new_state["started_at"] = _dt.now(timezone.utc).isoformat()
+    new_state["filename"] = (pending or {}).get("filename") or (state or {}).get("filename")
+    new_state["project_id"] = s.get("project_id")
+    extraction_states[session_id] = new_state
+
+    asyncio.create_task(_run_extraction(session_id, password))
+    return {"ok": True, "status": "extracting", "session_id": session_id}
+
+
+@app.get("/api/extract/{session_id}/status")
+async def extract_status(session_id: str):
+    """Lightweight status snapshot (no event log)."""
+    state = extraction_states.get(session_id)
+    if not state:
+        raise HTTPException(404, "No extraction state for this session")
+    return {
+        "session_id": session_id,
+        "status": state["status"],
+        "filename": state["filename"],
+        "project_id": state["project_id"],
+        "tables_done": state["tables_done"],
+        "tables_total": state["tables_total"],
+        "current_table": state["current_table"],
+        "events_count": len(state["events"]),
+        "error": state["error"],
+        "started_at": state["started_at"],
+        "finished_at": state["finished_at"],
+        "result": state["result"],
+    }
+
+
+@app.get("/api/extract/{session_id}/stream")
+async def stream_extract(session_id: str):
+    """NDJSON stream with full replay. Ends on done/error event.
+
+    The cursor starts at 0 — every connecting client sees the entire
+    event history followed by live updates. Late joiners see the same
+    sequence, including the terminal event.
+    """
+    if session_id not in extraction_states:
+        raise HTTPException(404, "No extraction state for this session")
+
+    async def gen():
+        cursor = 0
+        while True:
+            state = extraction_states.get(session_id)
+            if state is None:
+                break
+            new_events = state["events"][cursor:]
+            for ev in new_events:
+                yield (json.dumps(ev, ensure_ascii=False) + "\n").encode("utf-8")
+            cursor = len(state["events"])
+            if state["status"] in ("done", "error"):
+                break
+            await asyncio.sleep(0.15)
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+async def _run_extraction(session_id: str, password: str | None) -> None:
+    """Background worker: drives the iter, writes events to state."""
+    from datetime import datetime as _dt
+    from core.db_extractor import extract_db_to_csvs_iter
+
+    state = extraction_states[session_id]
+    s = sessions[session_id]
+    pending = s.get("pending_db")
+    if not pending:
+        state["status"] = "error"
+        state["error"] = "No database file pending extraction"
+        state["events"].append({"event": "error", "message": state["error"]})
+        state["finished_at"] = _dt.now(timezone.utc).isoformat()
+        return
+
+    audit_trail = AuditTrail(source_type="db", source_name=pending["filename"])
+    audit_trail.log_extraction_started(pending["db_type"], 0)
+
+    SENTINEL = object()
+    safe_next = _safe_next_factory(SENTINEL)
+
+    try:
+        gen = extract_db_to_csvs_iter(
+            pending["file_path"],
+            pending["db_type"],
+            pending["session_dir"],
+            password,
+        )
+        csv_files: List[str] = []
+
+        while True:
+            event = await asyncio.to_thread(safe_next, gen)
+            if event is SENTINEL:
+                break
+            event_type, payload = event
+            if event_type == "done":
+                csv_files = payload.get("csv_files", [])
+                continue
+            ev = {"event": event_type, **payload}
+            state["events"].append(ev)
+            if event_type == "start":
+                state["tables_total"] = len(payload.get("tables", []))
+            elif event_type == "table_done":
+                state["tables_done"] = payload.get("index", state["tables_done"])
+                state["current_table"] = payload.get("name")
+
+        if not csv_files:
+            msg = "No tables found in the database file"
+            state["status"] = "error"
+            state["error"] = msg
+            state["events"].append({"event": "error", "message": msg})
+            state["finished_at"] = _dt.now(timezone.utc).isoformat()
+            audit_trail.log_extraction_error(msg)
+            return
+
+        # Original DB file is no longer needed once CSVs are written.
+        try:
+            os.remove(pending["file_path"])
+        except OSError:
+            pass
+
+        extractor = Extractor(pending["session_dir"], audit_trail)
+        result = await asyncio.to_thread(extractor.extract_all)
+
+        audit_trail.log_extraction_completed(
+            list(result.get("tables", {}).keys()),
+            sum(len(rows) for rows in result.get("tables", {}).values()),
+        )
+
+        saved_files = [
+            {
+                "name": f,
+                "path": os.path.join(pending["session_dir"], f),
+                "size": os.path.getsize(os.path.join(pending["session_dir"], f)),
+            }
+            for f in csv_files
+        ]
+
+        file_info = PreExtractFileInfo(
+            name=pending["filename"],
+            path=pending["file_path"],
+            size=pending["size"],
+            db_type=pending["db_type"],
+        )
+
+        sessions[session_id].update({
+            "pre_extract": {
+                "file": file_info.dict(),
+                "password": password is not None,
+                "db_type": pending["db_type"],
+            },
+            "extractor": extractor,
+            "raw": result,
+            "files": saved_files,
+            "ddl_schema": result.get("ddl_schema", {}),
+            "applied_ddl": [],
+            "audit_trail": audit_trail,
+        })
+        sessions[session_id].pop("pending_db", None)
+        _auto_save(session_id, "pre-extract")
+
+        done_payload = PreExtractResponse(
+            ok=True,
+            session_id=session_id,
+            file=file_info,
+            tables_extracted=list(result.get("tables", {}).keys()),
+            csv_files=csv_files,
+            preview=result.get("preview", {}),
+            inferred_schema=result.get("schema", {}),
+            stats=result.get("stats", {}),
+            ddl_schema=result.get("ddl_schema", {}),
+        ).dict()
+
+        state["result"] = done_payload
+        state["events"].append({"event": "done", **done_payload})
+        state["status"] = "done"
+        state["finished_at"] = _dt.now(timezone.utc).isoformat()
+    except Exception as e:
+        msg = f"Failed to extract database: {e}"
+        state["status"] = "error"
+        state["error"] = msg
+        state["events"].append({"event": "error", "message": msg})
+        state["finished_at"] = _dt.now(timezone.utc).isoformat()
+        try:
+            audit_trail.log_extraction_error(msg)
+        except Exception:
+            pass
 
 
 @app.post("/api/pre-extract-select/{session_id}")
@@ -798,6 +1113,63 @@ async def transform(session_id: str):
         finish_pipeline_run(run["id"], "done", total_rows, ", ".join(note_parts))
         _flush_audit_events(project_id, audit_trail, run["id"])
     return TransformResponse(**result)
+
+
+# ---------------------------------------------------------------------------
+# Transform presets — capture-and-replay of column edits/renames so the
+# user doesn't reconfigure 100+ tables for every new client with the same
+# legacy schema.
+# ---------------------------------------------------------------------------
+
+import presets as presets_store
+
+
+@app.get("/api/transform-presets")
+async def list_transform_presets():
+    return {"presets": presets_store.list_presets()}
+
+
+@app.get("/api/transform-presets/{preset_id}")
+async def get_transform_preset(preset_id: str):
+    preset = presets_store.get_preset(preset_id)
+    if not preset:
+        raise HTTPException(404, "Preset not found")
+    return preset
+
+
+@app.post("/api/transform-presets")
+async def create_transform_preset(body: dict):
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "Preset name is required")
+    table_names = body.get("table_names") or {}
+    edits = body.get("edits") or {}
+    if not isinstance(table_names, dict) or not isinstance(edits, dict):
+        raise HTTPException(400, "table_names and edits must be objects")
+    return presets_store.create_preset(name, table_names, edits)
+
+
+@app.put("/api/transform-presets/{preset_id}")
+async def update_transform_preset(preset_id: str, body: dict):
+    name = body.get("name")
+    table_names = body.get("table_names")
+    edits = body.get("edits")
+    updated = presets_store.update_preset(
+        preset_id,
+        name=name.strip() if isinstance(name, str) else None,
+        table_names=table_names if isinstance(table_names, dict) else None,
+        edits=edits if isinstance(edits, dict) else None,
+    )
+    if not updated:
+        raise HTTPException(404, "Preset not found")
+    return updated
+
+
+@app.delete("/api/transform-presets/{preset_id}")
+async def delete_transform_preset(preset_id: str):
+    if not presets_store.delete_preset(preset_id):
+        raise HTTPException(404, "Preset not found")
+    return {"ok": True}
 
 
 @app.post("/api/load/{session_id}", response_model=LoadResponse)

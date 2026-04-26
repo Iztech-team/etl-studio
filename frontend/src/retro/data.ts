@@ -12,19 +12,15 @@ export type Project = {
 export type StageId =
 	| "upload"
 	| "extract"
-	| "select"
 	| "transform"
-	| "map"
 	| "export";
 
 export type Stage = { id: StageId; label: string; sub: string };
 
 export const RL_STAGES: Stage[] = [
 	{ id: "upload", label: "UPLOAD", sub: "Database file" },
-	{ id: "extract", label: "EXTRACT", sub: "Parse tables" },
-	{ id: "select", label: "SELECT", sub: "Pick tables" },
-	{ id: "transform", label: "TRANSFORM", sub: "Clean columns" },
-	{ id: "map", label: "MAP", sub: "Target schema" },
+	{ id: "extract", label: "EXTRACT", sub: "Pick tables" },
+	{ id: "transform", label: "TRANSFORM", sub: "Clean & map columns" },
 	{ id: "export", label: "EXPORT", sub: "CSV, SQL, JSON" },
 ];
 

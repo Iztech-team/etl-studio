@@ -1,4 +1,7 @@
 import copy
+import re
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from utils.encoding import (
     fix_encoding_str,
@@ -7,6 +10,60 @@ from utils.encoding import (
 )
 from utils.audit import AuditTrail
 from core.column_transforms import apply_transforms
+
+
+_CONCAT_PLACEHOLDER_RE = re.compile(r"\{([^{}]+)\}")
+
+
+def _apply_value_generator(
+    gen: Optional[Dict[str, Any]],
+    row_index: int,
+    new_row: Dict[str, Any],
+    fallback: Any,
+) -> Any:
+    """Compute the value for an added column from its `generator` config.
+
+    Mirrors frontend's GeneratorEditor / renderAddedCellPreview in
+    retro/Pipeline.tsx. If `gen` is None or unrecognised, returns
+    `fallback` (which is the legacy default_value path).
+    """
+    if not gen or not isinstance(gen, dict):
+        return fallback
+    kind = gen.get("kind")
+    if kind == "fixed":
+        v = gen.get("value", "")
+        return v if v != "" else fallback
+    if kind == "uuid_v4":
+        return str(uuid.uuid4())
+    if kind == "increment":
+        try:
+            start = int(gen.get("start", 1))
+        except (TypeError, ValueError):
+            start = 1
+        try:
+            step = int(gen.get("step", 1))
+        except (TypeError, ValueError):
+            step = 1
+        return start + row_index * step
+    if kind == "now":
+        return datetime.now(timezone.utc).isoformat()
+    if kind == "from_column":
+        src = gen.get("source_column")
+        if src and src in new_row:
+            return new_row[src]
+        return fallback
+    if kind == "concat":
+        tpl = gen.get("template", "") or ""
+        if not tpl:
+            return fallback
+
+        def replace(match: "re.Match[str]") -> str:
+            key = match.group(1)
+            v = new_row.get(key)
+            return "" if v is None else str(v)
+
+        return _CONCAT_PLACEHOLDER_RE.sub(replace, tpl)
+    return fallback
 
 
 class Transformer:
@@ -83,7 +140,7 @@ class Transformer:
             col_configs = {cc["name"]: cc for cc in tc.get("columns", [])}
 
             new_rows = []
-            for row in rows:
+            for row_index, row in enumerate(rows):
                 new_row: Dict[str, Any] = {}
 
                 # --- process existing columns ---
@@ -165,12 +222,23 @@ class Transformer:
                         continue  # FK columns handled next
 
                     target_col = cc.get("target_name") or cc_name
+
+                    # Compute the seed value: prefer explicit generator over
+                    # legacy default_value. The generator runs first; if it
+                    # produces a value, that wins. Falls back to default_value
+                    # (or None for nullable columns) if no generator is set.
                     if cc.get("nullable", True) and cc.get("default_value") is None:
-                        val = None
+                        fallback: Any = None
                     else:
-                        val = cc.get("default_value")
-                        if val is not None:
-                            val, _ = self._coerce(val, cc.get("data_type", "string"))
+                        fallback = cc.get("default_value")
+
+                    val = _apply_value_generator(
+                        cc.get("generator"), row_index, new_row, fallback
+                    )
+
+                    if val is not None:
+                        val, _ = self._coerce(val, cc.get("data_type", "string"))
+
                     col_transforms = cc.get("transforms", [])
                     if col_transforms:
                         val = apply_transforms(val, col_transforms, cc_name)

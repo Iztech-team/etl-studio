@@ -8,13 +8,13 @@ import { RlTopbar } from "./Topbar";
 
 const PHASE_TO_STAGE: Record<string, number> = {
 	upload: 1,
-	"pre-extract": 1,
+	"pre-extract": 2,
 	edit: 2,
-	configure: 3,
-	transform: 4,
-	map: 5,
-	load: 6,
-	stats: 6,
+	configure: 2,
+	transform: 3,
+	map: 3, // legacy — same stage as transform now
+	load: 4,
+	stats: 4,
 };
 
 function phaseStageIndex(phase: string): number {
@@ -291,7 +291,7 @@ function RlProjectCard({
 	onRename: (e: React.MouseEvent, id: string) => void;
 }) {
 	const stageIdx = phaseStageIndex(p.phase);
-	const progress = Math.round((stageIdx / 6) * 100);
+	const progress = Math.round((stageIdx / 4) * 100);
 	const [showFiles, setShowFiles] = useState(false);
 	const [outputFiles, setOutputFiles] = useState<string[]>([]);
 	const isExported = p.phase === "load" || p.phase === "stats";
@@ -362,7 +362,7 @@ function RlProjectCard({
 						whiteSpace: "nowrap",
 					}}
 				>
-					STEP {stageIdx}/6
+					STEP {stageIdx}/4
 				</span>
 			</div>
 
@@ -379,7 +379,7 @@ function RlProjectCard({
 					}}
 				>
 					<span>
-						STEP {stageIdx}/6 · {phaseLabel(p.phase)}
+						STEP {stageIdx}/4 · {phaseLabel(p.phase)}
 					</span>
 					<span>{progress}%</span>
 				</div>

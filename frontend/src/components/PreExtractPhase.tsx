@@ -1,13 +1,21 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useDropzone } from 'react-dropzone'
-import { Database, HardDrive, Lock, ArrowRight } from 'lucide-react'
+import { Database, HardDrive, Lock, ArrowRight, Plus, Check } from 'lucide-react'
 import { usePipeline } from '../store/pipeline'
-import { preExtract, preExtractSelect } from '../api/client'
+import { preExtractStream, preExtractSelect, type PreExtractStreamEvent } from '../api/client'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Progress } from '@/components/ui/progress'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { PhaseHeader, Spinner, DataTable } from './ui'
 
 const DB_FORMATS = [
@@ -26,15 +34,57 @@ const ACCEPT_MAP: Record<string, string[]> = {
   ],
 }
 
+const DEFAULT_PASSWORDS = ['masterkey', 'AshSMSsw']
+const PASSWORDS_STORAGE_KEY = 'etl_studio.ib_known_passwords'
+const NO_PASSWORD = '__none__'
+const ADD_NEW = '__add_new__'
+
+function loadKnownPasswords(): string[] {
+  try {
+    const raw = localStorage.getItem(PASSWORDS_STORAGE_KEY)
+    if (!raw) return [...DEFAULT_PASSWORDS]
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return [...DEFAULT_PASSWORDS]
+    const merged = [...DEFAULT_PASSWORDS]
+    for (const v of parsed) {
+      if (typeof v === 'string' && v && !merged.includes(v)) merged.push(v)
+    }
+    return merged
+  } catch {
+    return [...DEFAULT_PASSWORDS]
+  }
+}
+
+function saveKnownPasswords(list: string[]) {
+  const custom = list.filter((p) => !DEFAULT_PASSWORDS.includes(p))
+  localStorage.setItem(PASSWORDS_STORAGE_KEY, JSON.stringify(custom))
+}
+
+type ExtractedRow = { name: string; rows: number; index: number; total: number }
+
 export default function PreExtractPhase() {
   const { state, dispatch } = usePipeline()
-  const [password, setPassword] = useState('')
-  const [showPassword, setShowPassword] = useState(false)
+  const [knownPasswords, setKnownPasswords] = useState<string[]>(() => loadKnownPasswords())
+  const [selectedPassword, setSelectedPassword] = useState<string>(DEFAULT_PASSWORDS[0])
+  const [newPassword, setNewPassword] = useState('')
+  const [addingNew, setAddingNew] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<number | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set())
 
+  const [extracting, setExtracting] = useState(false)
+  const [allTables, setAllTables] = useState<string[]>([])
+  const [extractedTables, setExtractedTables] = useState<ExtractedRow[]>([])
+  const [extractStatus, setExtractStatus] = useState<string>('')
+  const tableLogRef = useRef<HTMLDivElement | null>(null)
+
   const extracted = state.preExtractResult
+
+  useEffect(() => {
+    if (tableLogRef.current) {
+      tableLogRef.current.scrollTop = tableLogRef.current.scrollHeight
+    }
+  }, [extractedTables.length])
 
   const onDrop = useCallback((accepted: File[]) => {
     if (accepted.length > 0) {
@@ -49,22 +99,68 @@ export default function PreExtractPhase() {
     multiple: false,
   })
 
+  const handlePasswordSelect = (val: string) => {
+    if (val === ADD_NEW) {
+      setAddingNew(true)
+      return
+    }
+    setSelectedPassword(val)
+  }
+
+  const handleAddNewPassword = () => {
+    const trimmed = newPassword.trim()
+    if (!trimmed) {
+      setAddingNew(false)
+      setNewPassword('')
+      return
+    }
+    if (!knownPasswords.includes(trimmed)) {
+      const next = [...knownPasswords, trimmed]
+      setKnownPasswords(next)
+      saveKnownPasswords(next)
+    }
+    setSelectedPassword(trimmed)
+    setNewPassword('')
+    setAddingNew(false)
+  }
+
+  const handleEvent = useCallback((evt: PreExtractStreamEvent) => {
+    if (evt.event === 'listing') {
+      setExtractStatus('Listing tables...')
+    } else if (evt.event === 'start') {
+      setAllTables(evt.tables)
+      setExtractStatus(`Extracting ${evt.tables.length} tables...`)
+    } else if (evt.event === 'table_done') {
+      setExtractedTables((prev) => [
+        ...prev,
+        { name: evt.name, rows: evt.rows, index: evt.index, total: evt.total },
+      ])
+    }
+  }, [])
+
   const handleUpload = async () => {
     if (!selectedFile) return
-    dispatch({ type: 'SET_LOADING', loading: true })
+    const password = selectedPassword === NO_PASSWORD ? undefined : selectedPassword
+    setExtracting(true)
+    setAllTables([])
+    setExtractedTables([])
+    setExtractStatus('Uploading...')
     setUploadProgress(0)
+    dispatch({ type: 'SET_LOADING', loading: true })
     try {
-      const result = await preExtract(
+      const result = await preExtractStream(
         selectedFile,
-        password || undefined,
-        (percent) => setUploadProgress(percent),
+        password,
         state.projectId ?? undefined,
+        handleEvent,
+        (percent) => setUploadProgress(percent),
       )
-      // Select all tables by default
       setSelectedTables(new Set(result.tables_extracted))
       dispatch({ type: 'SET_PRE_EXTRACT', result })
     } catch (e: unknown) {
       dispatch({ type: 'SET_ERROR', error: e instanceof Error ? e.message : 'Upload failed' })
+    } finally {
+      setExtracting(false)
       setUploadProgress(null)
     }
   }
@@ -141,8 +237,8 @@ export default function PreExtractPhase() {
           `}
         >
           <input {...getInputProps()} />
-          {state.loading ? (
-            <Spinner size="lg" label="Extracting tables from database" />
+          {extracting ? (
+            <Spinner size="lg" label={extractStatus || 'Extracting tables from database'} />
           ) : (
             <div className="space-y-3">
               <Database className="mx-auto h-12 w-12 text-primary/70" />
@@ -156,17 +252,56 @@ export default function PreExtractPhase() {
           )}
         </div>
 
-        {uploadProgress !== null && (
+        {uploadProgress !== null && extracting && allTables.length === 0 && (
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>Uploading...</span>
+              <span>{extractStatus || 'Uploading...'}</span>
               <span className="font-mono text-accent">{uploadProgress}%</span>
             </div>
             <Progress value={uploadProgress} className="h-2" />
           </div>
         )}
 
-        {selectedFile && !state.loading && (
+        {extracting && allTables.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm flex items-center justify-between">
+                <span>{extractStatus}</span>
+                <span className="text-xs font-mono text-accent">
+                  {extractedTables.length}/{allTables.length}
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Progress
+                value={allTables.length > 0 ? (extractedTables.length / allTables.length) * 100 : 0}
+                className="h-2 mb-3"
+              />
+              <div
+                ref={tableLogRef}
+                className="max-h-48 overflow-y-auto space-y-0.5 font-mono text-xs"
+              >
+                {extractedTables.map((t) => (
+                  <div key={t.name} className="flex items-center gap-2 px-2 py-0.5">
+                    <Check className="h-3 w-3 text-primary shrink-0" />
+                    <span className="text-foreground flex-1 truncate">{t.name}</span>
+                    <span className="text-muted-foreground shrink-0">
+                      {t.rows.toLocaleString()} rows
+                    </span>
+                  </div>
+                ))}
+                {extractedTables.length < allTables.length && (
+                  <div className="flex items-center gap-2 px-2 py-0.5 text-muted-foreground">
+                    <span className="inline-block h-3 w-3 animate-pulse rounded-full bg-accent/50 shrink-0" />
+                    <span className="truncate">{allTables[extractedTables.length]}…</span>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {selectedFile && !extracting && (
           <Card>
             <CardHeader>
               <CardTitle className="text-sm">Selected File</CardTitle>
@@ -189,28 +324,74 @@ export default function PreExtractPhase() {
                 <label className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Lock className="h-3.5 w-3.5" />
                   Database Password
-                  <span className="text-xs">(optional)</span>
                 </label>
-                <div className="flex gap-2">
-                  <Input
-                    type={showPassword ? 'text' : 'password'}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Enter password if database is encrypted"
-                    className="flex-1"
-                  />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="text-xs px-3"
-                  >
-                    {showPassword ? 'Hide' : 'Show'}
-                  </Button>
-                </div>
+                {addingNew ? (
+                  <div className="flex gap-2">
+                    <Input
+                      type="text"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          handleAddNewPassword()
+                        } else if (e.key === 'Escape') {
+                          setAddingNew(false)
+                          setNewPassword('')
+                        }
+                      }}
+                      placeholder="Type a new password and press Enter"
+                      className="flex-1"
+                      autoFocus
+                    />
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={handleAddNewPassword}
+                      className="text-xs px-3"
+                    >
+                      Save
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setAddingNew(false)
+                        setNewPassword('')
+                      }}
+                      className="text-xs px-3"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                ) : (
+                  <Select value={selectedPassword} onValueChange={handlePasswordSelect}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select a password" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NO_PASSWORD}>(no password)</SelectItem>
+                      <SelectSeparator />
+                      {knownPasswords.map((p) => (
+                        <SelectItem key={p} value={p}>
+                          <span className="font-mono">{p}</span>
+                        </SelectItem>
+                      ))}
+                      <SelectSeparator />
+                      <SelectItem value={ADD_NEW}>
+                        <span className="flex items-center gap-2 text-primary">
+                          <Plus className="h-3 w-3" /> Add new password…
+                        </span>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Saved passwords stay in your browser. The current selection is sent with the upload.
+                </p>
               </div>
 
-              <Button onClick={handleUpload} className="w-full">
+              <Button onClick={handleUpload} className="w-full" disabled={addingNew}>
                 Upload & Extract
               </Button>
             </CardContent>

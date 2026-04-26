@@ -3,6 +3,100 @@ import { useAuth } from "./Auth";
 import { RL_STAGES, type StageId } from "./data";
 import { ICheck, IClock, IDisk, IFolder } from "./icons";
 
+// Same key prefix Pipeline.tsx writes under. Kept in sync by convention —
+// both must use the literal string. If you rename it, rename both places.
+const ACTIVE_EXTRACTION_LS_PREFIX = "etl_studio.active_extraction.";
+
+type ActiveExtractionInfo = {
+	sessionId: string;
+	filename: string;
+	done: number;
+	total: number;
+	current: string | null;
+};
+
+// Poll-based hook so the dock can keep showing extraction progress even
+// when the Pipeline component is unmounted (user navigated to projects /
+// templates / history). The Pipeline owns the SSE consumer for its own
+// progress UI; this is a lightweight independent observer.
+function useActiveExtraction(): ActiveExtractionInfo | null {
+	const [info, setInfo] = useState<ActiveExtractionInfo | null>(null);
+
+	useEffect(() => {
+		let cancelled = false;
+		let timer: ReturnType<typeof setTimeout> | null = null;
+
+		const scanLs = (): { sessionId: string; filename: string } | null => {
+			for (let i = 0; i < localStorage.length; i++) {
+				const key = localStorage.key(i);
+				if (!key || !key.startsWith(ACTIVE_EXTRACTION_LS_PREFIX)) continue;
+				try {
+					const raw = localStorage.getItem(key);
+					if (!raw) continue;
+					const v = JSON.parse(raw) as {
+						sessionId?: string;
+						filename?: string;
+					};
+					if (v.sessionId)
+						return {
+							sessionId: v.sessionId,
+							filename: v.filename ?? "",
+						};
+				} catch {
+					// ignore corrupt entry
+				}
+			}
+			return null;
+		};
+
+		const poll = async () => {
+			if (cancelled) return;
+			const active = scanLs();
+			if (!active) {
+				setInfo(null);
+				timer = setTimeout(poll, 2500);
+				return;
+			}
+			try {
+				const res = await fetch(`/api/extract/${active.sessionId}/status`);
+				if (res.ok) {
+					const data = (await res.json()) as {
+						status: string;
+						tables_done?: number;
+						tables_total?: number;
+						current_table?: string | null;
+					};
+					if (cancelled) return;
+					if (data.status === "extracting") {
+						setInfo({
+							sessionId: active.sessionId,
+							filename: active.filename,
+							done: data.tables_done ?? 0,
+							total: data.tables_total ?? 0,
+							current: data.current_table ?? null,
+						});
+						if (!cancelled) timer = setTimeout(poll, 1200);
+						return;
+					}
+					// done / error / pending — stop showing
+					setInfo(null);
+				}
+			} catch {
+				// network blip, retry
+			}
+			if (!cancelled) timer = setTimeout(poll, 2500);
+		};
+
+		void poll();
+		return () => {
+			cancelled = true;
+			if (timer) clearTimeout(timer);
+		};
+	}, []);
+
+	return info;
+}
+
 export function RlTopbar({
 	title,
 	sub,
@@ -141,6 +235,128 @@ function UserButton() {
 
 type PageId = "projects" | "templates" | "history";
 
+function ExtractionDockView({ info }: { info: ActiveExtractionInfo }) {
+	const pct = info.total > 0 ? Math.round((info.done / info.total) * 100) : 0;
+	return (
+		<>
+			<div
+				className="rl-dock-pipe-label pixel"
+				style={{ color: "var(--lg-amber)" }}
+			>
+				EXTRACTING
+			</div>
+			<div
+				style={{
+					flex: 1,
+					display: "flex",
+					alignItems: "center",
+					gap: 16,
+					minWidth: 0,
+				}}
+			>
+				<div
+					className="mono"
+					style={{
+						fontSize: 11,
+						color: "var(--lg-ink)",
+						whiteSpace: "nowrap",
+						overflow: "hidden",
+						textOverflow: "ellipsis",
+						maxWidth: 180,
+					}}
+					title={info.filename}
+				>
+					{info.filename || "database"}
+				</div>
+				<div
+					style={{
+						flex: 1,
+						minWidth: 80,
+						display: "flex",
+						flexDirection: "column",
+						gap: 4,
+					}}
+				>
+					<div
+						className="mono"
+						style={{
+							fontSize: 10,
+							color: "var(--lg-ink-mute)",
+							display: "flex",
+							justifyContent: "space-between",
+							gap: 8,
+						}}
+					>
+						<span
+							style={{
+								flex: 1,
+								overflow: "hidden",
+								textOverflow: "ellipsis",
+								whiteSpace: "nowrap",
+							}}
+						>
+							{info.current ? `→ ${info.current}` : "starting…"}
+						</span>
+						<span style={{ color: "var(--lg-amber)", fontVariantNumeric: "tabular-nums" }}>
+							{info.done}/{info.total || "?"} · {pct}%
+						</span>
+					</div>
+					<div
+						style={{
+							height: 4,
+							background: "var(--lg-bg-1, #222)",
+							position: "relative",
+							overflow: "hidden",
+							border: "1px solid var(--lg-border, #333)",
+						}}
+					>
+						<div
+							style={{
+								position: "absolute",
+								top: 0,
+								bottom: 0,
+								left: 0,
+								width: `${pct}%`,
+								background: "var(--lg-amber, #f5b32a)",
+								transition: "width 200ms linear",
+							}}
+						/>
+					</div>
+				</div>
+			</div>
+		</>
+	);
+}
+
+function PipelineDockView({ activeIdx }: { activeIdx: number }) {
+	return (
+		<>
+			<div className="rl-dock-pipe-label pixel">PIPELINE</div>
+			<div className="rl-dock-pipe-track">
+				{RL_STAGES.map((s, i) => {
+					const done = i < activeIdx;
+					const active = i === activeIdx;
+					return (
+						<div key={s.id} style={{ display: "contents" }}>
+							<div
+								className={`rl-dock-pipe-step ${done ? "done" : ""} ${active ? "active" : ""}`}
+							>
+								<div className="dot pixel">
+									{done ? <ICheck size={8} /> : i + 1}
+								</div>
+								<div className="lab">{s.label}</div>
+							</div>
+							{i < RL_STAGES.length - 1 && (
+								<div className={`rl-dock-pipe-sep ${done ? "done" : ""}`} />
+							)}
+						</div>
+					);
+				})}
+			</div>
+		</>
+	);
+}
+
 export function RlDock({
 	activePage,
 	pipelineStage,
@@ -161,6 +377,102 @@ export function RlDock({
 	];
 	const inPipe = pipelineStage != null;
 	const activeIdx = RL_STAGES.findIndex((s) => s.id === pipelineStage);
+	const extraction = useActiveExtraction();
+
+	// When extraction is active AND we're in the pipeline view, alternate
+	// between the pipeline track and the extraction view every few seconds
+	// so the user can see both context (which stage they're on) and status
+	// (what's currently being extracted).
+	const [showExtraction, setShowExtraction] = useState(false);
+	useEffect(() => {
+		if (!extraction) {
+			setShowExtraction(false);
+			return;
+		}
+		if (!inPipe) {
+			// Outside the pipeline (e.g. projects list) — always show extraction
+			setShowExtraction(true);
+			return;
+		}
+		setShowExtraction(true);
+		const id = setInterval(() => setShowExtraction((v) => !v), 3500);
+		return () => clearInterval(id);
+	}, [extraction, inPipe]);
+
+	const renderPipeArea = () => {
+		if (!inPipe && !extraction) {
+			return (
+				<div className="rl-dock-pipe idle">
+					<span
+						className="pixel"
+						style={{
+							fontSize: 8,
+							color: "var(--lg-ink-faint)",
+							letterSpacing: "0.15em",
+						}}
+					>
+						[ OPEN A PROJECT · PIPELINE PROGRESS SHOWS HERE ]
+					</span>
+				</div>
+			);
+		}
+		// Render two stacked panels and cross-fade between them.
+		const showingExtraction = !!extraction && showExtraction;
+		return (
+			<div className="rl-dock-pipe" style={{ position: "relative" }}>
+				<div
+					style={{
+						display: "flex",
+						alignItems: "center",
+						width: "100%",
+						transition: "opacity 350ms ease, transform 350ms ease",
+						opacity: showingExtraction ? 0 : 1,
+						transform: showingExtraction ? "translateY(-4px)" : "translateY(0)",
+						pointerEvents: showingExtraction ? "none" : "auto",
+						position: showingExtraction ? "absolute" : "relative",
+						left: 0,
+						right: 0,
+						paddingLeft: 12,
+						paddingRight: 12,
+					}}
+				>
+					{inPipe ? (
+						<PipelineDockView activeIdx={activeIdx} />
+					) : (
+						<span
+							className="pixel"
+							style={{
+								fontSize: 8,
+								color: "var(--lg-ink-faint)",
+								letterSpacing: "0.15em",
+								margin: "0 auto",
+							}}
+						>
+							[ EXTRACTION IN PROGRESS ]
+						</span>
+					)}
+				</div>
+				<div
+					style={{
+						display: "flex",
+						alignItems: "center",
+						width: "100%",
+						transition: "opacity 350ms ease, transform 350ms ease",
+						opacity: showingExtraction ? 1 : 0,
+						transform: showingExtraction ? "translateY(0)" : "translateY(4px)",
+						pointerEvents: showingExtraction ? "auto" : "none",
+						position: showingExtraction ? "relative" : "absolute",
+						left: 0,
+						right: 0,
+						paddingLeft: 12,
+						paddingRight: 12,
+					}}
+				>
+					{extraction && <ExtractionDockView info={extraction} />}
+				</div>
+			</div>
+		);
+	};
 
 	return (
 		<div className="rl-dock">
@@ -182,45 +494,7 @@ export function RlDock({
 				})}
 			</div>
 			<div className="rl-dock-divider" />
-			{inPipe ? (
-				<div className="rl-dock-pipe">
-					<div className="rl-dock-pipe-label pixel">PIPELINE</div>
-					<div className="rl-dock-pipe-track">
-						{RL_STAGES.map((s, i) => {
-							const done = i < activeIdx;
-							const active = i === activeIdx;
-							return (
-								<div key={s.id} style={{ display: "contents" }}>
-									<div
-										className={`rl-dock-pipe-step ${done ? "done" : ""} ${active ? "active" : ""}`}
-									>
-										<div className="dot pixel">
-											{done ? <ICheck size={8} /> : i + 1}
-										</div>
-										<div className="lab">{s.label}</div>
-									</div>
-									{i < RL_STAGES.length - 1 && (
-										<div className={`rl-dock-pipe-sep ${done ? "done" : ""}`} />
-									)}
-								</div>
-							);
-						})}
-					</div>
-				</div>
-			) : (
-				<div className="rl-dock-pipe idle">
-					<span
-						className="pixel"
-						style={{
-							fontSize: 8,
-							color: "var(--lg-ink-faint)",
-							letterSpacing: "0.15em",
-						}}
-					>
-						[ OPEN A PROJECT · PIPELINE PROGRESS SHOWS HERE ]
-					</span>
-				</div>
-			)}
+			{renderPipeArea()}
 		</div>
 	);
 }
