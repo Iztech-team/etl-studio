@@ -82,6 +82,7 @@ export function RlProjects({
 	}, [user]);
 
 	const [renameTarget, setRenameTarget] = useState<string | null>(null);
+	const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
 	const handleRename = (e: React.MouseEvent, projectId: string) => {
 		e.stopPropagation();
@@ -109,9 +110,13 @@ export function RlProjects({
 		}
 	};
 
-	const handleDelete = async (e: React.MouseEvent, projectId: string) => {
+	const handleDelete = (e: React.MouseEvent, projectId: string) => {
 		e.stopPropagation();
-		if (!confirm("Delete this project? This cannot be undone.")) return;
+		setDeleteTarget(projectId);
+	};
+
+	const confirmDelete = async (projectId: string) => {
+		setDeleteTarget(null);
 		try {
 			const res = await fetch(`/api/projects/${projectId}`, {
 				method: "DELETE",
@@ -350,6 +355,92 @@ export function RlProjects({
 					onCancel={() => setRenameTarget(null)}
 				/>
 			)}
+
+			{deleteTarget && (
+				<div
+					style={{
+						position: "fixed",
+						inset: 0,
+						zIndex: 9999,
+						background: "rgba(0,0,0,0.75)",
+						display: "flex",
+						alignItems: "center",
+						justifyContent: "center",
+						padding: 24,
+					}}
+					onClick={() => setDeleteTarget(null)}
+				>
+					<div
+						style={{
+							background: "var(--lg-bg)",
+							border: "2px solid var(--lg-coral)",
+							width: 400,
+							maxWidth: "90vw",
+						}}
+						onClick={(e) => e.stopPropagation()}
+					>
+						<div
+							style={{
+								display: "flex",
+								alignItems: "center",
+								justifyContent: "space-between",
+								padding: "10px 14px",
+								borderBottom: "1px solid var(--lg-border)",
+								background: "var(--lg-bg-2)",
+							}}
+						>
+							<span
+								className="pixel"
+								style={{
+									fontSize: 11,
+									color: "var(--lg-coral)",
+									letterSpacing: "0.1em",
+								}}
+							>
+								DELETE PROJECT
+							</span>
+						</div>
+
+						<div style={{ padding: "20px 14px" }}>
+							<div
+								className="pixel"
+								style={{
+									fontSize: 10,
+									color: "var(--lg-ink)",
+									marginBottom: 12,
+									lineHeight: 1.6,
+								}}
+							>
+								Delete this project? This cannot be undone.
+							</div>
+						</div>
+
+						<div
+							style={{
+								display: "flex",
+								justifyContent: "flex-end",
+								gap: 8,
+								padding: "0 14px 14px",
+							}}
+						>
+							<button
+								className="btn btn-ghost"
+								style={{ padding: "6px 14px", fontSize: 10 }}
+								onClick={() => setDeleteTarget(null)}
+							>
+								CANCEL
+							</button>
+							<button
+								className="btn btn-err"
+								style={{ padding: "6px 14px", fontSize: 10 }}
+								onClick={() => confirmDelete(deleteTarget)}
+							>
+								DELETE
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }
@@ -489,20 +580,20 @@ function RlProjectCard({
 						</button>
 					)}
 					<button
-						className="link"
-						style={{ fontSize: 9, color: "var(--lg-amber)" }}
+						className="btn btn-ghost"
+						style={{ fontSize: 10, padding: "4px 10px", color: "var(--lg-amber)" }}
 						onClick={(e) => onRename(e, p.id)}
 						title="Rename project"
 					>
-						✎
+						✎ RENAME
 					</button>
 					<button
-						className="link"
-						style={{ fontSize: 9, color: "var(--lg-coral)" }}
+						className="btn btn-ghost"
+						style={{ fontSize: 10, padding: "4px 10px", color: "var(--lg-coral)" }}
 						onClick={(e) => onDelete(e, p.id)}
 						title="Delete project"
 					>
-						<IX size={8} />
+						<IX size={9} /> DELETE
 					</button>
 				</div>
 			</div>

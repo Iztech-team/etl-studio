@@ -4103,6 +4103,7 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 										RENAME (OPTIONAL)
 									</div>
 									<input
+										data-rename-input
 										className="input"
 										placeholder="Keep original name if empty"
 										value={c.targetName}

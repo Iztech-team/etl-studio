@@ -1,6 +1,6 @@
 # ETL Studio
 
-A local ETL (Extract, Transform, Load) pipeline tool with a React frontend and FastAPI backend. Drop in CSV, Excel, or SQL dump files — configure, validate, transform, and export clean JSON or SQL output. No destructive database operations. Ever.
+A web-based ETL (Extract, Transform, Load) pipeline tool for migrating legacy databases. Upload CSV, Excel, SQL dumps, or InterBase files — configure schemas, apply advanced transformations, validate data quality, and export clean JSON or SQL output. Built for complex enterprise migrations with full data traceability.
 
 ---
 
@@ -8,35 +8,31 @@ A local ETL (Extract, Transform, Load) pipeline tool with a React frontend and F
 
 ```
 etl_studio/
-├── package.json              # Root scripts — npm run dev starts both FE + BE
+├── package.json              # Root scripts — bun run dev starts both FE + BE
 ├── requirements.txt          # Python dependencies
 ├── backend/
 │   ├── main.py               # FastAPI app + all routes
 │   ├── models/
 │   │   └── schemas.py        # Pydantic request/response models
 │   ├── core/
-│   │   ├── extractor.py      # Extractor class
-│   │   ├── transformer.py    # Transformer class
-│   │   └── loader.py         # Loader class
+│   │   ├── extractor.py      # File parsing, schema inference, validation
+│   │   ├── transformer.py    # Column transforms, encoding fixes, mappings
+│   │   ├── loader.py         # Output generation (JSON/SQL)
+│   │   └── column_transforms.py  # 9+ transform operators
 │   ├── utils/
-│   │   ├── sql_parser.py     # SQL dump parser
-│   │   ├── encoding.py       # Encoding detection + UTF-8 conversion
-│   │   └── stats.py          # Statistics engine
-│   ├── uploads/              # Temp storage for uploaded files
-│   └── outputs/              # Generated output files land here
+│   │   ├── sql_parser.py     # SQL dump parser (INSERT/CREATE TABLE)
+│   │   ├── encoding.py       # Charset detection, mojibake repair
+│   │   └── stats.py          # Quality scoring, statistics
+│   ├── uploads/              # Temp file storage
+│   └── outputs/              # Generated output files
 └── frontend/
-    ├── vite.config.ts        # Vite + proxy to backend on :8000
-    ├── tailwind.config.js    # Dark design token system
-    └── src/
-        ├── main.tsx
-        ├── App.tsx
-        ├── types/api.ts      # TypeScript mirrors of all Pydantic models
-        ├── api/client.ts     # Axios calls for all backend endpoints
-        ├── store/pipeline.tsx # Global state via useReducer + Context
-        └── components/
-            ├── ui/           # Badge, Card, StepBar, StatCard, DataTable, CodeBlock
-            └── phases/       # UploadPhase, ConfigurePhase, ValidatePhase,
-                              # TransformPhase, LoadPhase, StatsPhase
+    ├── vite.config.ts        # Vite + API proxy (:8000)
+    ├── tailwind.config.js    # Retro pixel theme
+    └── src/retro/
+        ├── Pipeline.tsx      # Main pipeline UI + keyboard shortcuts
+        ├── Projects.tsx      # Project dashboard, file management
+        ├── Auth.tsx          # Session/project context
+        └── icons/            # Icon components
 ```
 
 ---
@@ -46,122 +42,235 @@ etl_studio/
 ### Prerequisites
 
 - Python 3.10+
-- Node.js 18+
+- Bun 1.0+ (or Node.js 18+ as fallback)
 - pip
 
 ### Install
 
 ```bash
-# Clone or unzip the project
 cd etl_studio
 
-# Install everything
+# Install with Bun
+bun run install:all
+
+# Or with npm
 npm run install:all
 ```
 
-This runs `pip install -r requirements.txt` and `cd frontend && npm install`.
+Installs Python deps and frontend packages.
 
 ### Run
 
 ```bash
-npm run dev
+bun run dev
+# or: npm run dev
 ```
 
-This starts both servers concurrently:
+Starts both servers concurrently:
 - **Backend** → `http://localhost:8000`
 - **Frontend** → `http://localhost:5173`
+
+---
+
+## Core Features
+
+### Upload & Extraction
+- **Formats:** CSV (auto-detect encoding), Excel (all sheets), SQL dumps, InterBase (.ib)
+- **Streaming:** Large files streamed to avoid memory overload
+- **Preview:** Immediate table list with row/column counts
+- **Schema Inference:** Type detection (string, integer, float, boolean, date)
+
+### Column Transformations
+9 built-in transform operators:
+- `normalize_phone` — Standardize phone numbers + 4-tier country code detection
+- `detect_country_code` — Fallback resolution (international → prefix table → currency → unresolved)
+- `split_name` — Split full name into first/last
+- `map_values` — Enum mapping (source value → target value)
+- `concat_template` — String templates with row context (e.g., `"Mr. {firstName} {lastName}"`)
+- `generate_uuid` — UUID v4 generation
+- `default_if_null` — NULL replacement with static/dynamic values
+- `conditional` — IF/THEN/ELSE logic based on field values
+- `row_number` — Sequential numbering with stateful accumulation
+
+**Transform Context:** Row data, state accumulator, exception tracking, table/column metadata available to all operators.
+
+### Global Column Injection
+Automatically inject columns across tables:
+- `shopId` — Static shop identifier
+- `createdBy` / `updatedBy` — User audit fields
+- `migration_source_id` — Source ID traceability
+- Per-table inclusion/exclusion rules
+- Overwrite or preserve existing values
+
+### Data Quality & Validation
+- **Duplicate Detection** — Full-row composite key dedup with counts
+- **Truncation Risk** — Flag values exceeding 255 characters
+- **Financial Totals** — Sum numeric columns for spot-check audit
+- **Arabic Normalization** — Digit conversion (٠-٩ → 0-9)
+- **RTL/LTR Markers** — Auto-detect and strip
+- **Exception Categorization** — Track review-needed rows by issue type
+
+### Advanced Load Options
+- **Counter Resets** — Update AUTO_INCREMENT sequences after load (e.g., `SET counter = MAX(id) + 1`)
+- **Post-Load SQL** — Custom SQL after data insert (cleanup, reference data, computed columns)
+- **FK-Safe Ordering** — Topological sort of tables by foreign key dependencies
+- **ID Mapping** — Track source ID → target ID for traceability
+- **Staging Tables** — Two-phase load (insert to staging, then MERGE to target)
+
+### Exception Tracking
+- Categorize exceptions during transform (country_code_unresolved, truncation_risk, etc.)
+- Per-category CSV export for manual review
+- Exception counts in transform stats
+- Linked to source rows for follow-up
+
+### Output Formats
+- **JSON** — Per-table files + combined `all_tables.json`
+- **SQL** — Single `dump.sql` with transaction wrapper, parameterized INSERT statements
+- **CSV** — Exception reports grouped by category
+
+### Keyboard Shortcuts
+**Extract Phase:**
+- `↑ / ↓` — Navigate tables
+- `D` / `Space` — Toggle keep/drop table
+- `P` — Preview table data
+- `E` — Deselect empty tables
+- `A` — Toggle all tables
+
+**Transform Phase (Columns):**
+- `↑ / ↓` — Navigate columns
+- `D` — Toggle DROP
+- `C` — Toggle CAST type
+- `R` — Focus rename field
+
+**Transform Phase (Tables):**
+- `Tab` / `Shift+Tab` — Switch tables
+- `Alt+R` — Rename table
+
+### Project Management
+- Create multiple migration projects
+- Rename projects in-place
+- Delete projects (confirmed with themed modal)
+- Download output files from project card
+- Dashboard stats: total rows migrated, avg quality score
 
 ---
 
 ## Pipeline Stages
 
 ### 1. Upload
-Drop in one or more files. Supported formats:
-- `.csv` — auto-detects encoding
-- `.xlsx` / `.xls` — all sheets extracted
-- `.sql` — parses `INSERT INTO` statements
+Drop files and select tables to migrate. Returns preview, inferred schema, row counts.
 
-Each file becomes one or more named tables. A preview and inferred schema are returned immediately.
+### 2. Extract (Pre-Processing)
+Review extracted tables. Toggle inclusion, preview data, deselect empty tables.
 
-### 2. Configure
-Review the inferred column types and adjust:
-- Rename columns or tables
-- Override data types (`string`, `integer`, `float`, `boolean`, `date`)
-- Mark columns as excluded
-- Set reference maps for value substitution
-- Define null representations
+### 3. Configure
+Set column mappings:
+- Rename columns/tables
+- Override inferred types
+- Mark columns to drop/rename/cast
+- Define null value representations
 - Set load order for referential integrity
 
-### 3. Validate
-Runs the full validation suite before any data is changed:
-- **Record counts** per table
-- **Financial totals** on numeric columns
-- **Duplicate detection** (full-row composite key)
-- **Truncation risk** — flags any value exceeding 255 characters
-- **Spot checks** — first 3 rows of each table for manual review
-- Issues are graded `error`, `warning`, or `info`
-
 ### 4. Transform
-Applies all transformations in order:
-1. Encoding detection and UTF-8 conversion (mojibake repair included)
-2. Null normalisation against configured null values list
-3. Reference mapping (e.g. `"Y" → true`, `"US" → "United States"`)
-4. Type coercion to target data types
-5. Column renaming and exclusions
+Apply transformations in order:
+1. Encoding detection & UTF-8 conversion (mojibake repair)
+2. Null normalization
+3. Reference mappings
+4. Column transforms (operators chained)
+5. Type coercion
+6. Global column injection
+7. Truncation risk flagging
 
-A summary reports counts of each transformation type applied.
+Reports exception counts per category.
 
 ### 5. Load
-Writes output files to `backend/outputs/<session_id>/`. No database writes unless explicitly configured.
+Write output files (JSON or SQL). Options:
+- `counter_resets` — Post-load sequence updates
+- `post_load_sql` — Custom SQL hooks
+- `use_id_mapping` — Enable temporary ID mapping table (future)
+- `respect_fk_order` — Sort by FK dependencies
 
-**Output formats:**
-- `json` — one `.json` file per table + a combined `all_tables.json`
-- `sql` — a single `dump.sql` wrapped in `BEGIN` / `COMMIT` with `INSERT INTO` statements
-
-Options:
-- `respect_fk_order` — sorts tables alphabetically as a FK-safe load order proxy
-- `use_staging` — flag for future staging table support
-
-### 6. Stats Dashboard
-Available at any point after upload. Reports:
-- Current pipeline stage
-- Total records in vs. out
-- Per-table row counts, column counts, duplicate counts
-- Overall data quality score (starts at 100, penalised per error/warning)
+### 6. Stats
+Quality dashboard:
+- Overall score (100 - error_penalties - warning_penalties)
+- Per-table row counts, duplicates
+- Exception summary by category
 
 ---
 
 ## API Reference
 
-All endpoints are prefixed `/api`.
+All endpoints prefixed `/api`.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/upload` | Upload files, returns session_id + preview |
-| `POST` | `/configure/{session_id}` | Save column/table configuration |
-| `GET` | `/validate/{session_id}` | Run validation suite |
-| `GET` | `/transform/{session_id}` | Run transformations |
+| `POST` | `/upload` | Upload files, extract schema |
+| `POST` | `/extract/{session_id}` | Start extraction (async) |
+| `GET` | `/extract/{session_id}/stream` | NDJSON event stream |
+| `GET` | `/extract/{session_id}/status` | Check extraction status |
+| `POST` | `/extract/{session_id}/cancel` | Cancel in-flight extraction |
+| `POST` | `/pre-extract-select/{session_id}` | Select tables to keep |
+| `POST` | `/configure/{session_id}` | Save column/table config |
+| `GET` | `/validate/{session_id}` | Run validation |
+| `GET` | `/transform/{session_id}` | Run transform pipeline |
 | `POST` | `/load/{session_id}` | Generate output files |
-| `GET` | `/stats/{session_id}` | Get pipeline statistics |
-| `GET` | `/download/{session_id}/{filename}` | Download an output file |
+| `GET` | `/stats/{session_id}` | Get quality metrics |
+| `GET` | `/download/{session_id}/{filename}` | Download output file |
+| `POST` | `/projects` | Create new project |
+| `GET` | `/projects` | List user projects |
+| `PATCH` | `/projects/{id}` | Rename project |
+| `DELETE` | `/projects/{id}` | Delete project |
+| `GET` | `/projects/{id}/outputs` | List output files |
+| `GET` | `/dashboard-stats` | Global migration stats |
 
 ---
 
 ## Design Principles
 
-- **Non-destructive** — no DROP, DELETE, or TRUNCATE anywhere in the codebase
-- **Staging-first** — output files are written locally before any optional DB load
-- **Session-isolated** — each upload gets a UUID session; sessions are independent
-- **Encoding-safe** — chardet detection on every file; mojibake repair on string values
-- **Transparent** — every transformation is counted and reported back to the UI
+- **Non-destructive** — No DROP, DELETE, TRUNCATE, or direct database writes
+- **File-based** — Output written to disk; DB operations optional
+- **Session-isolated** — Each upload is a UUID session; independent state
+- **Encoding-safe** — chardet detection on all files; mojibake repair on strings
+- **Transparent** — Every transformation counted and reported
+- **Traceable** — Source ID mapping for audit trail
+- **Keyboard-first** — Full UI navigable without mouse
 
 ---
 
-## Frontend Notes (Claude Code Continuation)
+## Architecture Notes
 
-The backend is complete. The frontend config is in place (Vite, Tailwind, TypeScript). To finish the frontend in Claude Code, open the project root and prompt:
+### Backend
+- **Stateful Sessions:** In-memory session dict (keyed by UUID) tracks extraction, config, transform, load state
+- **Streaming Extract:** File parsing on-the-fly; NDJSON events for live progress
+- **No DB Dependency:** All output written to `backend/outputs/{session_id}/`
+- **SQL Generation:** String-escaped INSERT statements; transaction-wrapped
 
-> "Complete the ETL Studio frontend. Build out `frontend/src/` with: `index.html`, `main.tsx`, `App.tsx`, `types/api.ts`, `api/client.ts`, `store/pipeline.tsx`, `components/ui/index.tsx`, and phase components: `UploadPhase`, `ConfigurePhase`, `ValidatePhase`, `TransformPhase`, `LoadPhase`, `StatsPhase`. Dark theme — acid green (#00ff88) accents on near-black background, JetBrains Mono font, step progress bar at top."
+### Frontend
+- **Retro Pixel Theme:** Custom CSS variables for dark/amber/coral palette
+- **React + TypeScript:** Context-based state, functional components
+- **Keyboard-Driven:** Global event listeners for shortcut dispatch
+- **Portal Modals:** All popups (delete, rename, errors) use themed custom modals
+
+---
+
+## Known Limitations & Roadmap
+
+### Missing (Phase 0 - Preprocessing)
+- Dedup execution with merge strategies
+- Enrichment joins between tables
+- Pre-load constraint pre-checks (UNIQUE, NOT NULL)
+
+### Missing (Phase 2 - Matching)
+- Deterministic matching DSL (EXACT, FUZZY, TIERED, FIFO)
+- Amount splitting across multiple targets
+- Synthetic row generation
+
+### Missing (Phase 3 - Validation)
+- Post-load FK orphan detection
+- Balance reconciliation (AR/AP/cash)
+- Circular dependency detection
+
+See `ETL_CAPABILITIES_ROADMAP.md` for full capability matrix.
 
 ---
 
