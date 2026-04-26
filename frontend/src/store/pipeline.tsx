@@ -50,6 +50,10 @@ type Action =
   | { type: 'SCHEMA_EDIT_INIT'; payload: { inferred_schema: Record<string, import('../types/api').TableSchema> } }
   | { type: 'SCHEMA_EDIT_RENAME_TABLE'; payload: { tableName: string; newName: string } }
   | { type: 'SCHEMA_EDIT_DROP_TABLE'; payload: { tableName: string } }
+  | { type: 'SCHEMA_EDIT_RENAME_COLUMN'; payload: { tableName: string; colName: string; newName: string } }
+  | { type: 'SCHEMA_EDIT_DROP_COLUMN'; payload: { tableName: string; colName: string } }
+  | { type: 'SCHEMA_EDIT_TOGGLE_NULLABLE'; payload: { tableName: string; colName: string; nullable: boolean } }
+  | { type: 'SCHEMA_EDIT_REORDER_COLUMN'; payload: { tableName: string; colName: string; direction: 'up' | 'down' } }
   | { type: 'SCHEMA_EDIT_APPLY' }
   | { type: 'SCHEMA_EDIT_SKIP' }
   | { type: 'RESET' }
@@ -207,6 +211,67 @@ function reducer(state: PipelineState, action: Action): PipelineState {
       return {
         ...state,
         phase: 'configure'
+      }
+    case 'SCHEMA_EDIT_RENAME_COLUMN':
+      return {
+        ...state,
+        schemaEditState: {
+          ...state.schemaEditState!,
+          renamedColumns: new Map(state.schemaEditState!.renamedColumns).set(
+            action.payload.tableName,
+            new Map((state.schemaEditState!.renamedColumns.get(action.payload.tableName) || new Map()))
+              .set(action.payload.colName, action.payload.newName)
+          ),
+          modified: true
+        }
+      }
+    case 'SCHEMA_EDIT_DROP_COLUMN': {
+      const droppedCols = new Map(state.schemaEditState!.droppedColumns)
+      const tableDropped = droppedCols.get(action.payload.tableName) || new Set()
+      const newTableDropped = new Set(tableDropped)
+      if (newTableDropped.has(action.payload.colName)) {
+        newTableDropped.delete(action.payload.colName)
+      } else {
+        newTableDropped.add(action.payload.colName)
+      }
+      droppedCols.set(action.payload.tableName, newTableDropped)
+
+      return {
+        ...state,
+        schemaEditState: {
+          ...state.schemaEditState!,
+          droppedColumns: droppedCols,
+          modified: true
+        }
+      }
+    }
+    case 'SCHEMA_EDIT_TOGGLE_NULLABLE': {
+      const nullableOverrides = new Map(state.schemaEditState!.nullableOverrides)
+      const tableNullable = nullableOverrides.get(action.payload.tableName) || new Set()
+      const newTableNullable = new Set(tableNullable)
+      if (action.payload.nullable) {
+        newTableNullable.add(action.payload.colName)
+      } else {
+        newTableNullable.delete(action.payload.colName)
+      }
+      nullableOverrides.set(action.payload.tableName, newTableNullable)
+
+      return {
+        ...state,
+        schemaEditState: {
+          ...state.schemaEditState!,
+          nullableOverrides: nullableOverrides,
+          modified: true
+        }
+      }
+    }
+    case 'SCHEMA_EDIT_REORDER_COLUMN':
+      return {
+        ...state,
+        schemaEditState: {
+          ...state.schemaEditState!,
+          modified: true
+        }
       }
     case 'RESET':
       return initialState
