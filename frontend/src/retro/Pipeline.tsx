@@ -1648,13 +1648,13 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 					break;
 				case "a":
 					e.preventDefault();
-					toggleAllFiltered();
+					toggleAllTables();
 					break;
 			}
 		};
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [focusIdx, filtered, uploadResult?.sessionId]);
+	}, [focusIdx, filtered, rows, uploadResult?.sessionId]);
 
 	const pickedCount = rows.filter((r) => picked[r.n]).length;
 	const pickedRowCount = rows.reduce(
@@ -1672,6 +1672,16 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 			const next = { ...p };
 			const target = !allFilteredPicked;
 			for (const r of filtered) next[r.n] = target;
+			return next;
+		});
+	};
+
+	const allTablesPicked = rows.every((r) => picked[r.n]);
+	const toggleAllTables = () => {
+		setPicked((p) => {
+			const next = { ...p };
+			const target = !allTablesPicked;
+			for (const r of rows) next[r.n] = target;
 			return next;
 		});
 	};
