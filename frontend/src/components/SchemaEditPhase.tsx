@@ -67,13 +67,28 @@ export default function SchemaEditPhase() {
   // Handle actions
   const handleRenameTable = useCallback((tableName: string) => {
     const newName = prompt(`Rename "${tableName}" to:`)
-    if (newName && newName !== tableName) {
+    if (newName) {
+      const trimmedName = newName.trim()
+      if (!trimmedName) {
+        alert('Table name cannot be empty')
+        return
+      }
+      if (trimmedName === tableName) {
+        alert('New name is the same as current name')
+        return
+      }
+      // Check if new name already exists
+      const allTableNames = new Set(Object.keys(inferred_schema))
+      if (allTableNames.has(trimmedName)) {
+        alert(`Table "${trimmedName}" already exists`)
+        return
+      }
       dispatch({
         type: 'SCHEMA_EDIT_RENAME_TABLE',
-        payload: { tableName, newName }
+        payload: { tableName, newName: trimmedName }
       })
     }
-  }, [dispatch])
+  }, [dispatch, inferred_schema])
 
   const handleDropTable = useCallback((tableName: string) => {
     dispatch({
@@ -84,13 +99,28 @@ export default function SchemaEditPhase() {
 
   const handleRenameColumn = useCallback((tableName: string, colName: string) => {
     const newName = prompt(`Rename "${colName}" to:`)
-    if (newName && newName !== colName) {
+    if (newName) {
+      const trimmedName = newName.trim()
+      if (!trimmedName) {
+        alert('Column name cannot be empty')
+        return
+      }
+      if (trimmedName === colName) {
+        alert('New name is the same as current name')
+        return
+      }
+      // Check if new name already exists in the table
+      const tableSchema = inferred_schema[tableName] ?? {}
+      if (trimmedName in tableSchema) {
+        alert(`Column "${trimmedName}" already exists in this table`)
+        return
+      }
       dispatch({
         type: 'SCHEMA_EDIT_RENAME_COLUMN',
-        payload: { tableName, colName, newName }
+        payload: { tableName, colName, newName: trimmedName }
       })
     }
-  }, [dispatch])
+  }, [dispatch, inferred_schema])
 
   const handleDropColumn = useCallback((tableName: string, colName: string) => {
     dispatch({
@@ -118,17 +148,39 @@ export default function SchemaEditPhase() {
   }, [dispatch])
 
   const handleApply = useCallback(() => {
+    // Warn if all tables are dropped
+    const allTables = Object.keys(inferred_schema)
+    const remainingTables = allTables.filter(t => !droppedTables.has(t))
+    if (remainingTables.length === 0) {
+      const confirmed = confirm('All tables are dropped! Are you sure you want to continue?')
+      if (!confirmed) return
+    }
     dispatch({ type: 'SCHEMA_EDIT_APPLY' })
-  }, [dispatch])
+  }, [dispatch, inferred_schema, droppedTables])
 
   const handleDDLUpload = useCallback(async (file: File) => {
+    if (!file.name.endsWith('.sql')) {
+      alert('Please upload a .sql file')
+      return
+    }
+
     setDdlLoading(true)
     try {
       const result = await uploadAndParseDDL(state.sessionId!, file)
+      if (!result || !result.ddl_schema) {
+        alert('Invalid DDL response from server')
+        return
+      }
+      const matchingCount = result.matching_tables?.length ?? 0
+      if (matchingCount === 0) {
+        alert('No matching tables found in DDL')
+        return
+      }
       setDdlPreview(result)
       setDdlModalOpen(true)
     } catch (error) {
-      alert('DDL parsing failed: ' + (error instanceof Error ? error.message : String(error)))
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      alert('DDL parsing failed:\n' + errorMsg)
     } finally {
       setDdlLoading(false)
     }
@@ -146,29 +198,41 @@ export default function SchemaEditPhase() {
   }, [ddlPreview, dispatch])
 
   const handleSaveTemplate = useCallback(async () => {
-    if (!templateName.trim()) {
+    const trimmedName = templateName.trim()
+    if (!trimmedName) {
       alert('Template name required')
       return
     }
 
+    if (trimmedName.length > 100) {
+      alert('Template name is too long (max 100 characters)')
+      return
+    }
+
     if (!state.projectId) {
-      alert('No project ID')
+      alert('No project ID available')
+      return
+    }
+
+    if (!state.schemaEditState?.modified) {
+      alert('No changes to save')
       return
     }
 
     setTemplateLoading(true)
     try {
       const ddlContent = JSON.stringify(state.schemaEditState?.editedSchema, null, 2)
-      await saveTemplate(state.projectId, templateName, ddlContent)
-      alert('Template saved!')
+      await saveTemplate(state.projectId, trimmedName, ddlContent)
+      alert('Template saved successfully!')
       setSaveTemplateModalOpen(false)
       setTemplateName('')
     } catch (error) {
-      alert('Failed to save template: ' + (error instanceof Error ? error.message : String(error)))
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      alert('Failed to save template:\n' + errorMsg)
     } finally {
       setTemplateLoading(false)
     }
-  }, [templateName, state.projectId, state.schemaEditState?.editedSchema])
+  }, [templateName, state.projectId, state.schemaEditState?.editedSchema, state.schemaEditState?.modified])
 
   // Keyboard shortcuts
   useEffect(() => {
