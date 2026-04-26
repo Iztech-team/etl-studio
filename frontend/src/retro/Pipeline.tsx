@@ -3462,15 +3462,6 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 						setOp(sel, c.op === "cast" ? "keep" : "cast");
 					}
 					break;
-				case "r":
-					if (e.altKey) {
-						e.preventDefault();
-						setRenamingTable(activeTable);
-					} else if (c && !c.isNew && c.op !== "drop") {
-						e.preventDefault();
-						setOp(sel, c.op === "rename" ? "keep" : "rename");
-					}
-					break;
 			}
 		};
 		window.addEventListener("keydown", handleKeyDown);
@@ -4082,7 +4073,7 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 										marginBottom: 12,
 									}}
 								>
-									{(["keep", "rename", "cast", "drop"] as const).map((k) => (
+									{(["keep", "cast", "drop"] as const).map((k) => (
 										<button
 											key={k}
 											className={`btn ${c.op === k ? "btn-primary" : "btn-ghost"}`}
@@ -4094,21 +4085,20 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 									))}
 								</div>
 
-								{c.op === "rename" && (
-									<>
-										<div
-											className="pixel"
-											style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4 }}
-										>
-											NEW NAME
-										</div>
-										<input
-											className="input"
-											value={c.targetName}
-											onChange={(e) => updateCol(sel, { targetName: e.target.value })}
-										/>
-									</>
-								)}
+								<div style={{ marginBottom: 12 }}>
+									<div
+										className="pixel"
+										style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4 }}
+									>
+										RENAME (OPTIONAL)
+									</div>
+									<input
+										className="input"
+										placeholder="Keep original name if empty"
+										value={c.targetName}
+										onChange={(e) => updateCol(sel, { targetName: e.target.value })}
+									/>
+								</div>
 
 								{c.op === "cast" && (
 									<>
