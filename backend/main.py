@@ -4,8 +4,8 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 import os, shutil, uuid
-from datetime import timezone
-from typing import List
+from datetime import timezone, datetime
+from typing import List, Optional
 
 from core.extractor import Extractor
 from core.transformer import Transformer
@@ -27,6 +27,10 @@ from models.schemas import (
     DB_TYPE_EXTENSIONS,
     EditDataRequest,
     EditDataResponse,
+    CreateTemplateRequest,
+    UpdateTemplateRequest,
+    DDLTemplate,
+    TemplateListResponse,
 )
 from db import (
     init_db,
@@ -43,6 +47,7 @@ from db import (
     get_dashboard_stats as db_get_dashboard_stats,
     insert_audit_events_batch,
     backfill_pipeline_runs,
+    _get_conn,
 )
 from project_state import (
     save_state,
@@ -162,6 +167,108 @@ def _flush_audit_events(
         )
     insert_audit_events_batch(batch)
     audit_trail.events.clear()
+
+
+# ---------------------------------------------------------------------------
+# Template CRUD helpers
+# ---------------------------------------------------------------------------
+
+
+def save_template(
+    project_id: str, name: str, ddl_content: str, created_by: Optional[str] = None
+) -> str:
+    """Save a new DDL template. Returns template ID."""
+    conn = _get_conn()
+    template_id = str(uuid.uuid4())
+    created_at = datetime.utcnow().isoformat()
+
+    try:
+        conn.execute(
+            """
+            INSERT INTO ddl_templates (id, project_id, name, ddl_content, created_at, created_by)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """,
+            (template_id, project_id, name, ddl_content, created_at, created_by),
+        )
+        conn.commit()
+        return template_id
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(
+            status_code=400, detail=f"Failed to save template: {str(e)}"
+        )
+    finally:
+        conn.close()
+
+
+def list_templates(project_id: str) -> List[dict]:
+    """List all templates for a project."""
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, project_id, name, ddl_content, created_at, created_by
+            FROM ddl_templates
+            WHERE project_id = ?
+            ORDER BY created_at DESC
+        """,
+            (project_id,),
+        ).fetchall()
+
+        templates = []
+        for row in rows:
+            templates.append(
+                {
+                    "id": row[0],
+                    "project_id": row[1],
+                    "name": row[2],
+                    "ddl_content": row[3],
+                    "created_at": row[4],
+                    "created_by": row[5],
+                }
+            )
+        return templates
+    finally:
+        conn.close()
+
+
+def get_template(template_id: str) -> dict:
+    """Get a template by ID."""
+    conn = _get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT id, project_id, name, ddl_content, created_at, created_by
+            FROM ddl_templates
+            WHERE id = ?
+        """,
+            (template_id,),
+        ).fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Template not found")
+
+        return {
+            "id": row[0],
+            "project_id": row[1],
+            "name": row[2],
+            "ddl_content": row[3],
+            "created_at": row[4],
+            "created_by": row[5],
+        }
+    finally:
+        conn.close()
+
+
+def delete_template(template_id: str) -> bool:
+    """Delete a template by ID."""
+    conn = _get_conn()
+    try:
+        conn.execute("DELETE FROM ddl_templates WHERE id = ?", (template_id,))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
 
 
 @app.get("/api/health")
@@ -1437,3 +1544,41 @@ async def download_project_file(project_id: str, filename: str):
     if not os.path.exists(path):
         raise HTTPException(404, "File not found")
     return FileResponse(path, filename=os.path.basename(path))
+
+
+# ---------------------------------------------------------------------------
+# Template API routes
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/templates")
+async def create_template(request: CreateTemplateRequest, project_id: str = Query(...)):
+    """Save a new DDL template."""
+    template_id = save_template(
+        project_id=project_id,
+        name=request.name,
+        ddl_content=request.ddl_content,
+        created_by=request.created_by,
+    )
+    return {"id": template_id, "message": "Template saved"}
+
+
+@app.get("/api/templates")
+async def list_project_templates(project_id: str = Query(...)):
+    """List all templates for a project."""
+    templates = list_templates(project_id)
+    return {"templates": templates, "total": len(templates)}
+
+
+@app.get("/api/templates/{template_id}")
+async def get_single_template(template_id: str):
+    """Get a specific template."""
+    template = get_template(template_id)
+    return template
+
+
+@app.delete("/api/templates/{template_id}")
+async def delete_single_template(template_id: str):
+    """Delete a template."""
+    delete_template(template_id)
+    return {"message": "Template deleted"}
