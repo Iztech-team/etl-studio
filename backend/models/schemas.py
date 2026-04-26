@@ -29,12 +29,31 @@ class TableConfig(BaseModel):
     columns: List[ColumnConfig] = []
     primary_key: Optional[str] = None
     load_order: int = 0
+    on_duplicate: str = "drop"  # "drop" | "suffix" — dedup strategy
+    duplicate_suffix_column: Optional[str] = None
+    duplicate_suffix_format: str = "{value}_{n}"
+
+
+class GlobalColumn(BaseModel):
+    """Column injected into every (or selected) target table.
+
+    Spec 7.2 — shopId, createdBy, updatedBy, deletedAt; spec 6 — migration_source_id.
+    Pick one of `value` (static) or `source_column` (copy from the source row).
+    """
+
+    name: str
+    value: Optional[Any] = None
+    source_column: Optional[str] = None
+    apply_to: Optional[List[str]] = None  # target table names; None = all
+    exclude_tables: List[str] = []
+    overwrite: bool = False
 
 
 class ConfigureRequest(BaseModel):
     tables: List[TableConfig] = []
     encoding: str = "utf-8"
     null_values: List[str] = ["", "NULL", "null", "N/A", "n/a"]
+    global_columns: List[GlobalColumn] = []
 
 
 class ConfigureResponse(BaseModel):
@@ -55,11 +74,24 @@ class TransformResponse(BaseModel):
     preview: Dict[str, Any]
 
 
+class CounterReset(BaseModel):
+    """Spec 7.5 — push a counter past MAX(number) of migrated rows so new orders
+    don't collide. Emitted in SQL output only."""
+
+    counter_table: str
+    counter_column: str = "value"
+    source_table: str
+    source_column: str
+    where_clause: Optional[str] = None
+
+
 class LoadRequest(BaseModel):
-    output_format: str = "json"  # "json" | "sql"
-    target_db_url: Optional[str] = None  # for staging
+    output_format: str = "json"  # "json" | "sql" | "csv"
+    target_db_url: Optional[str] = None
     use_staging: bool = False
     respect_fk_order: bool = True
+    counter_resets: List[CounterReset] = []
+    post_load_sql: List[str] = []  # raw SQL appended verbatim after data + resets
 
 
 class LoadResponse(BaseModel):
@@ -69,6 +101,7 @@ class LoadResponse(BaseModel):
     staging_used: bool
     transaction_wrapped: bool
     errors: List[str]
+    exceptions_written: List[str] = []
 
 
 class StatsResponse(BaseModel):

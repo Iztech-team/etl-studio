@@ -87,6 +87,8 @@ class Transformer:
         self._dedup_removed = 0
         self._transformed: Dict[str, List[Dict]] = {}
         self.fk_edges: List[tuple] = []
+        # Spec 3.4 / 3.12 / 4 — exceptions surface for human review
+        self.exceptions: Dict[str, List[Dict[str, Any]]] = {}
 
     # ------------------------------------------------------------------
     def _build_fk_lookups(self, table_configs: Dict[str, Any]) -> Dict[tuple, Dict]:
@@ -140,7 +142,8 @@ class Transformer:
             col_configs = {cc["name"]: cc for cc in tc.get("columns", [])}
 
             new_rows = []
-            for row_index, row in enumerate(rows):
+            transform_state: Dict[str, Any] = {}
+            for row in rows:
                 new_row: Dict[str, Any] = {}
 
                 # --- process existing columns ---
@@ -208,7 +211,15 @@ class Transformer:
                     # 6. Column transforms pipeline
                     col_transforms = cc.get("transforms", [])
                     if col_transforms:
-                        val = apply_transforms(val, col_transforms, col)
+                        val = apply_transforms(
+                            val,
+                            col_transforms,
+                            col,
+                            row=row,
+                            state=transform_state,
+                            exceptions=self.exceptions,
+                            table=table_name,
+                        )
 
                     new_row[target_col] = val
 
@@ -241,7 +252,15 @@ class Transformer:
 
                     col_transforms = cc.get("transforms", [])
                     if col_transforms:
-                        val = apply_transforms(val, col_transforms, cc_name)
+                        val = apply_transforms(
+                            val,
+                            col_transforms,
+                            cc_name,
+                            row=row,
+                            state=transform_state,
+                            exceptions=self.exceptions,
+                            table=table_name,
+                        )
                     new_row[target_col] = val
 
                 # --- process FK columns ---
@@ -273,9 +292,21 @@ class Transformer:
 
                     col_transforms = cc.get("transforms", [])
                     if col_transforms:
-                        val = apply_transforms(val, col_transforms, cc_name)
+                        val = apply_transforms(
+                            val,
+                            col_transforms,
+                            cc_name,
+                            row=row,
+                            state=transform_state,
+                            exceptions=self.exceptions,
+                            table=table_name,
+                        )
 
                     new_row[target_col] = val
+
+                # --- inject global columns (spec 7.2 shopId/createdBy/updatedBy + 6) ---
+                target_name_local = tc.get("target_table") or table_name
+                self._inject_globals(new_row, row, target_name_local)
 
                 new_rows.append(new_row)
 
@@ -283,19 +314,29 @@ class Transformer:
             self._transformed[target_name] = new_rows
             total_rows += len(new_rows)
 
-        # tables not in config pass through unchanged
+        # tables not in config pass through unchanged (still get global columns)
         for t, rows in self.tables.items():
             tc = table_configs.get(t, {})
             target = tc.get("target_table") or t
             if target not in self._transformed:
-                self._transformed[target] = rows
-                total_rows += len(rows)
+                injected = []
+                for r in rows:
+                    new_row = dict(r)
+                    self._inject_globals(new_row, r, target)
+                    injected.append(new_row)
+                self._transformed[target] = injected
+                total_rows += len(injected)
 
         # Deduplicate rows based on target DDL unique/PK constraints
         total_rows = 0
+        target_to_tc = {
+            (tc.get("target_table") or tc.get("source_table")): tc
+            for tc in table_configs.values()
+        }
         for target_name, rows in self._transformed.items():
             constraints = ddl_constraints.get(target_name, {})
-            deduped = self._deduplicate(target_name, rows, constraints)
+            tc = target_to_tc.get(target_name, {})
+            deduped = self._deduplicate(target_name, rows, constraints, tc)
             self._transformed[target_name] = deduped
             total_rows += len(deduped)
 
@@ -310,6 +351,7 @@ class Transformer:
             "null_normalizations": self._null_normalizations,
             "dedup_removed": self._dedup_removed,
             "warnings": self.warnings,
+            "exceptions": self.exceptions,
             "preview": {t: rows[:5] for t, rows in self._transformed.items()},
         }
 
@@ -367,63 +409,123 @@ class Transformer:
             pass
         return val, False
 
+    def _inject_globals(
+        self, new_row: Dict[str, Any], source_row: Dict[str, Any], target_table: str
+    ) -> None:
+        """Apply global_columns from config (spec 7.2 + 6) to a single output row."""
+        globals_cfg = self.config.get("global_columns", []) or []
+        for gc in globals_cfg:
+            apply_to = gc.get("apply_to")
+            if apply_to and target_table not in apply_to:
+                continue
+            if target_table in (gc.get("exclude_tables") or []):
+                continue
+            name = gc.get("name")
+            if not name:
+                continue
+            if (not gc.get("overwrite", False)) and name in new_row:
+                continue
+            src_col = gc.get("source_column")
+            if src_col:
+                new_row[name] = source_row.get(src_col)
+            else:
+                new_row[name] = gc.get("value")
+
     def _deduplicate(
         self,
         table_name: str,
         rows: List[Dict],
         constraints: Dict[str, Any],
+        table_config: Optional[Dict[str, Any]] = None,
     ) -> List[Dict]:
-        """Remove duplicate rows that would violate PK or UNIQUE constraints from the target DDL.
+        """Resolve duplicate rows that would violate PK / UNIQUE constraints.
 
-        Strategy: keep-first — the first occurrence wins, later duplicates are dropped.
-        Each constraint (PK, each UNIQUE set) is checked independently.
+        Strategy controlled by table_config['on_duplicate']:
+          - 'drop'   (default) — keep-first; later duplicates dropped.
+          - 'suffix' — keep all rows; suffix the configured column with a counter
+                       so the constraint becomes satisfiable. Used for item.name
+                       UNIQUE per shopId (spec 4 PRE-LOAD).
         """
         if not rows or not constraints:
             return rows
 
         pk_cols: List[str] = constraints.get("primary_key", [])
         unique_sets: List[List[str]] = constraints.get("unique", [])
-
-        # Combine all constraint sets to check
         constraint_sets: List[List[str]] = []
         if pk_cols:
             constraint_sets.append(pk_cols)
         for uq in unique_sets:
             if uq:
                 constraint_sets.append(uq)
-
         if not constraint_sets:
             return rows
 
-        # For each constraint set, track seen keys
-        seen_per_constraint: List[set] = [set() for _ in constraint_sets]
-        deduped: List[Dict] = []
+        tc = table_config or {}
+        mode = tc.get("on_duplicate", "drop")
+        suffix_col = tc.get("duplicate_suffix_column")
+        suffix_fmt = tc.get("duplicate_suffix_format", "{value}_{n}")
+
+        seen_per_constraint: List[Dict[tuple, int]] = [{} for _ in constraint_sets]
+        result: List[Dict] = []
         removed = 0
+        suffixed = 0
 
         for row in rows:
             is_dup = False
+            dup_constraint_idx = -1
             for i, cols in enumerate(constraint_sets):
-                # Build key from the constraint columns
-                key_vals = []
-                all_none = True
-                for col in cols:
-                    val = row.get(col)
-                    key_vals.append(val)
-                    if val is not None:
-                        all_none = False
-                # NULL keys don't violate unique constraints in SQL
-                if all_none:
+                key_vals = [row.get(c) for c in cols]
+                if all(v is None for v in key_vals):
                     continue
                 key = tuple(key_vals)
                 if key in seen_per_constraint[i]:
                     is_dup = True
+                    dup_constraint_idx = i
                     break
-                seen_per_constraint[i].add(key)
+                seen_per_constraint[i][key] = 1
 
-            if is_dup:
-                removed += 1
+            if not is_dup:
+                result.append(row)
+                continue
+
+            if mode == "suffix" and suffix_col and suffix_col in row:
+                # Keep the row; mutate the suffix column until unique.
+                base = "" if row.get(suffix_col) is None else str(row[suffix_col])
+                cols = constraint_sets[dup_constraint_idx]
+                seen = seen_per_constraint[dup_constraint_idx]
+                base_key = tuple(row.get(c) for c in cols)
+                n = seen.get(base_key, 1) + 1
+                while True:
+                    new_val = suffix_fmt.format(value=base, n=n)
+                    row[suffix_col] = new_val
+                    new_key = tuple(row.get(c) for c in cols)
+                    if new_key not in seen:
+                        seen[new_key] = 1
+                        seen[base_key] = n
+                        break
+                    n += 1
+                result.append(row)
+                suffixed += 1
+                self.exceptions.setdefault("dedup_suffixed", []).append(
+                    {
+                        "table": table_name,
+                        "column": suffix_col,
+                        "original": base,
+                        "renamed_to": row[suffix_col],
+                    }
+                )
             else:
-                deduped.append(row)
+                removed += 1
+                self.exceptions.setdefault("dedup_dropped", []).append(
+                    {
+                        "table": table_name,
+                        "key_columns": ",".join(constraint_sets[dup_constraint_idx]),
+                        "key_values": ",".join(
+                            "" if row.get(c) is None else str(row.get(c))
+                            for c in constraint_sets[dup_constraint_idx]
+                        ),
+                    }
+                )
 
         if removed > 0:
             self._dedup_removed += removed
@@ -432,5 +534,10 @@ class Transformer:
                 f"that would violate unique constraints"
             )
             self.audit_trail.log_schema_change(table_name, 0, removed)
+        if suffixed > 0:
+            self.warnings.append(
+                f"{table_name}: suffixed {suffixed} duplicate value(s) in "
+                f"'{suffix_col}' to satisfy unique constraint"
+            )
 
-        return deduped
+        return result

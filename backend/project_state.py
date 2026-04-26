@@ -17,6 +17,7 @@ PERSIST_KEYS = [
     "load_result",
     "pre_extract",
     "audit_trail",
+    "excluded_tables",
 ]
 
 PHASE_ORDER = ["upload", "edit", "configure", "transform", "load", "stats"]
@@ -77,13 +78,16 @@ def load_state_iter(project_id: str):
         # Brand-new project with no upload yet — emit a single empty
         # 'done' so the streaming endpoint has the same protocol shape.
         yield "start", {"tables": [], "total": 0}
-        yield "done", {
-            "raw": {"tables": {}, "preview": {}, "schema": {}, "stats": {}},
-            "extractor": None,
-            "project_id": project_id,
-            "audit_trail": AuditTrail(),
-            "files": [],
-        }
+        yield (
+            "done",
+            {
+                "raw": {"tables": {}, "preview": {}, "schema": {}, "stats": {}},
+                "extractor": None,
+                "project_id": project_id,
+                "audit_trail": AuditTrail(),
+                "files": [],
+            },
+        )
         return
 
     with open(state_file, "r", encoding="utf-8") as f:
@@ -147,7 +151,22 @@ def load_state_iter(project_id: str):
 
     if phase_index >= transform_index:
         config = session.get("config", {})
-        transformer = Transformer(raw, config, audit_trail)
+        excluded = set(session.get("excluded_tables") or [])
+        if excluded:
+            visible_raw = {
+                "tables": {t: r for t, r in raw["tables"].items() if t not in excluded},
+                "schema": {t: v for t, v in raw["schema"].items() if t not in excluded},
+                "stats": {
+                    t: v for t, v in raw.get("stats", {}).items() if t not in excluded
+                },
+                "preview": {
+                    t: v for t, v in raw.get("preview", {}).items() if t not in excluded
+                },
+                "ddl_schema": raw.get("ddl_schema", {}),
+            }
+        else:
+            visible_raw = raw
+        transformer = Transformer(visible_raw, config, audit_trail)
         session["transformed"] = transformer.run()
         session["transformer"] = transformer
 

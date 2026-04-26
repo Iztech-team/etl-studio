@@ -83,6 +83,48 @@ backfill_pipeline_runs()
 sessions: dict = {}
 
 
+def _excluded_set(session: dict) -> set:
+    """Excluded tables for a session, as a set. Stored as a list internally
+    so it can round-trip through JSON state files."""
+    return set(session.get("excluded_tables") or [])
+
+
+def _visible_tables(session: dict) -> list[str]:
+    """Names of tables not currently excluded, preserving raw order."""
+    raw = session.get("raw", {})
+    excluded = _excluded_set(session)
+    return [t for t in raw.get("tables", {}).keys() if t not in excluded]
+
+
+def _visible_raw(session: dict) -> dict:
+    """A filtered view of session['raw'] containing only included tables.
+
+    Returns a fresh dict — callers can mutate the outer container freely
+    without affecting the underlying session. Inner row lists are NOT
+    deep-copied; downstream code (Transformer) deep-copies as needed.
+    """
+    raw = session.get("raw", {})
+    excluded = _excluded_set(session)
+    if not excluded:
+        return raw
+    keep = [t for t in raw.get("tables", {}).keys() if t not in excluded]
+    keep_set = set(keep)
+    return {
+        "tables": {t: raw["tables"][t] for t in keep if t in raw.get("tables", {})},
+        "schema": {t: v for t, v in raw.get("schema", {}).items() if t in keep_set},
+        "stats": {t: v for t, v in raw.get("stats", {}).items() if t in keep_set},
+        "preview": {t: v for t, v in raw.get("preview", {}).items() if t in keep_set},
+        "ddl_schema": raw.get("ddl_schema", {}),
+    }
+
+
+def _visible_session(session: dict) -> dict:
+    """Shallow-copy of the session with raw replaced by its visible view."""
+    s = dict(session)
+    s["raw"] = _visible_raw(session)
+    return s
+
+
 def _auto_save(session_id: str, phase: str) -> None:
     """If the session is linked to a project, persist state and update phase."""
     s = sessions.get(session_id)
@@ -151,7 +193,7 @@ async def dashboard_stats(username: str):
         from utils.stats import StatsEngine
 
         try:
-            engine = StatsEngine(sess)
+            engine = StatsEngine(_visible_session(sess))
             stats = engine.compute()
             quality_scores.append(stats["quality_score"])
         except Exception:
@@ -273,6 +315,8 @@ def _resume_payload(project: dict, session_id: str, session: dict) -> dict:
         "config": session.get("config"),
         "transform": session.get("transformed"),
         "load_result": session.get("load_result"),
+        "excluded_tables": list(_excluded_set(session)),
+        "all_extracted_tables": list(raw.get("tables", {}).keys()),
     }
 
 
@@ -306,22 +350,28 @@ async def resume_project(project_id: str):
                 if sess.get("project_id") == project_id and sess.get("raw"):
                     tables = sess["raw"].get("tables", {})
                     table_names = list(tables.keys())
-                    yield encode({
-                        "event": "start",
-                        "project": project,
-                        "tables": table_names,
-                        "total": len(table_names),
-                        "warm": True,
-                    })
+                    yield encode(
+                        {
+                            "event": "start",
+                            "project": project,
+                            "tables": table_names,
+                            "total": len(table_names),
+                            "warm": True,
+                        }
+                    )
                     for name in table_names:
                         rows = tables.get(name, [])
-                        yield encode({
-                            "event": "table_done",
-                            "name": name,
-                            "rowCount": len(rows),
-                            "columns": list(rows[0].keys()) if rows else [],
-                        })
-                    yield encode({"event": "done", **_resume_payload(project, sid, sess)})
+                        yield encode(
+                            {
+                                "event": "table_done",
+                                "name": name,
+                                "rowCount": len(rows),
+                                "columns": list(rows[0].keys()) if rows else [],
+                            }
+                        )
+                    yield encode(
+                        {"event": "done", **_resume_payload(project, sid, sess)}
+                    )
                     return
 
             # Cold path: drive load_state_iter on a worker thread and
@@ -339,7 +389,9 @@ async def resume_project(project_id: str):
                 except StopIteration:
                     return SENTINEL
 
-            yield encode({"event": "start", "project": project, "tables": [], "total": 0})
+            yield encode(
+                {"event": "start", "project": project, "tables": [], "total": 0}
+            )
 
             # Note: we may emit a second 'start' from the iterator below
             # (with the actual table list once listdir runs). The frontend
@@ -356,7 +408,9 @@ async def resume_project(project_id: str):
 
             session["project_id"] = project_id
             sessions[session_id] = session
-            yield encode({"event": "done", **_resume_payload(project, session_id, session)})
+            yield encode(
+                {"event": "done", **_resume_payload(project, session_id, session)}
+            )
         except Exception as e:
             yield encode({"event": "error", "message": f"Failed to resume: {e}"})
 
@@ -412,9 +466,9 @@ extraction_states: dict[str, dict] = {}
 
 def _new_extraction_state() -> dict:
     return {
-        "status": "pending",      # pending | extracting | done | error
-        "events": [],             # list of dicts (one per yielded event)
-        "result": None,           # final PreExtractResponse-shaped dict
+        "status": "pending",  # pending | extracting | done | error | cancelled
+        "events": [],  # list of dicts (one per yielded event)
+        "result": None,  # final PreExtractResponse-shaped dict
         "error": None,
         "started_at": None,
         "finished_at": None,
@@ -435,11 +489,13 @@ def _safe_next_factory(sentinel: object):
     so we catch it inside the worker thread and signal end-of-stream
     via a unique sentinel instead.
     """
+
     def safe_next(gen):
         try:
             return next(gen)
         except StopIteration:
             return sentinel
+
     return safe_next
 
 
@@ -532,7 +588,9 @@ async def start_extract(
     new_state = _new_extraction_state()
     new_state["status"] = "extracting"
     new_state["started_at"] = _dt.now(timezone.utc).isoformat()
-    new_state["filename"] = (pending or {}).get("filename") or (state or {}).get("filename")
+    new_state["filename"] = (pending or {}).get("filename") or (state or {}).get(
+        "filename"
+    )
     new_state["project_id"] = s.get("project_id")
     extraction_states[session_id] = new_state
 
@@ -583,11 +641,49 @@ async def stream_extract(session_id: str):
             for ev in new_events:
                 yield (json.dumps(ev, ensure_ascii=False) + "\n").encode("utf-8")
             cursor = len(state["events"])
-            if state["status"] in ("done", "error"):
+            if state["status"] in ("done", "error", "cancelled"):
                 break
             await asyncio.sleep(0.15)
 
     return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+@app.post("/api/extract/{session_id}/cancel")
+async def cancel_extract(session_id: str):
+    """Cancel an in-flight extraction.
+
+    Marks state as cancelled so the worker stops at its next checkpoint
+    and any active /stream readers terminate. Removes the uploaded DB
+    file and tears down the session if no extracted data has landed yet.
+    """
+    from datetime import datetime as _dt
+
+    state = extraction_states.get(session_id)
+    if not state:
+        raise HTTPException(404, "No extraction state for this session")
+
+    if state["status"] in ("done", "error", "cancelled"):
+        return {"ok": True, "status": state["status"], "session_id": session_id}
+
+    state["status"] = "cancelled"
+    state["events"].append({"event": "cancelled", "message": "Extraction cancelled"})
+    state["finished_at"] = _dt.now(timezone.utc).isoformat()
+
+    s = sessions.get(session_id)
+    if s:
+        pending = s.get("pending_db")
+        if pending:
+            try:
+                if os.path.exists(pending["file_path"]):
+                    os.remove(pending["file_path"])
+            except OSError:
+                pass
+        # Drop the whole session if extraction never produced data; keep
+        # it otherwise so any rows already in `raw` survive.
+        if "raw" not in s:
+            sessions.pop(session_id, None)
+
+    return {"ok": True, "status": "cancelled", "session_id": session_id}
 
 
 async def _run_extraction(session_id: str, password: str | None) -> None:
@@ -621,9 +717,13 @@ async def _run_extraction(session_id: str, password: str | None) -> None:
         csv_files: List[str] = []
 
         while True:
+            if state["status"] == "cancelled":
+                return
             event = await asyncio.to_thread(safe_next, gen)
             if event is SENTINEL:
                 break
+            if state["status"] == "cancelled":
+                return
             event_type, payload = event
             if event_type == "done":
                 csv_files = payload.get("csv_files", [])
@@ -675,19 +775,21 @@ async def _run_extraction(session_id: str, password: str | None) -> None:
             db_type=pending["db_type"],
         )
 
-        sessions[session_id].update({
-            "pre_extract": {
-                "file": file_info.dict(),
-                "password": password is not None,
-                "db_type": pending["db_type"],
-            },
-            "extractor": extractor,
-            "raw": result,
-            "files": saved_files,
-            "ddl_schema": result.get("ddl_schema", {}),
-            "applied_ddl": [],
-            "audit_trail": audit_trail,
-        })
+        sessions[session_id].update(
+            {
+                "pre_extract": {
+                    "file": file_info.dict(),
+                    "password": password is not None,
+                    "db_type": pending["db_type"],
+                },
+                "extractor": extractor,
+                "raw": result,
+                "files": saved_files,
+                "ddl_schema": result.get("ddl_schema", {}),
+                "applied_ddl": [],
+                "audit_trail": audit_trail,
+            }
+        )
         sessions[session_id].pop("pending_db", None)
         _auto_save(session_id, "pre-extract")
 
@@ -721,40 +823,78 @@ async def _run_extraction(session_id: str, password: str | None) -> None:
 
 @app.post("/api/pre-extract-select/{session_id}")
 async def pre_extract_select(session_id: str, body: ApplyDDLRequest):
-    """Keep only selected tables in the session, remove the rest."""
+    """Soft-exclude tables in the session.
+
+    Raw extracted data stays put (CSVs and in-memory rows) so the user
+    can re-include any table later by revisiting the extract stage. Only
+    the `excluded_tables` set is updated; downstream consumers filter
+    through `_visible_*` helpers.
+
+    If the selection differs from the previous one, transform/load
+    artefacts are dropped (they're stale) and configure entries for
+    newly-excluded tables are trimmed. Configure entries for tables that
+    survived the change are kept intact.
+    """
     if session_id not in sessions:
         raise HTTPException(404, "Session not found")
     s = sessions[session_id]
     raw = s.get("raw", {})
-    selected = set(body.tables)
     all_tables = set(raw.get("tables", {}).keys())
-    removed = all_tables - selected
+    selected = set(body.tables) & all_tables
+    new_excluded = all_tables - selected
+    prev_excluded = _excluded_set(s)
 
-    # Remove from raw tables, schema, stats, preview
-    for table in removed:
-        raw.get("tables", {}).pop(table, None)
-        raw.get("schema", {}).pop(table, None)
-        raw.get("stats", {}).pop(table, None)
-        raw.get("preview", {}).pop(table, None)
+    changed = new_excluded != prev_excluded
+    s["excluded_tables"] = sorted(new_excluded)
 
-    # Remove CSV files for deselected tables
-    if s.get("project_id"):
-        session_dir = project_uploads_dir(s["project_id"])
-    else:
-        session_dir = os.path.join(GUEST_DIR, session_id)
-    s["files"] = [
-        f for f in s.get("files", []) if f["name"].rsplit(".", 1)[0] in selected
-    ]
-    for table in removed:
-        csv_path = os.path.join(session_dir, f"{table}.csv")
-        if os.path.exists(csv_path):
-            os.remove(csv_path)
+    if changed:
+        s.pop("transformed", None)
+        s.pop("transformer", None)
+        s.pop("load_result", None)
+        s.pop("fk_edges", None)
+
+        # Trim configure entries for tables that just got excluded; keep
+        # entries for tables that remain selected so the user doesn't lose
+        # column mapping work they've already done.
+        config = s.get("config")
+        if isinstance(config, dict):
+            for key in ("columns", "transforms", "table_renames", "table_excludes"):
+                section = config.get(key)
+                if isinstance(section, dict):
+                    for table in list(section.keys()):
+                        if table in new_excluded:
+                            section.pop(table, None)
+
+        # Drop applied_ddl entries for excluded tables; their schema in
+        # raw stays untouched so re-including them later restores DDL state.
+        applied = s.get("applied_ddl") or []
+        s["applied_ddl"] = [t for t in applied if t not in new_excluded]
+
+        audit_trail = s.get("audit_trail")
+        if audit_trail:
+            try:
+                audit_trail.events.append(
+                    {
+                        "type": "tables_reselected",
+                        "table": None,
+                        "column": None,
+                        "description": (
+                            f"included={sorted(selected)}, excluded={sorted(new_excluded)}"
+                        ),
+                        "timestamp": __import__("datetime")
+                        .datetime.now(timezone.utc)
+                        .isoformat(),
+                    }
+                )
+            except Exception:
+                pass
 
     _auto_save(session_id, "edit")
     return {
         "ok": True,
-        "kept": sorted(selected & all_tables),
-        "removed": sorted(removed),
+        "changed": changed,
+        "kept": sorted(selected),
+        "excluded": sorted(new_excluded),
     }
 
 
@@ -867,7 +1007,7 @@ async def get_table_data(session_id: str):
     if session_id not in sessions:
         raise HTTPException(404, "Session not found")
     s = sessions[session_id]
-    raw = s.get("raw", {})
+    raw = _visible_raw(s)
     return {
         "tables": raw.get("tables", {}),
         "schema": raw.get("schema", {}),
@@ -885,6 +1025,8 @@ async def get_table_page(
     if session_id not in sessions:
         raise HTTPException(404, "Session not found")
     s = sessions[session_id]
+    if table_name in _excluded_set(s):
+        raise HTTPException(404, f"Table '{table_name}' is excluded")
     raw = s.get("raw", {})
     all_tables = raw.get("tables", {})
     if table_name not in all_tables:
@@ -1006,10 +1148,18 @@ async def apply_ddl(session_id: str, body: ApplyDDLRequest):
     ddl_schema = s.get("ddl_schema", {})
     data_tables = s["raw"].get("tables", {})
     inferred_schema = s["raw"].get("schema", {})
+    excluded = _excluded_set(s)
     results = []
 
     for table in body.tables:
         errors = []
+
+        if table in excluded:
+            errors.append(f"Table '{table}' is currently excluded")
+            results.append(
+                ApplyDDLTableResult(table=table, applied=False, errors=errors)
+            )
+            continue
 
         if table not in ddl_schema:
             errors.append(f"No DDL definition found for table '{table}'")
@@ -1089,7 +1239,7 @@ async def transform(session_id: str):
                 ddl_constraints[tbl] = {"primary_key": pk_cols, "unique": uq_cols}
         config["ddl_constraints"] = ddl_constraints
 
-    transformer = Transformer(s["raw"], config, audit_trail)
+    transformer = Transformer(_visible_raw(s), config, audit_trail)
     result = transformer.run()
     sessions[session_id]["transformed"] = result
     sessions[session_id]["transformer"] = transformer
@@ -1191,15 +1341,22 @@ async def load(session_id: str, body: LoadRequest):
         out_dir = os.path.join(OUTPUT_DIR, session_id)
     os.makedirs(out_dir, exist_ok=True)
 
+    excluded = _excluded_set(s)
     ddl_schema = {
         t: s["raw"]["schema"].get(t, {})
         for t in s["raw"].get("tables", {})
-        if t in s.get("applied_ddl", [])
+        if t in s.get("applied_ddl", []) and t not in excluded
     }
-    fk_edges = s.get("fk_edges", [])
+    fk_edges = [
+        edge
+        for edge in s.get("fk_edges", [])
+        if edge[0] not in excluded and edge[1] not in excluded
+    ]
     # Also collect FK edges from DDL foreign keys parsed during apply-ddl
     ddl_fks = s.get("ddl_foreign_keys", [])
     for fk in ddl_fks:
+        if fk["child_table"] in excluded or fk["parent_table"] in excluded:
+            continue
         edge = (fk["child_table"], fk["parent_table"])
         if edge not in fk_edges:
             fk_edges.append(edge)
@@ -1232,7 +1389,7 @@ async def stats(session_id: str):
     s = sessions[session_id]
     from utils.stats import StatsEngine
 
-    engine = StatsEngine(s)
+    engine = StatsEngine(_visible_session(s))
     _auto_save(session_id, "stats")
     return StatsResponse(**engine.compute())
 

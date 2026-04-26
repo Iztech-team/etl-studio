@@ -16,6 +16,7 @@ class Loader:
         fk_edges: List[tuple] | None = None,
     ):
         self.tables: Dict[str, List[Dict]] = transformed.get("tables", {})
+        self.exceptions: Dict[str, List[Dict]] = transformed.get("exceptions", {}) or {}
         self.config = config
         self.out_dir = out_dir
         self.ddl_schema = ddl_schema or {}
@@ -95,12 +96,41 @@ class Loader:
                 sql_lines.append("")
                 rows_written[table] = len(rows)
 
+            # Spec 7.5 — counter resets so new orders don't collide with migrated numbers
+            counter_resets = self.config.get("counter_resets") or []
+            if counter_resets:
+                sql_lines.append("-- Counter resets (spec 7.5)")
+                for cr in counter_resets:
+                    ct = cr.get("counter_table")
+                    cc = cr.get("counter_column", "value")
+                    st = cr.get("source_table")
+                    sc = cr.get("source_column")
+                    where = cr.get("where_clause")
+                    if not (ct and st and sc):
+                        continue
+                    where_sql = f" WHERE {where}" if where else ""
+                    sql_lines.append(
+                        f'UPDATE "{ct}" SET "{cc}" = '
+                        f'(SELECT COALESCE(MAX("{sc}"), 0) + 1 FROM "{st}"{where_sql});'
+                    )
+                sql_lines.append("")
+
+            post_load = self.config.get("post_load_sql") or []
+            if post_load:
+                sql_lines.append("-- Post-load SQL")
+                sql_lines.extend(stmt.rstrip(";") + ";" for stmt in post_load if stmt)
+                sql_lines.append("")
+
             sql_lines.append("COMMIT;")
             fname = "dump.sql"
             path = os.path.join(self.out_dir, fname)
             with open(path, "w", encoding="utf-8") as f:
                 f.write("\n".join(sql_lines))
             output_files.append(fname)
+
+        # Spec 3.4 / 3.12 / 4 — write per-category exception CSVs for review
+        exception_files = self._write_exceptions()
+        output_files.extend(exception_files)
 
         return {
             "ok": len(errors) == 0,
@@ -109,7 +139,31 @@ class Loader:
             "staging_used": self.config.get("use_staging", False),
             "transaction_wrapped": fmt == "sql",
             "errors": errors,
+            "exceptions_written": exception_files,
         }
+
+    def _write_exceptions(self) -> List[str]:
+        """Emit one CSV per exception category under outputs/exceptions/."""
+        if not self.exceptions:
+            return []
+        out_paths: List[str] = []
+        excs_dir = os.path.join(self.out_dir, "exceptions")
+        os.makedirs(excs_dir, exist_ok=True)
+        for category, records in self.exceptions.items():
+            if not records:
+                continue
+            fname = f"exceptions/{category}.csv"
+            path = os.path.join(self.out_dir, fname)
+            cols = sorted({k for rec in records for k in rec.keys()})
+            try:
+                with open(path, "w", encoding="utf-8", newline="") as f:
+                    writer = csv.DictWriter(f, fieldnames=cols)
+                    writer.writeheader()
+                    writer.writerows(records)
+                out_paths.append(fname)
+            except Exception:
+                continue
+        return out_paths
 
     # ------------------------------------------------------------------
     def _create_table_sql(self, table: str, cols: List[str]) -> List[str]:

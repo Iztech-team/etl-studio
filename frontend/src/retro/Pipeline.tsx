@@ -40,6 +40,7 @@ type UploadResult = {
 	preview: Record<string, Record<string, unknown>[]>;
 	schema: Record<string, Record<string, unknown>>;
 	stats: Record<string, { row_count: number }>;
+	excludedTables: string[];
 };
 
 type TransformResult = {
@@ -51,6 +52,7 @@ type TransformResult = {
 	reference_mappings: number;
 	null_normalizations: number;
 	warnings: string[];
+	exceptions?: Record<string, unknown[]>;
 	preview: Record<string, unknown>;
 };
 
@@ -59,6 +61,7 @@ type LoadResult = {
 	output_files: string[];
 	rows_written: Record<string, number>;
 	errors: string[];
+	exceptions_written?: string[];
 };
 
 type PipelineCtx = {
@@ -95,9 +98,13 @@ function PipelineProvider({
 	const [staged, setStaged] = useState<StagedFile[]>([]);
 	const [uploadResult, setUploadResult] = useState<UploadResult | null>(() => {
 		if (!resumed) return null;
-		const tableNames = resumed.tables.length > 0
-			? resumed.tables
-			: Object.keys(resumed.schema);
+		// Prefer the full extracted set so excluded tables remain visible
+		// when the user revisits the extract stage.
+		const tableNames = resumed.allExtractedTables?.length
+			? resumed.allExtractedTables
+			: resumed.tables.length > 0
+				? resumed.tables
+				: Object.keys(resumed.schema);
 		if (tableNames.length === 0) return null;
 		return {
 			sessionId: resumed.sessionId,
@@ -110,6 +117,7 @@ function PipelineProvider({
 			preview: resumed.preview as Record<string, Record<string, unknown>[]>,
 			schema: resumed.schema,
 			stats: resumed.stats,
+			excludedTables: resumed.excludedTables ?? [],
 		};
 	});
 	const [transformResult, setTransformResult] = useState<TransformResult | null>(() => {
@@ -214,6 +222,7 @@ function donePayloadToUploadResult(data: DonePayload): UploadResult {
 		preview: data.preview ?? {},
 		schema: data.inferred_schema ?? {},
 		stats: data.stats ?? {},
+		excludedTables: [],
 	};
 }
 
@@ -224,8 +233,9 @@ function donePayloadToUploadResult(data: DonePayload): UploadResult {
 async function consumeExtractStream(
 	sessionId: string,
 	onEvent?: (event: ExtractEvent) => void,
+	signal?: AbortSignal,
 ): Promise<DonePayload> {
-	const res = await fetch(`/api/extract/${sessionId}/stream`);
+	const res = await fetch(`/api/extract/${sessionId}/stream`, { signal });
 	if (!res.ok || !res.body) {
 		const err = await res.json().catch(() => null);
 		throw new Error(err?.detail || `Stream failed (HTTP ${res.status})`);
@@ -277,6 +287,7 @@ async function uploadToBackend(
 	password?: string,
 	onEvent?: (event: ExtractEvent) => void,
 	onSessionReady?: (sessionId: string) => void,
+	signal?: AbortSignal,
 ): Promise<UploadResult> {
 	// If any file is a DB file, use the two-phase endpoints:
 	//   1. POST /api/upload-db          (sync — returns session_id once file is on disk)
@@ -288,7 +299,7 @@ async function uploadToBackend(
 		const uploadForm = new FormData();
 		uploadForm.append("file", dbFile);
 		if (projectId) uploadForm.append("project_id", projectId);
-		const upRes = await fetch("/api/upload-db", { method: "POST", body: uploadForm });
+		const upRes = await fetch("/api/upload-db", { method: "POST", body: uploadForm, signal });
 		if (!upRes.ok) {
 			const err = await upRes.json().catch(() => null);
 			throw new Error(err?.detail || `Upload failed (HTTP ${upRes.status})`);
@@ -303,6 +314,7 @@ async function uploadToBackend(
 		const exRes = await fetch(`/api/extract/${sessionId}`, {
 			method: "POST",
 			body: extractForm,
+			signal,
 		});
 		if (!exRes.ok) {
 			const err = await exRes.json().catch(() => null);
@@ -310,7 +322,7 @@ async function uploadToBackend(
 		}
 
 		// Step 3 — stream events with replay
-		const data = await consumeExtractStream(sessionId, onEvent);
+		const data = await consumeExtractStream(sessionId, onEvent, signal);
 		return donePayloadToUploadResult(data);
 	}
 
@@ -318,7 +330,7 @@ async function uploadToBackend(
 	const form = new FormData();
 	for (const f of files) form.append("files", f);
 	if (projectId) form.append("project_id", projectId);
-	const res = await fetch("/api/upload", { method: "POST", body: form });
+	const res = await fetch("/api/upload", { method: "POST", body: form, signal });
 	if (!res.ok) {
 		const err = await res.json().catch(() => null);
 		throw new Error(err?.detail || "Upload failed");
@@ -339,6 +351,7 @@ async function uploadToBackend(
 		preview: data.preview ?? {},
 		schema,
 		stats,
+		excludedTables: [],
 	};
 }
 
@@ -483,6 +496,9 @@ function RlUpload({ onNext }: { onNext: () => void }) {
 		{ name: string; rows: number }[]
 	>([]);
 	const tableLogRef = useRef<HTMLDivElement | null>(null);
+	const abortRef = useRef<AbortController | null>(null);
+	const sessionRef = useRef<string | null>(null);
+	const [cancelling, setCancelling] = useState(false);
 
 	useEffect(() => {
 		if (tableLogRef.current) {
@@ -551,6 +567,10 @@ function RlUpload({ onNext }: { onNext: () => void }) {
 
 	const handleUpload = async () => {
 		if (staged.length === 0) return;
+		const ctrl = new AbortController();
+		abortRef.current = ctrl;
+		sessionRef.current = null;
+		setCancelling(false);
 		setUploading(true);
 		setError(null);
 		setExtractStatus("Uploading…");
@@ -566,6 +586,7 @@ function RlUpload({ onNext }: { onNext: () => void }) {
 				password,
 				handleEvent,
 				(sid) => {
+					sessionRef.current = sid;
 					if (dbFile) {
 						saveActiveExtraction({
 							sessionId: sid,
@@ -575,16 +596,42 @@ function RlUpload({ onNext }: { onNext: () => void }) {
 						});
 					}
 				},
+				ctrl.signal,
 			);
 			clearActiveExtraction(projectId);
 			setUploadResult(result);
 			onNext();
 		} catch (e) {
 			clearActiveExtraction(projectId);
-			setError(e instanceof Error ? e.message : "Upload failed");
+			const aborted =
+				ctrl.signal.aborted ||
+				(e instanceof DOMException && e.name === "AbortError") ||
+				(e instanceof Error && e.message.toLowerCase().includes("abort"));
+			if (aborted) {
+				setError(null);
+				setExtractStatus("");
+			} else {
+				setError(e instanceof Error ? e.message : "Upload failed");
+			}
 		} finally {
+			abortRef.current = null;
 			setUploading(false);
+			setCancelling(false);
 		}
+	};
+
+	const handleCancel = () => {
+		if (!abortRef.current) return;
+		setCancelling(true);
+		setExtractStatus("Cancelling…");
+		const sid = sessionRef.current;
+		abortRef.current.abort();
+		if (sid) {
+			void fetch(`/api/extract/${sid}/cancel`, { method: "POST" }).catch(
+				() => undefined,
+			);
+		}
+		clearActiveExtraction(projectId);
 	};
 
 	// On mount: if a previous extraction for this project is still in flight
@@ -1082,13 +1129,33 @@ function RlUpload({ onNext }: { onNext: () => void }) {
 					</div>
 				)}
 
-				<button
-					className="btn btn-primary"
-					disabled={staged.length === 0 || uploading || addingNew}
-					onClick={handleUpload}
-				>
-					{uploading ? "UPLOADING…" : "UPLOAD & EXTRACT"} <IArrow size={10} />
-				</button>
+				{uploading ? (
+					<div style={{ display: "flex", gap: 8 }}>
+						<button
+							className="btn btn-primary"
+							disabled
+							style={{ flex: 1 }}
+						>
+							UPLOADING… <IArrow size={10} />
+						</button>
+						<button
+							className="btn btn-ghost"
+							onClick={handleCancel}
+							disabled={cancelling}
+							style={{ minWidth: 110 }}
+						>
+							{cancelling ? "CANCELLING…" : "CANCEL"} <IX size={10} />
+						</button>
+					</div>
+				) : (
+					<button
+						className="btn btn-primary"
+						disabled={staged.length === 0 || addingNew}
+						onClick={handleUpload}
+					>
+						UPLOAD & EXTRACT <IArrow size={10} />
+					</button>
+				)}
 			</div>
 		</div>
 	);
@@ -1479,14 +1546,25 @@ function TablePreviewModal({
 // ---------- extract ----------
 
 function RlExtract({ onNext }: { onNext: () => void }) {
-	const { uploadResult, setUploadResult } = usePipelineCtx();
+	const {
+		uploadResult,
+		setUploadResult,
+		transformResult,
+		setTransformResult,
+		setLoadResult,
+	} = usePipelineCtx();
 	const [previewTable, setPreviewTable] = useState<string | null>(null);
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [search, setSearch] = useState("");
+	const [focusIdx, setFocusIdx] = useState(0);
 
 	const tables = uploadResult?.tables ?? [];
 	const schema = uploadResult?.schema ?? {};
+	const excludedSet = useMemo(
+		() => new Set(uploadResult?.excludedTables ?? []),
+		[uploadResult?.excludedTables],
+	);
 
 	const rows = useMemo(() => {
 		return tables.map((t) => {
@@ -1508,28 +1586,75 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 	}, [tables, schema]);
 
 	// Selection state, keyed by table name so it survives re-orderings.
+	// Initial pick state honours any tables that were previously excluded
+	// (e.g. when the user navigates back to the extract stage from a later
+	// stage).
 	const [picked, setPicked] = useState<Record<string, boolean>>(() =>
-		Object.fromEntries(tables.map((t) => [t.name, true])),
+		Object.fromEntries(tables.map((t) => [t.name, !excludedSet.has(t.name)])),
 	);
 
-	// If tables change (new extraction), re-initialise to all-picked.
+	// If tables change (new extraction) or excluded set changes, re-sync.
 	useEffect(() => {
 		setPicked((prev) => {
 			const next: Record<string, boolean> = {};
 			let same = Object.keys(prev).length === tables.length;
 			for (const t of tables) {
-				next[t.name] = prev[t.name] ?? true;
+				const defaultPicked = !excludedSet.has(t.name);
+				next[t.name] = t.name in prev ? prev[t.name] : defaultPicked;
 				if (!(t.name in prev)) same = false;
 			}
 			return same ? prev : next;
 		});
-	}, [tables]);
+	}, [tables, excludedSet]);
 
 	const filtered = useMemo(() => {
 		if (!search.trim()) return rows;
 		const q = search.trim().toLowerCase();
 		return rows.filter((r) => r.n.toLowerCase().includes(q));
 	}, [rows, search]);
+
+	useEffect(() => {
+		const handleKeyDown = (e: KeyboardEvent) => {
+			const target = e.target as HTMLElement;
+			const isInput = target.tagName === "INPUT" || target.tagName === "TEXTAREA";
+			if (isInput) return;
+
+			switch (e.key.toLowerCase()) {
+				case "arrowup":
+					e.preventDefault();
+					setFocusIdx((i) => Math.max(0, i - 1));
+					break;
+				case "arrowdown":
+					e.preventDefault();
+					setFocusIdx((i) => Math.min(filtered.length - 1, i + 1));
+					break;
+				case "d":
+				case " ":
+					if (filtered.length > 0 && focusIdx < filtered.length) {
+						e.preventDefault();
+						const tableName = filtered[focusIdx].n;
+						togglePick(tableName);
+					}
+					break;
+				case "p":
+					if (filtered.length > 0 && focusIdx < filtered.length && uploadResult?.sessionId) {
+						e.preventDefault();
+						setPreviewTable(filtered[focusIdx].n);
+					}
+					break;
+				case "e":
+					e.preventDefault();
+					deselectEmpty();
+					break;
+				case "a":
+					e.preventDefault();
+					toggleAllFiltered();
+					break;
+			}
+		};
+		window.addEventListener("keydown", handleKeyDown);
+		return () => window.removeEventListener("keydown", handleKeyDown);
+	}, [focusIdx, filtered, uploadResult?.sessionId]);
 
 	const pickedCount = rows.filter((r) => picked[r.n]).length;
 	const pickedRowCount = rows.reduce(
@@ -1577,25 +1702,21 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 				const err = await res.json().catch(() => null);
 				throw new Error(err?.detail || "Selection failed");
 			}
-			// Trim local state so downstream stages don't see the dropped tables.
+			const data = (await res.json()) as {
+				ok: boolean;
+				changed: boolean;
+				kept: string[];
+				excluded: string[];
+			};
 			if (uploadResult) {
-				const keep = new Set(selectedNames);
-				const trimmedTables = uploadResult.tables.filter((t) => keep.has(t.name));
-				const trimmedPreview: typeof uploadResult.preview = {};
-				const trimmedSchema: typeof uploadResult.schema = {};
-				const trimmedStats: typeof uploadResult.stats = {};
-				for (const name of selectedNames) {
-					if (uploadResult.preview[name]) trimmedPreview[name] = uploadResult.preview[name];
-					if (uploadResult.schema[name]) trimmedSchema[name] = uploadResult.schema[name];
-					if (uploadResult.stats[name]) trimmedStats[name] = uploadResult.stats[name];
-				}
 				setUploadResult({
 					...uploadResult,
-					tables: trimmedTables,
-					preview: trimmedPreview,
-					schema: trimmedSchema,
-					stats: trimmedStats,
+					excludedTables: data.excluded,
 				});
+			}
+			if (data.changed) {
+				setTransformResult(null);
+				setLoadResult(null);
 			}
 			onNext();
 		} catch (e) {
@@ -1686,13 +1807,14 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 								</tr>
 							</thead>
 							<tbody>
-								{filtered.map((t) => {
+								{filtered.map((t, idx) => {
 									const isPicked = !!picked[t.n];
+										const isFocused = idx === focusIdx;
 									return (
 										<tr
 											key={t.n}
 											onClick={() => togglePick(t.n)}
-											style={{ cursor: "pointer" }}
+											style={{ cursor: "pointer", background: isFocused ? "var(--lg-bg-2)" : undefined }}
 											className={isPicked ? "row-selected" : ""}
 										>
 											<td>
@@ -1811,6 +1933,40 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 						</div>
 					</div>
 				</div>
+				{(() => {
+					const currentExcluded = new Set(
+						rows.filter((r) => !picked[r.n]).map((r) => r.n),
+					);
+					const prevExcluded = excludedSet;
+					let diff = currentExcluded.size !== prevExcluded.size;
+					if (!diff) {
+						for (const n of currentExcluded) {
+							if (!prevExcluded.has(n)) {
+								diff = true;
+								break;
+							}
+						}
+					}
+					if (diff && transformResult) {
+						return (
+							<div
+								className="mono"
+								style={{
+									fontSize: 10,
+									padding: "8px 10px",
+									border: "1px solid var(--lg-amber, #c79b00)",
+									color: "var(--lg-amber, #c79b00)",
+									lineHeight: 1.5,
+								}}
+							>
+								{"> "}Changing the selection will reset transform & export
+								results. Configure work for tables that remain selected is
+								preserved.
+							</div>
+						);
+					}
+					return null;
+				})()}
 				{error && (
 					<div
 						className="mono"
@@ -2347,7 +2503,7 @@ function TransformModal({
 
 	const opMeta = TRANSFORM_OPS.find((o) => o.id === op);
 
-	return (
+	return createPortal(
 		<div
 			style={{
 				position: "fixed",
@@ -2556,7 +2712,8 @@ function TransformModal({
 					</button>
 				</div>
 			</div>
-		</div>
+		</div>,
+		document.body,
 	);
 }
 
@@ -3042,7 +3199,11 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 	const [running, setRunning] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [result, setResult] = useState<TransformResult | null>(null);
-	const tables = uploadResult?.tables ?? [];
+	const excluded = useMemo(
+		() => new Set(uploadResult?.excludedTables ?? []),
+		[uploadResult?.excludedTables],
+	);
+	const tables = (uploadResult?.tables ?? []).filter((t) => !excluded.has(t.name));
 	const preview = uploadResult?.preview ?? {};
 	const schema = uploadResult?.schema ?? {};
 
@@ -3248,6 +3409,63 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 
 	const cols = allEdits[activeTable] ?? [];
 	const c = cols[sel] ?? cols[0];
+
+	useEffect(() => {
+		const handleKeyDown = (e: KeyboardEvent) => {
+			const target = e.target as HTMLElement;
+			const isInput = target.tagName === "INPUT" || target.tagName === "TEXTAREA";
+			if (isInput) return;
+
+			switch (e.key.toLowerCase()) {
+				case "arrowup":
+					e.preventDefault();
+					setSel((s) => Math.max(0, s - 1));
+					break;
+				case "arrowdown":
+					e.preventDefault();
+					setSel((s) => Math.min(cols.length - 1, s + 1));
+					break;
+				case "tab":
+					e.preventDefault();
+					const idx = tables.findIndex((t) => t.name === activeTable);
+					if (e.shiftKey) {
+						if (idx > 0) {
+							setActiveTable(tables[idx - 1].name);
+							setSel(0);
+						}
+					} else {
+						if (idx < tables.length - 1) {
+							setActiveTable(tables[idx + 1].name);
+							setSel(0);
+						}
+					}
+					break;
+				case "d":
+					if (c && !c.isNew) {
+						e.preventDefault();
+						setOp(sel, c.op === "drop" ? "keep" : "drop");
+					}
+					break;
+				case "c":
+					if (c && !c.isNew && c.op !== "drop") {
+						e.preventDefault();
+						setOp(sel, c.op === "cast" ? "keep" : "cast");
+					}
+					break;
+				case "r":
+					if (e.altKey) {
+						e.preventDefault();
+						setRenamingTable(activeTable);
+					} else if (c && !c.isNew && c.op !== "drop") {
+						e.preventDefault();
+						setOp(sel, c.op === "rename" ? "keep" : "rename");
+					}
+					break;
+			}
+		};
+		window.addEventListener("keydown", handleKeyDown);
+		return () => window.removeEventListener("keydown", handleKeyDown);
+	}, [sel, c, cols.length, activeTable, tables]);
 
 	const updateCol = (idx: number, patch: Partial<ColEdit>) => {
 		setAllEdits((prev) => {
@@ -4464,7 +4682,11 @@ function RlMap({ onNext }: { onNext: () => void }) {
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
-	const tables = uploadResult?.tables ?? [];
+	const excluded = useMemo(
+		() => new Set(uploadResult?.excludedTables ?? []),
+		[uploadResult?.excludedTables],
+	);
+	const tables = (uploadResult?.tables ?? []).filter((t) => !excluded.has(t.name));
 	const schema = uploadResult?.schema ?? {};
 	const transformPreview = (transformResult?.preview ?? {}) as Record<string, Record<string, unknown>[]>;
 
@@ -4858,6 +5080,14 @@ function RlMap({ onNext }: { onNext: () => void }) {
 									<dd>{transformResult.type_conversions}</dd>
 									<dt>NULLS</dt>
 									<dd>{transformResult.null_normalizations}</dd>
+									{transformResult.exceptions && Object.keys(transformResult.exceptions).length > 0 && (
+										<>
+											<dt>REVIEW</dt>
+											<dd style={{ color: "var(--lg-amber)" }}>
+												{Object.values(transformResult.exceptions).reduce((a: number, b: any[]) => a + b.length, 0)} items
+											</dd>
+										</>
+									)}
 								</dl>
 							</div>
 						</div>
@@ -4923,7 +5153,12 @@ function RlExport({ onDone }: { onDone: () => void }) {
 	const [running, setRunning] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
-	const totalRows = transformResult?.total_rows ?? uploadResult?.tables.reduce((a, t) => a + t.rowCount, 0) ?? 0;
+	const excluded = useMemo(
+		() => new Set(uploadResult?.excludedTables ?? []),
+		[uploadResult?.excludedTables],
+	);
+	const visibleTables = (uploadResult?.tables ?? []).filter((t) => !excluded.has(t.name));
+	const totalRows = transformResult?.total_rows ?? visibleTables.reduce((a, t) => a + t.rowCount, 0) ?? 0;
 
 	const FORMATS = [
 		{ id: "json", label: "JSON", sub: "One object per row" },
@@ -4939,7 +5174,13 @@ function RlExport({ onDone }: { onDone: () => void }) {
 			const res = await fetch(`/api/load/${uploadResult.sessionId}`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ output_format: fmt }),
+				body: JSON.stringify({
+					output_format: fmt,
+					counter_resets: [],
+					post_load_sql: [],
+					use_staging: false,
+					respect_fk_order: true,
+				}),
 			});
 			if (!res.ok) {
 				const err = await res.json().catch(() => null);
@@ -5028,6 +5269,29 @@ function RlExport({ onDone }: { onDone: () => void }) {
 									</a>
 								</div>
 							))}
+							{loadResult.exceptions_written && loadResult.exceptions_written.length > 0 && (
+								<div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--lg-border)" }}>
+									<div className="pixel" style={{ fontSize: 10, color: "var(--lg-amber)", marginBottom: 8 }}>
+										REVIEW NEEDED
+									</div>
+									{loadResult.exceptions_written.map((file) => (
+										<div key={file} className="rl-file-row" style={{ marginTop: 4 }}>
+											<span style={{ fontSize: 9, color: "var(--lg-amber)" }}>⚠</span>
+											<div style={{ flex: 1, fontSize: 12 }}>{file}</div>
+											<a
+												href={projectId
+													? `/api/projects/${projectId}/download/${file}`
+													: `/api/download/${uploadResult?.sessionId}/${file}`}
+												download
+												className="btn btn-ghost"
+												style={{ padding: "4px 10px", fontSize: 10 }}
+											>
+												DOWNLOAD
+											</a>
+										</div>
+									))}
+								</div>
+							)}
 							{loadResult.errors.length > 0 && (
 								<div style={{ marginTop: 8 }}>
 									{loadResult.errors.map((e, i) => (

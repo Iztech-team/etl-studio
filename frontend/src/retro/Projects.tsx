@@ -265,6 +265,81 @@ export function RlProjects({
 				</div>
 			)}
 
+			<div style={{ marginTop: 40, marginBottom: 20 }}>
+				<div className="rl-section-head">
+					<div
+						className="pixel"
+						style={{
+							fontSize: 10,
+							color: "var(--lg-ink-dim)",
+							letterSpacing: "0.1em",
+						}}
+					>
+						* KEYBOARD SHORTCUTS *
+					</div>
+				</div>
+				<div className="panel" style={{ padding: 14 }}>
+					<div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20 }}>
+						<div>
+							<div
+								className="pixel"
+								style={{
+									fontSize: 9,
+									color: "var(--lg-amber)",
+									letterSpacing: "0.08em",
+									marginBottom: 8,
+								}}
+							>
+								EXTRACT PHASE
+							</div>
+							<div style={{ fontSize: 10, fontFamily: "var(--lg-mono)", lineHeight: 1.6, color: "var(--lg-ink-dim)" }}>
+								<div><strong>↑ / ↓</strong> · Navigate tables</div>
+								<div><strong>D / Space</strong> · Toggle keep/drop</div>
+								<div><strong>P</strong> · Preview table</div>
+								<div><strong>E</strong> · Deselect empty</div>
+								<div><strong>A</strong> · Toggle all</div>
+							</div>
+						</div>
+						<div>
+							<div
+								className="pixel"
+								style={{
+									fontSize: 9,
+									color: "var(--lg-amber)",
+									letterSpacing: "0.08em",
+									marginBottom: 8,
+								}}
+							>
+								TRANSFORM PHASE — COLUMNS
+							</div>
+							<div style={{ fontSize: 10, fontFamily: "var(--lg-mono)", lineHeight: 1.6, color: "var(--lg-ink-dim)" }}>
+								<div><strong>↑ / ↓</strong> · Navigate columns</div>
+								<div><strong>D</strong> · Toggle DROP</div>
+								<div><strong>C</strong> · Toggle CAST</div>
+								<div><strong>R</strong> · Toggle RENAME</div>
+							</div>
+						</div>
+						<div>
+							<div
+								className="pixel"
+								style={{
+									fontSize: 9,
+									color: "var(--lg-amber)",
+									letterSpacing: "0.08em",
+									marginBottom: 8,
+								}}
+							>
+								TRANSFORM PHASE — TABLES
+							</div>
+							<div style={{ fontSize: 10, fontFamily: "var(--lg-mono)", lineHeight: 1.6, color: "var(--lg-ink-dim)" }}>
+								<div><strong>Tab / Shift+Tab</strong> · Switch tables</div>
+								<div><strong>Alt + R</strong> · Rename table</div>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+
 			{renameTarget && (
 				<RlPromptModal
 					title="RENAME PROJECT"

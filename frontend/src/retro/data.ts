@@ -30,6 +30,8 @@ export type ResumedSession = {
 	schema: Record<string, Record<string, unknown>>;
 	stats: Record<string, { row_count: number }>;
 	tables: string[];
+	excludedTables: string[];
+	allExtractedTables: string[];
 	config: Record<string, unknown> | null;
 	transform: Record<string, unknown> | null;
 	loadResult: Record<string, unknown> | null;

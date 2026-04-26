@@ -122,6 +122,10 @@ async function fetchResumed(
 						schema: (evt.inferred_schema as ResumedSession["schema"]) ?? {},
 						stats: (evt.stats as ResumedSession["stats"]) ?? {},
 						tables: Object.keys((evt.preview as Record<string, unknown>) ?? {}),
+						excludedTables:
+							(evt.excluded_tables as string[] | undefined) ?? [],
+						allExtractedTables:
+							(evt.all_extracted_tables as string[] | undefined) ?? [],
 						config: (evt.config as ResumedSession["config"]) ?? null,
 						transform:
 							(evt.transform as ResumedSession["transform"]) ?? null,
