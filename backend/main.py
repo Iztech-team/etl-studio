@@ -30,6 +30,7 @@ from models.schemas import (
 )
 from db import (
     init_db,
+    init_templates_table,
     create_project,
     list_projects,
     get_project,
@@ -77,6 +78,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 GUEST_DIR = os.path.join(os.path.dirname(__file__), "data", "guest")
 os.makedirs(GUEST_DIR, exist_ok=True)
 init_db()
+init_templates_table()
 backfill_pipeline_runs()
 
 # In-memory session store (keyed by session_id)
