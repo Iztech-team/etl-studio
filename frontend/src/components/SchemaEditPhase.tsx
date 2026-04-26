@@ -10,8 +10,8 @@ import { uploadAndParseDDL, saveTemplate } from '../api/client'
 export default function SchemaEditPhase() {
   const { state, dispatch } = usePipeline()
 
-  // Get schema from uploadResult, falling back to empty object
-  const inferred_schema = state.uploadResult?.inferred_schema ?? {}
+  // Get schema from editedSchema (includes DDL updates), falling back to uploadResult, then empty object
+  const inferred_schema = state.schemaEditState?.editedSchema ?? state.uploadResult?.inferred_schema ?? {}
   const foreign_keys: any[] = []
 
   // Local UI state
@@ -24,6 +24,17 @@ export default function SchemaEditPhase() {
   const [saveTemplateModalOpen, setSaveTemplateModalOpen] = useState(false)
   const [templateName, setTemplateName] = useState('')
   const [templateLoading, setTemplateLoading] = useState(false)
+
+  // DDL Modal local state
+  const [ddlSelectedTable, setDdlSelectedTable] = useState<string | null>(null)
+  const [ddlExpandedTables, setDdlExpandedTables] = useState<Set<string>>(new Set())
+  const [ddlSearchFilter, setDdlSearchFilter] = useState('')
+  const [ddlDroppedTables, setDdlDroppedTables] = useState<Set<string>>(new Set())
+  const [ddlDroppedColumns, setDdlDroppedColumns] = useState<Map<string, Set<string>>>(new Map())
+  const [ddlRenamedTables, setDdlRenamedTables] = useState<Map<string, string>>(new Map())
+  const [ddlRenamedCols, setDdlRenamedCols] = useState<Map<string, Map<string, string>>>(new Map())
+  const [ddlSaveTemplateName, setDdlSaveTemplateName] = useState('')
+  const [ddlSaveLoading, setDdlSaveLoading] = useState(false)
 
   // Schema edit state from pipeline
   const schemaEditState = state.schemaEditState
@@ -186,16 +197,6 @@ export default function SchemaEditPhase() {
     }
   }, [state.sessionId])
 
-  const handleApplyDDL = useCallback(() => {
-    if (ddlPreview) {
-      dispatch({
-        type: 'SCHEMA_EDIT_APPLY_DDL',
-        payload: ddlPreview
-      })
-      setDdlModalOpen(false)
-      setDdlPreview(null)
-    }
-  }, [ddlPreview, dispatch])
 
   const handleSaveTemplate = useCallback(async () => {
     const trimmedName = templateName.trim()
@@ -234,11 +235,212 @@ export default function SchemaEditPhase() {
     }
   }, [templateName, state.projectId, state.schemaEditState?.editedSchema, state.schemaEditState?.modified])
 
-  // Keyboard shortcuts
+  // DDL Modal handlers
+  const closeDdlModal = useCallback(() => {
+    setDdlModalOpen(false)
+    setDdlPreview(null)
+    setDdlSelectedTable(null)
+    setDdlExpandedTables(new Set())
+    setDdlSearchFilter('')
+    setDdlDroppedTables(new Set())
+    setDdlDroppedColumns(new Map())
+    setDdlRenamedTables(new Map())
+    setDdlRenamedCols(new Map())
+    setDdlSaveTemplateName('')
+  }, [])
+
+  const handleDdlRenameTable = useCallback((tableName: string) => {
+    const newName = prompt(`Rename "${tableName}" to:`)
+    if (newName) {
+      const trimmedName = newName.trim()
+      if (!trimmedName) {
+        alert('Table name cannot be empty')
+        return
+      }
+      if (trimmedName === tableName) {
+        alert('New name is the same as current name')
+        return
+      }
+      const allTableNames = ddlPreview?.ddl_schema ? new Set(Object.keys(ddlPreview.ddl_schema)) : new Set()
+      if (allTableNames.has(trimmedName) && !ddlRenamedTables.has(trimmedName)) {
+        alert(`Table "${trimmedName}" already exists`)
+        return
+      }
+      setDdlRenamedTables(new Map(ddlRenamedTables).set(tableName, trimmedName))
+    }
+  }, [ddlPreview, ddlRenamedTables])
+
+  const handleDdlDropTable = useCallback((tableName: string) => {
+    setDdlDroppedTables(new Set(
+      ddlDroppedTables.has(tableName)
+        ? [...ddlDroppedTables].filter(t => t !== tableName)
+        : [...ddlDroppedTables, tableName]
+    ))
+  }, [ddlDroppedTables])
+
+  const handleDdlRenameColumn = useCallback((tableName: string, colName: string) => {
+    const newName = prompt(`Rename "${colName}" to:`)
+    if (newName) {
+      const trimmedName = newName.trim()
+      if (!trimmedName) {
+        alert('Column name cannot be empty')
+        return
+      }
+      if (trimmedName === colName) {
+        alert('New name is the same as current name')
+        return
+      }
+      const tableSchema = ddlPreview?.ddl_schema[tableName] ?? {}
+      if (trimmedName in tableSchema && !ddlRenamedCols.get(tableName)?.has(trimmedName)) {
+        alert(`Column "${trimmedName}" already exists in this table`)
+        return
+      }
+      const newRenamedCols = new Map(ddlRenamedCols)
+      const tableRenames = newRenamedCols.get(tableName) || new Map()
+      tableRenames.set(colName, trimmedName)
+      newRenamedCols.set(tableName, tableRenames)
+      setDdlRenamedCols(newRenamedCols)
+    }
+  }, [ddlPreview, ddlRenamedCols])
+
+  const handleDdlDropColumn = useCallback((tableName: string, colName: string) => {
+    const droppedCols = new Map(ddlDroppedColumns)
+    const tableDropped = droppedCols.get(tableName) || new Set()
+    const newTableDropped = new Set(tableDropped)
+    if (newTableDropped.has(colName)) {
+      newTableDropped.delete(colName)
+    } else {
+      newTableDropped.add(colName)
+    }
+    droppedCols.set(tableName, newTableDropped)
+    setDdlDroppedColumns(droppedCols)
+  }, [ddlDroppedColumns])
+
+  const buildCustomizedDDL = useCallback(() => {
+    if (!ddlPreview) return {}
+    const result: Record<string, any> = {}
+    for (const [table, cols] of Object.entries(ddlPreview.ddl_schema)) {
+      if (ddlDroppedTables.has(table)) continue
+      const finalTableName = ddlRenamedTables.get(table) ?? table
+      const droppedCols = ddlDroppedColumns.get(table) ?? new Set()
+      const renamedCols = ddlRenamedCols.get(table) ?? new Map()
+      const filteredCols: Record<string, any> = {}
+      for (const [col, info] of Object.entries(cols)) {
+        if (droppedCols.has(col)) continue
+        const finalColName = renamedCols.get(col) ?? col
+        filteredCols[finalColName] = info
+      }
+      result[finalTableName] = filteredCols
+    }
+    return result
+  }, [ddlPreview, ddlDroppedTables, ddlRenamedTables, ddlDroppedColumns, ddlRenamedCols])
+
+  const handleDdlApply = useCallback(() => {
+    if (ddlPreview) {
+      const customized = buildCustomizedDDL()
+      dispatch({
+        type: 'SCHEMA_EDIT_APPLY_DDL',
+        payload: {
+          ...ddlPreview,
+          ddl_schema: customized
+        }
+      })
+      closeDdlModal()
+    }
+  }, [ddlPreview, buildCustomizedDDL, dispatch, closeDdlModal])
+
+  const handleDdlSaveTemplate = useCallback(async () => {
+    const trimmedName = ddlSaveTemplateName.trim()
+    if (!trimmedName) {
+      alert('Template name required')
+      return
+    }
+    if (trimmedName.length > 100) {
+      alert('Template name is too long (max 100 characters)')
+      return
+    }
+    if (!state.projectId) {
+      alert('No project ID available')
+      return
+    }
+
+    setDdlSaveLoading(true)
+    try {
+      const customized = buildCustomizedDDL()
+      const ddlContent = JSON.stringify(customized, null, 2)
+      await saveTemplate(state.projectId, trimmedName, ddlContent)
+      alert('Template saved successfully!')
+      setDdlSaveTemplateName('')
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      alert('Failed to save template:\n' + errorMsg)
+    } finally {
+      setDdlSaveLoading(false)
+    }
+  }, [ddlSaveTemplateName, state.projectId, buildCustomizedDDL])
+
+  // Keyboard shortcuts for DDL modal
+  useEffect(() => {
+    if (!ddlModalOpen) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase()
+
+      // Escape closes modal
+      if (key === 'escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        closeDdlModal()
+        return
+      }
+
+      const ddlTables = ddlPreview ? Object.keys(ddlPreview.ddl_schema).filter(t =>
+        t.toLowerCase().includes(ddlSearchFilter.toLowerCase())
+      ) : []
+      const currentIdx = ddlTables.indexOf(ddlSelectedTable || '')
+
+      // Navigate tables with arrow keys
+      if (key === 'arrowup' || key === 'arrowdown') {
+        e.preventDefault()
+        if (key === 'arrowup' && currentIdx > 0) {
+          setDdlSelectedTable(ddlTables[currentIdx - 1])
+        } else if (key === 'arrowdown' && currentIdx < ddlTables.length - 1) {
+          setDdlSelectedTable(ddlTables[currentIdx + 1])
+        }
+      }
+
+      // Rename with R
+      if (key === 'r' && ddlSelectedTable) {
+        e.preventDefault()
+        handleDdlRenameTable(ddlSelectedTable)
+      }
+
+      // Drop with D
+      if (key === 'd' && ddlSelectedTable) {
+        e.preventDefault()
+        handleDdlDropTable(ddlSelectedTable)
+      }
+
+      // Expand with Space
+      if (key === ' ' && ddlSelectedTable) {
+        e.preventDefault()
+        setDdlExpandedTables(prev => {
+          const next = new Set(prev)
+          if (next.has(ddlSelectedTable)) next.delete(ddlSelectedTable)
+          else next.add(ddlSelectedTable)
+          return next
+        })
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [ddlModalOpen, ddlSelectedTable, ddlSearchFilter, ddlPreview, closeDdlModal, handleDdlRenameTable, handleDdlDropTable])
+
+  // Keyboard shortcuts for main schema editor
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Only when phase is active
-      if (state.phase !== 'schema-edit') return
+      // Only when phase is active and DDL modal not open
+      if (state.phase !== 'schema-edit' || ddlModalOpen) return
 
       const key = e.key.toLowerCase()
 
@@ -288,7 +490,7 @@ export default function SchemaEditPhase() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedTable, searchFilter, inferred_schema, state.phase, dispatch, handleRenameTable, handleDropTable])
+  }, [selectedTable, searchFilter, inferred_schema, state.phase, dispatch, ddlModalOpen, handleRenameTable, handleDropTable])
 
   // Filter tables based on search
   const filteredTables = Object.keys(inferred_schema).filter(tableName =>
@@ -470,29 +672,156 @@ export default function SchemaEditPhase() {
       {/* DDL Preview Modal */}
       {ddlModalOpen && ddlPreview && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <Card className="w-full max-w-2xl max-h-96 overflow-auto">
-            <CardHeader>
-              <CardTitle>DDL Preview</CardTitle>
+          <Card className="w-full max-w-4xl max-h-[80vh] flex flex-col">
+            <CardHeader className="flex-shrink-0 space-y-3">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                  <CardTitle>DDL Preview</CardTitle>
+                  <span className="text-sm text-gray-500">
+                    {ddlPreview.matching_tables.length} matching, {Object.keys(ddlPreview.ddl_schema).length} total
+                  </span>
+                </div>
+                <Input
+                  placeholder="Search tables..."
+                  value={ddlSearchFilter}
+                  onChange={(e) => setDdlSearchFilter(e.target.value)}
+                  className="w-48"
+                />
+              </div>
+              <div className="text-xs bg-blue-50 border border-blue-200 rounded p-2 text-blue-900">
+                <span className="font-semibold">Keyboard shortcuts:</span> <span className="font-mono ml-2">↑↓</span> navigate · <span className="font-mono">R</span> rename · <span className="font-mono">D</span> drop · <span className="font-mono">Space</span> expand · <span className="font-mono">Esc</span> close
+              </div>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="text-sm">
-                <p>Found {ddlPreview.matching_tables.length} matching tables in DDL</p>
+
+            <CardContent className="flex-1 overflow-hidden flex gap-4 p-4">
+              {/* Left panel - Table list */}
+              <div className="flex-1 overflow-auto border rounded">
+                <div className="grid grid-cols-2 gap-2 p-4">
+                  {(ddlPreview ? Object.keys(ddlPreview.ddl_schema).filter(t =>
+                    t.toLowerCase().includes(ddlSearchFilter.toLowerCase())
+                  ) : []).map(tableName => {
+                    const isMatching = ddlPreview.matching_tables.includes(tableName)
+                    const isSelected = ddlSelectedTable === tableName
+                    const isDropped = ddlDroppedTables.has(tableName)
+                    const colCount = Object.keys(ddlPreview.ddl_schema[tableName] ?? {}).length
+                    const isExpanded = ddlExpandedTables.has(tableName)
+
+                    return (
+                      <div
+                        key={tableName}
+                        className={`border rounded-lg p-3 cursor-pointer transition ${
+                          isSelected ? 'bg-blue-50 border-blue-500' : 'hover:bg-gray-50'
+                        } ${isDropped ? 'opacity-50 line-through' : ''} ${!isMatching ? 'bg-gray-100' : ''}`}
+                        onClick={() => {
+                          setDdlSelectedTable(tableName)
+                          setDdlExpandedTables(prev => {
+                            const next = new Set(prev)
+                            if (next.has(tableName)) next.delete(tableName)
+                            else next.add(tableName)
+                            return next
+                          })
+                        }}
+                      >
+                        <div className="flex items-center gap-2">
+                          {isMatching && <span className="text-green-600 text-xs">●</span>}
+                          <div className="font-semibold text-sm flex-1">{tableName}</div>
+                          {isExpanded && <span className="text-xs">▼</span>}
+                        </div>
+                        <div className="text-xs text-gray-600">{colCount} columns</div>
+                        <div className="flex gap-1 mt-2">
+                          <button
+                            className="text-xs px-2 py-1 border rounded hover:bg-gray-100"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleDdlRenameTable(tableName)
+                            }}
+                          >
+                            [R]
+                          </button>
+                          <button
+                            className="text-xs px-2 py-1 border rounded hover:bg-gray-100"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleDdlDropTable(tableName)
+                            }}
+                          >
+                            [D]
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
-              <div className="max-h-64 overflow-auto border rounded p-2 text-xs bg-gray-50">
-                <pre>{JSON.stringify(ddlPreview.ddl_schema, null, 2)}</pre>
+
+              {/* Right panel - Column editor */}
+              {ddlSelectedTable && ddlExpandedTables.has(ddlSelectedTable) && (
+                <div className="flex-1 overflow-auto border rounded p-4 bg-gray-50">
+                  <div className="space-y-2">
+                    <div className="font-semibold text-sm pb-2 border-b">{ddlSelectedTable} - Columns</div>
+                    {Object.entries(ddlPreview.ddl_schema[ddlSelectedTable] ?? {}).map(([colName, colInfo]: any) => {
+                      const isDropped = ddlDroppedColumns.get(ddlSelectedTable)?.has(colName)
+                      const finalColName = ddlRenamedCols.get(ddlSelectedTable)?.get(colName) ?? colName
+                      return (
+                        <div
+                          key={colName}
+                          className={`flex items-center gap-2 p-2 border rounded text-sm ${
+                            isDropped ? 'opacity-50 line-through' : ''
+                          }`}
+                        >
+                          <div className="flex-1">
+                            <div className="font-semibold text-xs">{finalColName}</div>
+                            <div className="text-xs text-gray-600">{colInfo.inferred_type || colInfo.data_type}</div>
+                          </div>
+                          <div className="flex gap-1">
+                            <button
+                              className="text-xs px-2 py-1 border rounded hover:bg-gray-100"
+                              onClick={() => handleDdlRenameColumn(ddlSelectedTable, colName)}
+                            >
+                              [R]
+                            </button>
+                            <button
+                              className="text-xs px-2 py-1 border rounded hover:bg-gray-100"
+                              onClick={() => handleDdlDropColumn(ddlSelectedTable, colName)}
+                            >
+                              [D]
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+
+            {/* Footer */}
+            <div className="flex-shrink-0 border-t p-4 space-y-2">
+              <div className="flex gap-1 items-center">
+                <Input
+                  placeholder="Template name (optional)"
+                  value={ddlSaveTemplateName}
+                  onChange={(e) => setDdlSaveTemplateName(e.target.value)}
+                  className="flex-1"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleDdlSaveTemplate}
+                  disabled={ddlSaveLoading || !ddlSaveTemplateName.trim()}
+                >
+                  {ddlSaveLoading ? '...' : 'Save'}
+                </Button>
               </div>
-              <div className="flex gap-2">
-                <Button variant="default" onClick={handleApplyDDL}>
+              <div className="flex gap-2 justify-end">
+                <Button variant="default" onClick={handleDdlApply}>
                   Apply
                 </Button>
-                <Button variant="outline" onClick={() => {
-                  setDdlModalOpen(false)
-                  setDdlPreview(null)
-                }}>
+                <Button variant="outline" onClick={closeDdlModal}>
                   Cancel
                 </Button>
               </div>
-            </CardContent>
+            </div>
           </Card>
         </div>
       )}

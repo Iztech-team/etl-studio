@@ -72,14 +72,34 @@ class SQLParser:
                     tables.setdefault(table, []).append(row)
 
         # CREATE TABLE → extract column names for schema hint (no data)
-        create_re = re.compile(
-            r'CREATE\s+TABLE\s+[`"\']?(\w+)[`"\']?\s*\(([^;]+)\)',
-            re.IGNORECASE | re.DOTALL,
-        )
-        for m in create_re.finditer(self.content):
-            table = m.group(1)
+        # Use string-based parsing to handle backtick names with spaces
+        content_upper = self.content.upper()
+        pos = 0
+        while True:
+            idx = content_upper.find("CREATE TABLE", pos)
+            if idx == -1:
+                break
+
+            search_start = idx + len("CREATE TABLE")
+            if_match = re.match(
+                r"\s+IF\s+NOT\s+EXISTS\s+", self.content[search_start:], re.IGNORECASE
+            )
+            if if_match:
+                search_start += if_match.end()
+
+            name_match = re.match(
+                r"\s*(?:`([^`]+)`|\"([^\"]+)\"|([^\s(]+))\s*\(",
+                self.content[search_start:],
+            )
+            if not name_match:
+                pos = idx + 1
+                continue
+
+            table = name_match.group(1) or name_match.group(2) or name_match.group(3)
             if table not in tables:
                 tables.setdefault(table, [])
+
+            pos = idx + len("CREATE TABLE") + 1
 
         return tables
 
@@ -127,15 +147,57 @@ class SQLParser:
         self.constraints: Dict[str, Dict[str, Any]] = {}
         self.foreign_keys: List[Dict[str, str]] = []
 
-        create_re = re.compile(
-            r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
-            r'[`"\[\']?(\w+)[`"\]\']?\s*\((.+)\)\s*;',
-            re.IGNORECASE | re.DOTALL,
-        )
+        content_upper = self.content.upper()
+        pos = 0
 
-        for m in create_re.finditer(self.content):
-            table_name = m.group(1)
-            body = m.group(2)
+        while True:
+            idx = content_upper.find("CREATE TABLE", pos)
+            if idx == -1:
+                break
+
+            search_start = idx + len("CREATE TABLE")
+
+            # Skip IF NOT EXISTS if present
+            if_match = re.match(
+                r"\s+IF\s+NOT\s+EXISTS\s+", self.content[search_start:], re.IGNORECASE
+            )
+            if if_match:
+                search_start += if_match.end()
+
+            # Extract table name (handle backticks with spaces, quotes, or plain)
+            name_match = re.match(
+                r"\s*(?:`([^`]+)`|\"([^\"]+)\"|([^\s(]+))\s*\(",
+                self.content[search_start:],
+            )
+            if not name_match:
+                pos = idx + 1
+                continue
+
+            table_name = (
+                name_match.group(1) or name_match.group(2) or name_match.group(3)
+            )
+            paren_start = (
+                search_start + name_match.start(0) + name_match.group(0).index("(")
+            )
+
+            # Find matching closing parenthesis
+            depth = 0
+            paren_end = None
+            for i in range(paren_start, len(self.content)):
+                if self.content[i] == "(":
+                    depth += 1
+                elif self.content[i] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        paren_end = i
+                        break
+
+            if paren_end is None:
+                pos = idx + 1
+                continue
+
+            body = self.content[paren_start + 1 : paren_end]
+            pos = paren_end + 1
 
             columns: Dict[str, Dict[str, Any]] = {}
             pk_cols: List[str] = []

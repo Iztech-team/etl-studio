@@ -274,16 +274,29 @@ function reducer(state: PipelineState, action: Action): PipelineState {
           modified: true
         }
       }
-    case 'SCHEMA_EDIT_APPLY_DDL':
+    case 'SCHEMA_EDIT_APPLY_DDL': {
+      const currentSchema = state.schemaEditState!.editedSchema || {}
+      const ddlSchema = action.payload.ddl_schema || {}
+      const mergedSchema = { ...currentSchema }
+
+      // Apply DDL definitions to matching tables
+      for (const table of action.payload.matching_tables) {
+        if (ddlSchema[table]) {
+          mergedSchema[table] = ddlSchema[table] as any
+        }
+      }
+
       return {
         ...state,
         schemaEditState: {
           ...state.schemaEditState!,
+          editedSchema: mergedSchema,
           ddlApplied: true,
           ddlSource: 'uploaded_ddl',
           modified: true
         }
       }
+    }
     case 'RESET':
       return initialState
   }
