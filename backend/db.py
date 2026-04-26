@@ -69,24 +69,20 @@ def init_db() -> None:
         """)
 
 
-def init_templates_table(conn=None):
+def init_templates_table() -> None:
     """Initialize ddl_templates table if it doesn't exist."""
-    if conn is None:
-        conn = _get_conn()
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS ddl_templates (
-            id TEXT PRIMARY KEY,
-            project_id TEXT NOT NULL,
-            name TEXT NOT NULL,
-            ddl_content TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            created_by TEXT,
-            UNIQUE(project_id, name),
-            FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
-        )
-    """)
-    conn.commit()
+    with _get_conn() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS ddl_templates (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                ddl_content TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                created_by TEXT,
+                UNIQUE(project_id, name)
+            )
+        """)
 
 
 def backfill_pipeline_runs() -> int:
