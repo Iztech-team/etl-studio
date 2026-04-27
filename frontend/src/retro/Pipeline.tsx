@@ -15,6 +15,7 @@ import { IArrow, ICheck, IDisk, IUpload, IX } from "./icons";
 import { MascotDeploy, MascotLoad } from "./Sprites";
 import { RlTopbar } from "./Topbar";
 import { RlPromptModal } from "./PromptModal";
+import { CheatSheet } from "./CheatSheet";
 
 // ---------- types ----------
 
@@ -1714,6 +1715,32 @@ function TablePreviewModal({
 
 // ---------- extract ----------
 
+const EXTRACT_KEYS = [
+	{
+		title: "NAVIGATION",
+		bindings: [
+			{ keys: ["j", "↓"], label: "next table" },
+			{ keys: ["k", "↑"], label: "prev table" },
+			{ keys: ["/"], label: "focus search" },
+		],
+	},
+	{
+		title: "SELECTION",
+		bindings: [
+			{ keys: ["Space", "d"], label: "toggle table" },
+			{ keys: ["a"], label: "toggle all / filtered" },
+			{ keys: ["e"], label: "deselect empty" },
+		],
+	},
+	{
+		title: "ACTIONS",
+		bindings: [
+			{ keys: ["p"], label: "preview focused table" },
+			{ keys: ["Enter"], label: "proceed to transform" },
+		],
+	},
+];
+
 function RlExtract({ onNext }: { onNext: () => void }) {
 	const {
 		uploadResult,
@@ -1727,6 +1754,8 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 	const [error, setError] = useState<string | null>(null);
 	const [search, setSearch] = useState("");
 	const [focusIdx, setFocusIdx] = useState(0);
+	const searchRef = useRef<HTMLInputElement>(null);
+	const proceedRef = useRef<() => void>(() => {});
 
 	const tables = uploadResult?.tables ?? [];
 	const schema = uploadResult?.schema ?? {};
@@ -1790,10 +1819,12 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 
 			switch (e.key.toLowerCase()) {
 				case "arrowup":
+				case "k":
 					e.preventDefault();
 					setFocusIdx((i) => Math.max(0, i - 1));
 					break;
 				case "arrowdown":
+				case "j":
 					e.preventDefault();
 					setFocusIdx((i) => Math.min(filtered.length - 1, i + 1));
 					break;
@@ -1819,11 +1850,23 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 					e.preventDefault();
 					toggleAllTables();
 					break;
+				case "/":
+					e.preventDefault();
+					searchRef.current?.focus();
+					break;
+				case "enter": {
+					const count = rows.filter((r) => picked[r.n]).length;
+					if (count > 0 && !saving) {
+						e.preventDefault();
+						proceedRef.current();
+					}
+					break;
+				}
 			}
 		};
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [focusIdx, filtered, rows, uploadResult?.sessionId]);
+	}, [focusIdx, filtered, rows, picked, saving, uploadResult?.sessionId]);
 
 	const pickedCount = rows.filter((r) => picked[r.n]).length;
 	const pickedRowCount = rows.reduce(
@@ -1904,6 +1947,7 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 			setSaving(false);
 		}
 	};
+	proceedRef.current = proceed;
 
 	return (
 		<div
@@ -1932,10 +1976,12 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 					</span>
 					<div style={{ flex: 1 }} />
 					<input
+						ref={searchRef}
 						className="input"
-						placeholder="Search…"
+						placeholder="Search… [/]"
 						value={search}
 						onChange={(e) => setSearch(e.target.value)}
+						onKeyDown={(e) => { if (e.key === "Escape") { e.currentTarget.blur(); setSearch(""); } }}
 						style={{
 							fontSize: 10,
 							padding: "3px 8px",
@@ -2155,13 +2201,16 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 						{error}
 					</div>
 				)}
-				<button
-					className="btn btn-primary"
-					onClick={proceed}
-					disabled={pickedCount === 0 || saving}
-				>
-					{saving ? "SAVING…" : "CONTINUE TO TRANSFORM"} <IArrow size={10} />
-				</button>
+				<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+					<CheatSheet groups={EXTRACT_KEYS} />
+					<button
+						className="btn btn-primary"
+						onClick={proceed}
+						disabled={pickedCount === 0 || saving}
+					>
+						{saving ? "SAVING…" : "CONTINUE TO TRANSFORM"} <IArrow size={10} />
+					</button>
+				</div>
 			</div>
 		</div>
 	);
@@ -3037,24 +3086,56 @@ function TransformsCardList({
 }) {
 	const [adding, setAdding] = useState(false);
 	const [editingIdx, setEditingIdx] = useState<number | null>(null);
+	const [focusedCard, setFocusedCard] = useState<number | null>(null);
 	const editingTransform =
 		editingIdx !== null ? transforms[editingIdx] : undefined;
 
-	// Shortcut: press T to open the Add Transform modal directly
 	useEffect(() => {
 		const handler = (e: KeyboardEvent) => {
 			const target = e.target as HTMLElement;
 			const tag = target.tagName;
 			if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
 			if (adding || editingIdx !== null) return;
-			if (e.key === "t" || e.key === "T") {
-				e.preventDefault();
-				setAdding(true);
+
+			switch (e.key) {
+				case "t":
+				case "T":
+					e.preventDefault();
+					setAdding(true);
+					break;
+				case "j":
+				case "ArrowDown":
+					if (transforms.length > 0) {
+						e.preventDefault();
+						setFocusedCard((i) => (i === null ? 0 : Math.min(transforms.length - 1, i + 1)));
+					}
+					break;
+				case "k":
+				case "ArrowUp":
+					if (transforms.length > 0) {
+						e.preventDefault();
+						setFocusedCard((i) => (i === null ? 0 : Math.max(0, i - 1)));
+					}
+					break;
+				case "Enter":
+					if (focusedCard !== null && focusedCard < transforms.length) {
+						e.preventDefault();
+						setEditingIdx(focusedCard);
+					}
+					break;
+				case "Delete":
+				case "Backspace":
+					if (focusedCard !== null && focusedCard < transforms.length) {
+						e.preventDefault();
+						onRemove(focusedCard);
+						setFocusedCard((i) => (i !== null && i > 0 ? i - 1 : transforms.length > 1 ? 0 : null));
+					}
+					break;
 			}
 		};
-		window.addEventListener("keydown", handler);
-		return () => window.removeEventListener("keydown", handler);
-	}, [adding, editingIdx]);
+		document.addEventListener("keydown", handler, true);
+		return () => document.removeEventListener("keydown", handler, true);
+	}, [adding, editingIdx, focusedCard, transforms.length, onRemove]);
 
 	return (
 		<div
@@ -3116,21 +3197,22 @@ function TransformsCardList({
 				) : (
 					transforms.map((t, idx) => {
 						const opMeta = TRANSFORM_OPS.find((o) => o.id === t.op);
+						const isFocused = focusedCard === idx;
 						return (
 							<div
 								key={idx}
-								onClick={() => setEditingIdx(idx)}
+								onClick={() => { setFocusedCard(idx); setEditingIdx(idx); }}
 								style={{
 									cursor: "pointer",
 									padding: "6px 8px",
-									border: "1px solid var(--lg-border)",
-									background: "var(--lg-bg-2)",
+									border: `1px solid ${isFocused ? "var(--lg-amber)" : "var(--lg-border)"}`,
+									background: isFocused ? "var(--lg-bg-1)" : "var(--lg-bg-2)",
 									display: "flex",
 									alignItems: "center",
 									gap: 6,
 									minWidth: 0,
 								}}
-								title="Click to edit"
+								title="Click to edit · j/k navigate · Enter open · Del remove"
 							>
 								<span
 									className="pixel"
@@ -3748,6 +3830,44 @@ function TableActionsPanel({
 	);
 }
 
+const TRANSFORM_KEYS = [
+	{
+		title: "COLUMN LIST",
+		bindings: [
+			{ keys: ["j", "↓"], label: "next column" },
+			{ keys: ["k", "↑"], label: "prev column" },
+			{ keys: ["d"], label: "toggle drop" },
+			{ keys: ["c"], label: "toggle cast" },
+			{ keys: ["r"], label: "rename column" },
+			{ keys: ["Alt+r"], label: "rename table" },
+		],
+	},
+	{
+		title: "TABLE SIDEBAR",
+		bindings: [
+			{ keys: ["Tab"], label: "next table" },
+			{ keys: ["Shift+Tab"], label: "prev table" },
+			{ keys: ["Shift+H"], label: "focus sidebar" },
+			{ keys: ["Shift+L"], label: "focus columns" },
+		],
+	},
+	{
+		title: "TRANSFORM CARDS",
+		bindings: [
+			{ keys: ["t"], label: "add transform" },
+			{ keys: ["j", "k"], label: "navigate cards" },
+			{ keys: ["Enter"], label: "edit focused card" },
+			{ keys: ["Del", "⌫"], label: "remove focused card" },
+		],
+	},
+	{
+		title: "ACTIONS",
+		bindings: [
+			{ keys: ["Ctrl+s"], label: "run transform / proceed" },
+		],
+	},
+];
+
 function RlTransform({ onNext }: { onNext: () => void }) {
 	const { uploadResult, setTransformResult, projectId } = usePipelineCtx();
 	const [running, setRunning] = useState(false);
@@ -3825,6 +3945,9 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 	const [presetMessage, setPresetMessage] = useState<string | null>(null);
 	const [presetBusy, setPresetBusy] = useState(false);
 	const [showSavePresetModal, setShowSavePresetModal] = useState(false);
+	const tableSidebarRef = useRef<HTMLDivElement>(null);
+	const colListRef = useRef<HTMLDivElement>(null);
+	const saveAndTransformRef = useRef<() => void>(() => {});
 
 	useEffect(() => {
 		void listTransformPresets().then(setPresets);
@@ -4074,12 +4197,25 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 			const isInput = target.tagName === "INPUT" || target.tagName === "TEXTAREA";
 			if (isInput) return;
 
-			switch (e.key.toLowerCase()) {
+			const key = e.key;
+			const lower = key.toLowerCase();
+
+			// Ctrl+S — run transform or proceed
+			if ((e.ctrlKey || e.metaKey) && lower === "s") {
+				e.preventDefault();
+				if (!result && !running && uploadResult?.sessionId) saveAndTransformRef.current();
+				else if (result) onNext();
+				return;
+			}
+
+			switch (lower) {
 				case "arrowup":
+				case "k":
 					e.preventDefault();
 					setSel((s) => Math.max(0, s - 1));
 					break;
 				case "arrowdown":
+				case "j":
 					e.preventDefault();
 					setSel((s) => Math.min(cols.length - 1, s + 1));
 					break;
@@ -4096,6 +4232,18 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 							setActiveTable(tables[idx + 1].name);
 							setSel(0);
 						}
+					}
+					break;
+				case "h":
+					if (e.shiftKey) {
+						e.preventDefault();
+						tableSidebarRef.current?.focus();
+					}
+					break;
+				case "l":
+					if (e.shiftKey) {
+						e.preventDefault();
+						colListRef.current?.focus();
 					}
 					break;
 				case "d":
@@ -4124,7 +4272,7 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 		};
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [sel, c, cols.length, activeTable, tables]);
+	}, [sel, c, cols.length, activeTable, tables, result, running, uploadResult?.sessionId, onNext]);
 
 	const updateCol = (idx: number, patch: Partial<ColEdit>) => {
 		setAllEdits((prev) => {
@@ -4419,6 +4567,7 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 			setRunning(false);
 		}
 	};
+	saveAndTransformRef.current = saveAndTransform;
 
 	return (
 		<div
@@ -4430,6 +4579,7 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 				minHeight: 0,
 			}}
 		>
+			<div ref={tableSidebarRef} tabIndex={-1} style={{ outline: "none" }}>
 			<RlTableSidebar
 				tables={tables.map((t) => ({ name: t.name, rowCount: t.rowCount }))}
 				activeTable={activeTable}
@@ -4457,6 +4607,7 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 					);
 				}}
 			/>
+			</div>
 			<div
 				style={{
 					display: "flex",
@@ -4661,7 +4812,7 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 
 				{/* Column list + edit panel */}
 				<div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 14, minWidth: 0 }}>
-				<div className="panel">
+				<div ref={colListRef} tabIndex={-1} className="panel" style={{ outline: "none" }}>
 					<div className="panel-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
 						<span>COLUMN EDITS — {activeTable.toUpperCase()}</span>
 						<div style={{ display: "flex", gap: 4 }}>
@@ -5363,7 +5514,8 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 				</div>
 			)}
 
-			<div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+			<div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8 }}>
+				<CheatSheet groups={TRANSFORM_KEYS} />
 				{!result ? (
 					<button
 						className="btn btn-primary"

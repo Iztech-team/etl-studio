@@ -19,17 +19,22 @@ export function RlHistory() {
 			setLoading(false);
 			return;
 		}
+		const controller = new AbortController();
 		setLoading(true);
-		fetch(`/api/history?username=${encodeURIComponent(user.username)}`)
+		fetch(`/api/history?username=${encodeURIComponent(user.username)}`, {
+			signal: controller.signal,
+		})
 			.then((r) => r.json())
 			.then((data) => {
 				setHistory(data.history ?? []);
 				setLoading(false);
 			})
-			.catch(() => {
+			.catch((err) => {
+				if (err.name === "AbortError") return;
 				setHistory([]);
 				setLoading(false);
 			});
+		return () => controller.abort();
 	}, [user]);
 
 	const rows = history.filter((r) => filter === "all" || r.status === filter);

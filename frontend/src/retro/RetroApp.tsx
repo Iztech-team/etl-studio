@@ -8,6 +8,7 @@ import { RlTemplates } from "./Templates";
 import { RlHistory } from "./History";
 import { RlPipeline } from "./Pipeline";
 import { RlPromptModal } from "./PromptModal";
+import { ErrorBoundary } from "./ErrorBoundary";
 
 type PageId = "projects" | "templates" | "history";
 
@@ -610,8 +611,10 @@ function Shell() {
 
 export function RetroApp() {
 	return (
-		<AuthProvider>
-			<Shell />
-		</AuthProvider>
+		<ErrorBoundary>
+			<AuthProvider>
+				<Shell />
+			</AuthProvider>
+		</ErrorBoundary>
 	);
 }

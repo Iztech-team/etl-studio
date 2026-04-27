@@ -64,21 +64,28 @@ export function RlProjects({
 			setLoading(false);
 			return;
 		}
+		const controller = new AbortController();
+		const { signal } = controller;
 		setLoading(true);
-		fetch(`/api/projects?username=${encodeURIComponent(user.username)}`)
-			.then((r) => r.json())
-			.then((data) => {
-				setProjects(data.projects ?? []);
+		Promise.all([
+			fetch(`/api/projects?username=${encodeURIComponent(user.username)}`, { signal }),
+			fetch(`/api/dashboard-stats?username=${encodeURIComponent(user.username)}`, { signal }),
+		])
+			.then(async ([projRes, statsRes]) => {
+				const projData = await projRes.json();
+				setProjects(projData.projects ?? []);
+				if (statsRes.ok) {
+					const statsData = await statsRes.json();
+					setDashStats(statsData);
+				}
 				setLoading(false);
 			})
-			.catch(() => {
+			.catch((err) => {
+				if (err.name === "AbortError") return;
 				setError("FAILED TO LOAD PROJECTS");
 				setLoading(false);
 			});
-		fetch(`/api/dashboard-stats?username=${encodeURIComponent(user.username)}`)
-			.then((r) => r.json())
-			.then((data) => setDashStats(data))
-			.catch(() => {});
+		return () => controller.abort();
 	}, [user]);
 
 	const [renameTarget, setRenameTarget] = useState<string | null>(null);
