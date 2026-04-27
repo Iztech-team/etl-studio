@@ -1,11 +1,19 @@
 """Audit trail for tracking data modifications and transformations."""
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 from datetime import datetime
 
 
 class AuditTrail:
-    """Track all modifications made to data during extraction and transformation."""
+    """Track all modifications made to data during extraction and transformation.
+
+    Aggregation strategy: per-cell `log_*` calls increment counters keyed
+    by (event_type, table, column[, extra]). At flush time we expand each
+    counter into a SINGLE event with the aggregated count. This is what
+    makes the audit cost per-(table,column) instead of per-cell — without
+    it, a 5M-row × 10-column transform would generate 50M event dicts and
+    50M `datetime.utcnow()` syscalls. Now it generates ~10.
+    """
 
     def __init__(self, source_type: str = "upload", source_name: str = ""):
         self.source_type = source_type  # "db", "csv", "excel", "sql"
@@ -20,92 +28,79 @@ class AuditTrail:
             "type_coerced": 0,
             "reference_mapped": 0,
         }
+        # (event_type, table, column, *extra) -> count
+        self._counters: Dict[Tuple[Any, ...], int] = {}
+
+    # ---- per-cell hot path: count, don't allocate event dicts -----------
 
     def log_directional_marks_stripped(self, table: str, column: str, count: int = 1):
-        """Log removal of invisible Unicode directional marks."""
-        self.events.append(
-            {
-                "timestamp": datetime.utcnow().isoformat(),
-                "type": "directional_marks_stripped",
-                "table": table,
-                "column": column,
-                "count": count,
-                "description": f"Removed invisible Unicode directional marks from {table}.{column}",
-            }
-        )
+        key = ("directional_marks_stripped", table, column)
+        self._counters[key] = self._counters.get(key, 0) + count
         self.stats["directional_marks_stripped"] += count
 
     def log_arabic_digits_normalized(self, table: str, column: str, count: int = 1):
-        """Log conversion of Arabic/Persian digits to ASCII."""
-        self.events.append(
-            {
-                "timestamp": datetime.utcnow().isoformat(),
-                "type": "arabic_digits_normalized",
-                "table": table,
-                "column": column,
-                "count": count,
-                "description": f"Converted Arabic/Persian digits to ASCII in {table}.{column}",
-            }
-        )
+        key = ("arabic_digits_normalized", table, column)
+        self._counters[key] = self._counters.get(key, 0) + count
         self.stats["arabic_digits_normalized"] += count
 
     def log_encoding_fixed(self, table: str, column: str, count: int = 1):
-        """Log mojibake repairs."""
-        self.events.append(
-            {
-                "timestamp": datetime.utcnow().isoformat(),
-                "type": "encoding_fixed",
-                "table": table,
-                "column": column,
-                "count": count,
-                "description": f"Fixed encoding corruption in {table}.{column}",
-            }
-        )
+        key = ("encoding_fixed", table, column)
+        self._counters[key] = self._counters.get(key, 0) + count
         self.stats["encoding_fixed"] += count
 
     def log_null_normalized(self, table: str, column: str, count: int = 1):
-        """Log null value standardization."""
-        self.events.append(
-            {
-                "timestamp": datetime.utcnow().isoformat(),
-                "type": "null_normalized",
-                "table": table,
-                "column": column,
-                "count": count,
-                "description": f"Normalized null values in {table}.{column}",
-            }
-        )
+        key = ("null_normalized", table, column)
+        self._counters[key] = self._counters.get(key, 0) + count
         self.stats["null_normalized"] += count
 
     def log_type_coerced(self, table: str, column: str, from_type: str, to_type: str, count: int = 1):
-        """Log type conversions."""
-        self.events.append(
-            {
-                "timestamp": datetime.utcnow().isoformat(),
-                "type": "type_coerced",
-                "table": table,
-                "column": column,
-                "from_type": from_type,
-                "to_type": to_type,
-                "count": count,
-                "description": f"Coerced {count} value(s) from {from_type} to {to_type} in {table}.{column}",
-            }
-        )
+        key = ("type_coerced", table, column, from_type, to_type)
+        self._counters[key] = self._counters.get(key, 0) + count
         self.stats["type_coerced"] += count
 
     def log_reference_mapped(self, table: str, column: str, count: int = 1):
-        """Log reference table mappings."""
-        self.events.append(
-            {
-                "timestamp": datetime.utcnow().isoformat(),
-                "type": "reference_mapped",
+        key = ("reference_mapped", table, column)
+        self._counters[key] = self._counters.get(key, 0) + count
+        self.stats["reference_mapped"] += count
+
+    # ---- expansion: turn counters into events ---------------------------
+
+    def flush_counters_to_events(self) -> None:
+        """Expand the per-(table,column,type) counters into one event per
+        triple. Called by the transformer / extractor at the end of a run
+        so the events list (and downstream DB inserts) stay small.
+
+        Idempotent: clears counters after expansion so repeated calls
+        don't double-count. Safe to call even when no counters are present.
+        """
+        if not self._counters:
+            return
+        now = datetime.utcnow().isoformat()
+        for key, count in self._counters.items():
+            ev_type = key[0]
+            table = key[1]
+            column = key[2]
+            ev: Dict[str, Any] = {
+                "timestamp": now,
+                "type": ev_type,
                 "table": table,
                 "column": column,
                 "count": count,
-                "description": f"Applied reference mapping to {count} value(s) in {table}.{column}",
             }
-        )
-        self.stats["reference_mapped"] += count
+            if ev_type == "type_coerced" and len(key) >= 5:
+                ev["from_type"] = key[3]
+                ev["to_type"] = key[4]
+                ev["description"] = (
+                    f"Coerced {count} value(s) from {key[3]} to {key[4]} "
+                    f"in {table}.{column}"
+                )
+            else:
+                ev["description"] = (
+                    f"{ev_type.replace('_', ' ').capitalize()} "
+                    f"applied to {count} value(s) in {table}.{column}"
+                )
+            self.events.append(ev)
+        self._counters.clear()
 
     def log_extraction_started(self, db_type: str, table_count: int):
         """Log start of DB extraction."""
@@ -159,7 +154,9 @@ class AuditTrail:
             )
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize audit trail to dictionary."""
+        """Serialize audit trail to dictionary. Flushes any pending
+        counters first so the aggregated events show up in the result."""
+        self.flush_counters_to_events()
         return {
             "source_type": self.source_type,
             "source_name": self.source_name,

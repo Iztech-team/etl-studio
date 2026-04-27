@@ -412,6 +412,11 @@ const PASSWORDS_LS_KEY = "etl_studio.ib_known_passwords";
 const NO_PASSWORD = "__none__";
 
 const ACTIVE_EXTRACTION_LS_PREFIX = "etl_studio.active_extraction.";
+// Sibling marker for the transform stage. Same shape as the extraction
+// one: localStorage key is `{prefix}{projectId}` and the value carries the
+// session id so the navbar dock can poll /api/transform/{sid}/status.
+// Topbar.tsx scans for keys starting with this prefix.
+const ACTIVE_TRANSFORM_LS_PREFIX = "etl_studio.active_transform.";
 
 type ActiveExtraction = {
 	sessionId: string;
@@ -2402,6 +2407,15 @@ type ColEdit = {
 	transforms?: ColTransform[];
 };
 
+// Table-level filter, mirrors backend models.RowFilter. Conditions are ANDed.
+type FilterOp =
+	| "eq" | "ne" | "in" | "not_in"
+	| "gt" | "lt" | "ge" | "le"
+	| "is_null" | "is_not_null"
+	| "contains" | "starts_with";
+type FilterCondition = { column: string; op: FilterOp; value?: unknown };
+type RowFilter = { mode: "keep" | "drop"; conditions: FilterCondition[] };
+
 const CAST_TYPES = [
 	"string", "integer", "float", "boolean",
 	"text", "varchar", "char",
@@ -2443,6 +2457,11 @@ const TRANSFORM_OPS: { id: string; label: string; params: { key: string; label: 
 		{ key: "rules", label: "RULES (when=then, one per line)", type: "textarea" },
 		{ key: "default", label: "IF NO MATCH", placeholder: "original", type: "text" },
 		{ key: "case_insensitive", label: "CASE INSENSITIVE", type: "checkbox" },
+	]},
+	{ id: "compute", label: "COMPUTE (ARITHMETIC)", params: [
+		{ key: "expression", label: "EXPRESSION e.g. {qty} * {price} - {discount}", placeholder: "{value} * 1.17", type: "text" },
+		{ key: "round", label: "ROUND TO N DECIMALS (blank = no round)", placeholder: "2", type: "text" },
+		{ key: "null_as", label: "NULL TREATED AS", placeholder: "0", type: "text" },
 	]},
 ];
 
@@ -2532,8 +2551,38 @@ function applyTransformToValue(
 			const def = params.default;
 			return def != null && String(def).length > 0 ? String(def) : v;
 		}
+		case "compute": {
+			// Tiny arithmetic evaluator mirroring backend `compute` op so
+			// the BEFORE/AFTER preview shows a useful value. Whitelisted
+			// to + - * / % parens and {col} placeholders that resolve to
+			// the current row.
+			const expr = String(params.expression ?? "");
+			if (!expr) return v;
+			const nullAs = Number(params.null_as ?? 0) || 0;
+			const decimalsRaw = String(params.round ?? "").trim();
+			const decimals = decimalsRaw === "" ? null : Number(decimalsRaw);
+
+			const substituted = expr.replace(/\{([^{}]+)\}/g, (_m, key) => {
+				const raw = key === "value" ? v : (row as Record<string, unknown>)[key];
+				if (raw == null || raw === "") return String(nullAs);
+				const n = Number(raw);
+				return Number.isFinite(n) ? String(n) : String(nullAs);
+			});
+			// Allow only digits, whitespace, and the operator/paren set.
+			if (!/^[\d\s+\-*/%().]*$/.test(substituted)) return null;
+			try {
+				// eslint-disable-next-line no-new-func
+				const result = Function(`"use strict"; return (${substituted});`)();
+				if (typeof result !== "number" || !Number.isFinite(result)) return null;
+				if (decimals !== null && Number.isFinite(decimals)) {
+					return Number(result.toFixed(decimals));
+				}
+				return Number.isInteger(result) ? Math.trunc(result) : result;
+			} catch {
+				return null;
+			}
+		}
 	}
-	void row; // unused for now; reserved for future row-level transforms
 	return v;
 }
 
@@ -2632,6 +2681,11 @@ function summarizeTransform(t: ColTransform): string {
 				.filter((l) => l.includes("="));
 			const ci = p.case_insensitive ? " (ci)" : "";
 			return `${lines.length} rule${lines.length === 1 ? "" : "s"}${ci}`;
+		}
+		case "compute": {
+			const expr = String(p.expression ?? "").trim();
+			const r = String(p.round ?? "").trim();
+			return expr ? `${expr}${r ? ` · round ${r}` : ""}` : "(no expression)";
 		}
 	}
 	return "";
@@ -3392,6 +3446,14 @@ type TransformPresetSummary = {
 type TransformPreset = TransformPresetSummary & {
 	table_names: Record<string, string>;
 	edits: Record<string, ColEdit[]>;
+	// Optional new fields, used by the AL-ARABI preset and any successor:
+	// `dropped_tables` — sources to skip in the transformer.
+	// `table_options[t].row_filter` — keep/drop predicate per table.
+	// `extra_configs` — additional outputs from one source so the user can
+	// build UNIONed tables like product_barcodes.
+	dropped_tables?: string[];
+	table_options?: Record<string, { row_filter?: RowFilter }>;
+	extra_configs?: Array<{ source: string; target: string; edits: ColEdit[] }>;
 };
 
 async function listTransformPresets(): Promise<TransformPresetSummary[]> {
@@ -3462,8 +3524,232 @@ async function deleteTransformPreset(id: string): Promise<boolean> {
 	}
 }
 
+// Compact panel of table-level actions: drop the entire table, or filter
+// rows by a small AND-of-conditions predicate. Sits above the per-column
+// edit area in the Transform stage.
+function TableActionsPanel({
+	tableName,
+	isDropped,
+	setDropped,
+	rowFilter,
+	setRowFilter,
+	availableColumns,
+	extraOutputs,
+}: {
+	tableName: string;
+	isDropped: boolean;
+	setDropped: (dropped: boolean) => void;
+	rowFilter: RowFilter | undefined;
+	setRowFilter: (rf: RowFilter | undefined) => void;
+	availableColumns: string[];
+	extraOutputs: string[];
+}) {
+	const conditions = rowFilter?.conditions ?? [];
+	const mode: "keep" | "drop" = rowFilter?.mode ?? "keep";
+
+	const updateFilter = (next: RowFilter | undefined) => {
+		if (next && next.conditions.length === 0) {
+			setRowFilter(undefined);
+			return;
+		}
+		setRowFilter(next);
+	};
+
+	const addCondition = () => {
+		const col = availableColumns[0] ?? "";
+		const next: RowFilter = {
+			mode,
+			conditions: [...conditions, { column: col, op: "eq", value: "" }],
+		};
+		updateFilter(next);
+	};
+
+	const updateCondition = (i: number, patch: Partial<FilterCondition>) => {
+		const nextConds = conditions.map((c, idx) =>
+			idx === i ? { ...c, ...patch } : c,
+		);
+		updateFilter({ mode, conditions: nextConds });
+	};
+
+	const removeCondition = (i: number) => {
+		const nextConds = conditions.filter((_, idx) => idx !== i);
+		updateFilter(nextConds.length === 0 ? undefined : { mode, conditions: nextConds });
+	};
+
+	const FILTER_OPS: { id: FilterOp; label: string; needsValue: boolean }[] = [
+		{ id: "eq", label: "=", needsValue: true },
+		{ id: "ne", label: "≠", needsValue: true },
+		{ id: "gt", label: ">", needsValue: true },
+		{ id: "lt", label: "<", needsValue: true },
+		{ id: "ge", label: "≥", needsValue: true },
+		{ id: "le", label: "≤", needsValue: true },
+		{ id: "contains", label: "contains", needsValue: true },
+		{ id: "starts_with", label: "starts with", needsValue: true },
+		{ id: "is_null", label: "is null", needsValue: false },
+		{ id: "is_not_null", label: "is not null", needsValue: false },
+	];
+
+	return (
+		<div
+			className="panel"
+			style={{
+				borderColor: isDropped ? "var(--lg-rose)" : undefined,
+			}}
+		>
+			<div
+				className="panel-head"
+				style={{ display: "flex", alignItems: "center", gap: 8 }}
+			>
+				<span>TABLE ACTIONS</span>
+				<span
+					className="mono"
+					style={{
+						fontSize: 9,
+						color: "var(--lg-ink-mute)",
+						letterSpacing: 0,
+						textTransform: "none",
+						fontWeight: "normal",
+					}}
+				>
+					(applied to <b>{tableName}</b> as a whole)
+				</span>
+			</div>
+			<div className="panel-body" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+				{/* DROP TABLE */}
+				<label
+					style={{
+						display: "flex",
+						alignItems: "center",
+						gap: 8,
+						cursor: "pointer",
+					}}
+				>
+					<input
+						type="checkbox"
+						checked={isDropped}
+						onChange={(e) => setDropped(e.target.checked)}
+					/>
+					<span className="pixel" style={{ fontSize: 9, letterSpacing: "0.1em" }}>
+						DROP TABLE
+					</span>
+					<span className="mono" style={{ fontSize: 9, color: "var(--lg-ink-mute)" }}>
+						exclude this table from the transformed output entirely
+					</span>
+				</label>
+
+				{/* ROW FILTER */}
+				{!isDropped && (
+					<div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+						<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+							<span className="pixel" style={{ fontSize: 9, letterSpacing: "0.1em" }}>
+								ROW FILTER
+							</span>
+							<select
+								value={mode}
+								onChange={(e) =>
+									updateFilter({
+										mode: e.target.value as "keep" | "drop",
+										conditions,
+									})
+								}
+								style={{ fontSize: 10 }}
+								disabled={conditions.length === 0}
+							>
+								<option value="keep">keep rows where ALL of …</option>
+								<option value="drop">drop rows where ALL of …</option>
+							</select>
+							<button
+								type="button"
+								className="btn-pixel"
+								style={{ fontSize: 9, padding: "2px 6px" }}
+								onClick={addCondition}
+								disabled={availableColumns.length === 0}
+							>
+								+ ADD CONDITION
+							</button>
+						</div>
+						{conditions.map((c, i) => {
+							const opSpec = FILTER_OPS.find((o) => o.id === c.op);
+							return (
+								<div
+									key={i}
+									style={{
+										display: "flex",
+										alignItems: "center",
+										gap: 6,
+										paddingLeft: 10,
+									}}
+								>
+									<select
+										value={c.column}
+										onChange={(e) => updateCondition(i, { column: e.target.value })}
+										style={{ fontSize: 10 }}
+									>
+										{availableColumns.map((col) => (
+											<option key={col} value={col}>
+												{col}
+											</option>
+										))}
+									</select>
+									<select
+										value={c.op}
+										onChange={(e) =>
+											updateCondition(i, { op: e.target.value as FilterOp })
+										}
+										style={{ fontSize: 10 }}
+									>
+										{FILTER_OPS.map((o) => (
+											<option key={o.id} value={o.id}>
+												{o.label}
+											</option>
+										))}
+									</select>
+									{opSpec?.needsValue && (
+										<input
+											type="text"
+											className="input-pixel"
+											style={{ fontSize: 10, width: 140 }}
+											placeholder="value"
+											value={(c.value as string) ?? ""}
+											onChange={(e) => updateCondition(i, { value: e.target.value })}
+										/>
+									)}
+									<button
+										type="button"
+										className="btn-pixel"
+										style={{ fontSize: 9, padding: "2px 6px" }}
+										onClick={() => removeCondition(i)}
+										title="Remove condition"
+									>
+										×
+									</button>
+								</div>
+							);
+						})}
+					</div>
+				)}
+
+				{/* EXTRA OUTPUTS info — populated by presets like AL-ARABI */}
+				{extraOutputs.length > 0 && (
+					<div
+						className="mono"
+						style={{
+							fontSize: 9,
+							color: "var(--lg-ink-mute)",
+							borderTop: "1px dashed var(--lg-ink-mute)",
+							paddingTop: 6,
+						}}
+					>
+						<b>UNION outputs:</b> this source also feeds {extraOutputs.join(", ")} (configured by the active preset).
+					</div>
+				)}
+			</div>
+		</div>
+	);
+}
+
 function RlTransform({ onNext }: { onNext: () => void }) {
-	const { uploadResult, setTransformResult } = usePipelineCtx();
+	const { uploadResult, setTransformResult, projectId } = usePipelineCtx();
 	const [running, setRunning] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [result, setResult] = useState<TransformResult | null>(null);
@@ -3497,6 +3783,33 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 		}
 		return init;
 	});
+
+	// Table-level actions added alongside per-column edits:
+	//   droppedTables  — sources to skip entirely in the transformer.
+	//   rowFilters     — keep/drop rows matching a predicate.
+	//   extraConfigs   — additional outputs from one source (UNION ALL via
+	//                    multiple TableConfigs with the same target_table).
+	//                    Currently only populated by preset apply; UI editor
+	//                    is a follow-up.
+	const [droppedTables, setDroppedTables] = useState<Set<string>>(() => new Set());
+	const [rowFilters, setRowFilters] = useState<Record<string, RowFilter>>({});
+	// Other per-source TableConfig options the preset format can carry —
+	// kept generic so adding new fields server-side is just a forward.
+	type TableConfigOptions = {
+		aggregate?: { group_by?: string[]; aggregations?: Record<string, string>; concat_separator?: string };
+		load_after?: string[];
+		self_reference_parent_column?: string;
+	};
+	const [tableOpts, setTableOpts] = useState<Record<string, TableConfigOptions>>({});
+	type ExtraConfig = {
+		target_table: string;
+		columns: ColEdit[];
+		aggregate?: TableConfigOptions["aggregate"];
+		row_filter?: RowFilter;
+		load_after?: string[];
+		self_reference_parent_column?: string;
+	};
+	const [extraConfigs, setExtraConfigs] = useState<Record<string, ExtraConfig[]>>({});
 
 	// Preset state — see /api/transform-presets endpoints. Tables that
 	// the most recently applied preset *didn't* touch are flagged in the
@@ -3570,6 +3883,83 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 				}
 				return next;
 			});
+			// Apply preset's table-level options (drop_table, row_filter)
+			// and extra UNION configs. Backend already supports them; the
+			// preset format gained matching optional fields.
+			const presetDropped = (preset.dropped_tables ?? []) as string[];
+			if (presetDropped.length > 0) {
+				setDroppedTables((prev) => {
+					const next = new Set(prev);
+					for (const t of presetDropped) {
+						if (projectTableNames.has(t)) next.add(t);
+					}
+					return next;
+				});
+			}
+			// table_options carries every per-source TableConfig field the
+			// preset wants to set: row_filter (legacy), aggregate, load_after,
+			// self_reference_parent_column. Each goes to its own state slot.
+			const presetTableOpts = (preset.table_options ?? {}) as Record<
+				string,
+				{
+					row_filter?: RowFilter;
+					aggregate?: TableConfigOptions["aggregate"];
+					load_after?: string[];
+					self_reference_parent_column?: string;
+				}
+			>;
+			if (Object.keys(presetTableOpts).length > 0) {
+				setRowFilters((prev) => {
+					const next = { ...prev };
+					for (const [t, opts] of Object.entries(presetTableOpts)) {
+						if (!projectTableNames.has(t)) continue;
+						if (opts?.row_filter) next[t] = opts.row_filter;
+					}
+					return next;
+				});
+				setTableOpts((prev) => {
+					const next = { ...prev };
+					for (const [t, opts] of Object.entries(presetTableOpts)) {
+						if (!projectTableNames.has(t)) continue;
+						const merged: TableConfigOptions = { ...(next[t] ?? {}) };
+						if (opts?.aggregate) merged.aggregate = opts.aggregate;
+						if (opts?.load_after) merged.load_after = opts.load_after;
+						if (opts?.self_reference_parent_column)
+							merged.self_reference_parent_column =
+								opts.self_reference_parent_column;
+						if (Object.keys(merged).length > 0) next[t] = merged;
+					}
+					return next;
+				});
+			}
+			const presetExtras = (preset.extra_configs ?? []) as Array<{
+				source: string;
+				target: string;
+				edits: ColEdit[];
+				aggregate?: TableConfigOptions["aggregate"];
+				row_filter?: RowFilter;
+				load_after?: string[];
+				self_reference_parent_column?: string;
+			}>;
+			if (presetExtras.length > 0) {
+				setExtraConfigs((prev) => {
+					const next = { ...prev };
+					for (const x of presetExtras) {
+						if (!projectTableNames.has(x.source)) continue;
+						const list = next[x.source] ? [...next[x.source]] : [];
+						list.push({
+							target_table: x.target,
+							columns: x.edits,
+							aggregate: x.aggregate,
+							row_filter: x.row_filter,
+							load_after: x.load_after,
+							self_reference_parent_column: x.self_reference_parent_column,
+						});
+						next[x.source] = list;
+					}
+					return next;
+				});
+			}
 			setTableNames((prev) => {
 				const next = { ...prev };
 				for (const [src, dest] of Object.entries(preset.table_names)) {
@@ -3908,50 +4298,74 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 		setError(null);
 		try {
 			// 1. Save configuration
-			const tableConfigs = tables.map((t) => {
-				const edits = allEdits[t.name] ?? [];
-				return {
-					source_table: t.name,
-					target_table: tableNames[t.name] || t.name,
-					columns: edits.map((e) => {
-						if (e.op === "add") {
-							return {
-								name: e.name,
-								target_name: e.targetName,
-								data_type: e.targetType,
-								nullable: e.nullable ?? true,
-								default_value: !e.nullable ? (e.defaultValue ?? null) : null,
-								generator: e.generator ?? null,
-								include: true,
-								is_new: true,
-								transforms: serializeTransforms(e.transforms),
-							};
-						}
-						if (e.op === "fk") {
-							return {
-								name: e.name,
-								target_name: e.targetName,
-								data_type: e.targetType,
-								nullable: true,
-								include: true,
-								is_new: true,
-								fk_source_table: e.fkSourceTable,
-								fk_source_column: e.fkSourceColumn,
-								fk_match_column: e.fkMatchColumn,
-								fk_local_column: e.fkLocalColumn,
-								transforms: serializeTransforms(e.transforms),
-							};
-						}
+			const buildColumns = (edits: ColEdit[]) =>
+				edits.map((e) => {
+					if (e.op === "add") {
 						return {
 							name: e.name,
-							target_name: e.op === "rename" || e.op === "cast" ? e.targetName : undefined,
-							data_type: e.op === "cast" ? e.targetType : e.type,
-							nullable: true,
-							include: e.op !== "drop",
+							target_name: e.targetName,
+							data_type: e.targetType,
+							nullable: e.nullable ?? true,
+							default_value: !e.nullable ? (e.defaultValue ?? null) : null,
+							generator: e.generator ?? null,
+							include: true,
+							is_new: true,
 							transforms: serializeTransforms(e.transforms),
 						};
-					}),
+					}
+					if (e.op === "fk") {
+						return {
+							name: e.name,
+							target_name: e.targetName,
+							data_type: e.targetType,
+							nullable: true,
+							include: true,
+							is_new: true,
+							fk_source_table: e.fkSourceTable,
+							fk_source_column: e.fkSourceColumn,
+							fk_match_column: e.fkMatchColumn,
+							fk_local_column: e.fkLocalColumn,
+							transforms: serializeTransforms(e.transforms),
+						};
+					}
+					return {
+						name: e.name,
+						target_name: e.op === "rename" || e.op === "cast" ? e.targetName : undefined,
+						data_type: e.op === "cast" ? e.targetType : e.type,
+						nullable: true,
+						include: e.op !== "drop",
+						transforms: serializeTransforms(e.transforms),
+					};
+				});
+			const tableConfigs = tables.flatMap((t) => {
+				const edits = allEdits[t.name] ?? [];
+				const opts = tableOpts[t.name] ?? {};
+				const primary = {
+					source_table: t.name,
+					target_table: tableNames[t.name] || t.name,
+					columns: buildColumns(edits),
+					drop_table: droppedTables.has(t.name) || undefined,
+					row_filter: rowFilters[t.name],
+					aggregate: opts.aggregate,
+					load_after: opts.load_after,
+					self_reference_parent_column: opts.self_reference_parent_column,
 				};
+				// UNION ALL: any extra configs declared by a preset (e.g.
+				// CATESYNONYMT also feeding product_barcodes) become
+				// additional TableConfig entries with the same source. Each
+				// can carry its own aggregate/row_filter/load_after — that's
+				// how the ERPnext preset gets Brand seed (DISTINCT manufacturer)
+				// from CATEGORYT alongside the regular Item mapping.
+				const extras = (extraConfigs[t.name] ?? []).map((extra) => ({
+					source_table: t.name,
+					target_table: extra.target_table,
+					columns: buildColumns(extra.columns),
+					aggregate: extra.aggregate,
+					row_filter: extra.row_filter,
+					load_after: extra.load_after,
+					self_reference_parent_column: extra.self_reference_parent_column,
+				}));
+				return [primary, ...extras];
 			});
 			const cfgRes = await fetch(
 				`/api/configure/${uploadResult.sessionId}`,
@@ -3966,15 +4380,39 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 				throw new Error(err?.detail || "Configuration failed");
 			}
 
-			// 2. Run transform
-			const res = await fetch(`/api/transform/${uploadResult.sessionId}`);
-			if (!res.ok) {
-				const err = await res.json().catch(() => null);
-				throw new Error(err?.detail || "Transform failed");
+			// 2. Run transform — drop a localStorage marker so the navbar
+			// dock's useActiveTransform hook can poll the status endpoint
+			// and show progress, mirroring the extraction indicator.
+			const lsKey = ACTIVE_TRANSFORM_LS_PREFIX + (projectId ?? "guest");
+			try {
+				localStorage.setItem(
+					lsKey,
+					JSON.stringify({
+						sessionId: uploadResult.sessionId,
+						projectId: projectId,
+					}),
+				);
+			} catch {
+				/* localStorage quota issues — non-fatal */
 			}
-			const data = await res.json();
-			setResult(data);
-			setTransformResult(data);
+			try {
+				const res = await fetch(
+					`/api/transform/${uploadResult.sessionId}`,
+				);
+				if (!res.ok) {
+					const err = await res.json().catch(() => null);
+					throw new Error(err?.detail || "Transform failed");
+				}
+				const data = await res.json();
+				setResult(data);
+				setTransformResult(data);
+			} finally {
+				try {
+					localStorage.removeItem(lsKey);
+				} catch {
+					/* noop */
+				}
+			}
 		} catch (e) {
 			setError(e instanceof Error ? e.message : "Transform failed");
 		} finally {
@@ -4070,6 +4508,39 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 						{opCounts.rename} rename · {opCounts.cast} cast · {opCounts.drop} drop{opCounts.add > 0 ? ` · ${opCounts.add} new` : ""}{opCounts.fk > 0 ? ` · ${opCounts.fk} fk` : ""}{opCounts.tableRename > 0 ? ` · ${opCounts.tableRename} tbl rename` : ""}{opCounts.transforms > 0 ? ` · ${opCounts.transforms} transforms` : ""}
 					</span>
 				</div>
+
+				{/* TABLE-LEVEL ACTIONS — drop the table entirely or filter
+				    rows out before they reach the output. These run on top
+				    of the column edits below. */}
+				{activeTable ? (
+					<TableActionsPanel
+						tableName={activeTable}
+						isDropped={droppedTables.has(activeTable)}
+						setDropped={(dropped) =>
+							setDroppedTables((prev) => {
+								const next = new Set(prev);
+								if (dropped) next.add(activeTable);
+								else next.delete(activeTable);
+								return next;
+							})
+						}
+						rowFilter={rowFilters[activeTable]}
+						setRowFilter={(rf) =>
+							setRowFilters((prev) => {
+								const next = { ...prev };
+								if (rf) next[activeTable] = rf;
+								else delete next[activeTable];
+								return next;
+							})
+						}
+						availableColumns={(allEdits[activeTable] ?? [])
+							.filter((c) => c.op !== "drop")
+							.map((c) => c.targetName || c.name)}
+						extraOutputs={(extraConfigs[activeTable] ?? []).map(
+							(e) => e.target_table,
+						)}
+					/>
+				) : null}
 
 				{/* PRESET — apply or save the entire transform config so it can be
 				    reused for other clients with the same legacy schema. */}

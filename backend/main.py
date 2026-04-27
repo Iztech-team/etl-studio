@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 import os, shutil, uuid
 from datetime import timezone, datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from core.extractor import Extractor
 from core.transformer import Transformer
@@ -55,8 +55,10 @@ from project_state import (
     ensure_project_dirs,
     project_uploads_dir,
     project_outputs_dir,
+    project_dir,
     delete_project_files,
 )
+from utils import extract_cache
 from models.project_schemas import (
     LoginRequest,
     AuthResponse,
@@ -398,6 +400,20 @@ async def delete_project_endpoint(project_id: str):
 
 def _resume_payload(project: dict, session_id: str, session: dict) -> dict:
     raw = session.get("raw", {})
+    # The transformed dict may carry the full row data — for a real
+    # project that's gigabytes of JSON, blocks the asyncio loop during
+    # encode, and starves every other request. Strip it down to the
+    # metadata the frontend actually consumes (counts + warnings +
+    # preview). If a downstream view needs the full rows it can re-fetch
+    # via /api/transform.
+    transformed = session.get("transformed")
+    transform_summary = None
+    if isinstance(transformed, dict):
+        transform_summary = {
+            k: v
+            for k, v in transformed.items()
+            if k not in ("tables", "exceptions")
+        }
     return {
         "session_id": session_id,
         "project": project,
@@ -408,7 +424,7 @@ def _resume_payload(project: dict, session_id: str, session: dict) -> dict:
         "stats": raw.get("stats", {}),
         "ddl_schema": session.get("ddl_schema", {}),
         "config": session.get("config"),
-        "transform": session.get("transformed"),
+        "transform": transform_summary,
         "load_result": session.get("load_result"),
         "excluded_tables": list(_excluded_set(session)),
         "all_extracted_tables": list(raw.get("tables", {}).keys()),
@@ -438,6 +454,14 @@ async def resume_project(project_id: str):
     def encode(obj: dict) -> bytes:
         return (json.dumps(obj, ensure_ascii=False, default=str) + "\n").encode("utf-8")
 
+    async def encode_async(obj: dict) -> bytes:
+        """For payloads that may serialize to many MB (the final 'done'
+        event carrying schema + preview + transform metadata), encode on
+        a worker thread so the asyncio loop stays responsive — otherwise
+        a single big json.dumps freezes every other request including
+        client navigations."""
+        return await asyncio.to_thread(encode, obj)
+
     async def stream():
         try:
             # Warm path: a session for this project already lives in memory.
@@ -454,6 +478,8 @@ async def resume_project(project_id: str):
                             "warm": True,
                         }
                     )
+                    await asyncio.sleep(0)
+                    table_done_count_warm = 0
                     for name in table_names:
                         rows = tables.get(name, [])
                         yield encode(
@@ -464,9 +490,21 @@ async def resume_project(project_id: str):
                                 "columns": list(rows[0].keys()) if rows else [],
                             }
                         )
-                    yield encode(
+                        # Same pacing logic as the cold path: 2 ms every
+                        # 4 events keeps the wire moving and React rendering.
+                        table_done_count_warm += 1
+                        if table_done_count_warm % 4 == 0:
+                            await asyncio.sleep(0.002)
+                        else:
+                            await asyncio.sleep(0)
+                    # The 'done' payload may contain ~MB of schema +
+                    # preview metadata even after stripping the row data;
+                    # encode it off-thread to keep the loop responsive
+                    # while the client is downloading.
+                    final_bytes = await encode_async(
                         {"event": "done", **_resume_payload(project, sid, sess)}
                     )
+                    yield final_bytes
                     return
 
             # Cold path: drive load_state_iter on a worker thread and
@@ -484,13 +522,19 @@ async def resume_project(project_id: str):
                 except StopIteration:
                     return SENTINEL
 
-            yield encode(
-                {"event": "start", "project": project, "tables": [], "total": 0}
-            )
-
-            # Note: we may emit a second 'start' from the iterator below
-            # (with the actual table list once listdir runs). The frontend
-            # treats 'start' as updating its known total, so that's fine.
+            # The iterator emits its own 'start' once listdir runs (with the
+            # real table list). We used to emit an extra empty start here so
+            # the client got an immediate event, but that confused progress
+            # bars whose total briefly went 0 → N → 0 → N. The frontend
+            # tolerates a slight delay before the first 'start'.
+            project_emitted = False
+            # Pacing: the cache fast-path produces events in microseconds.
+            # Without a deliberate yield between them the OS coalesces all
+            # chunks into a single TCP send and React batches every state
+            # update into one render — the user sees no progress at all.
+            # We track table_done events so the cold path (naturally slow
+            # because of CSV parsing) doesn't pay any pacing cost.
+            table_done_count = 0
             while True:
                 event = await asyncio.to_thread(safe_next)
                 if event is SENTINEL:
@@ -499,13 +543,32 @@ async def resume_project(project_id: str):
                 if event_type == "done":
                     session = payload
                     continue
+                # Tag the project onto the very first start so the splash
+                # has the project name to display.
+                if event_type == "start" and not project_emitted:
+                    payload = {"project": project, **payload}
+                    project_emitted = True
                 yield encode({"event": event_type, **payload})
+                # Cooperative yield so each chunk reaches the wire before
+                # the next event is built. For the cache path, also pace
+                # every few table_done events with a 2 ms sleep so the
+                # client gets visible progress (135 tables × 2 ms ≈ 270 ms
+                # — enough for animation, well under "annoying delay").
+                if event_type == "table_done":
+                    table_done_count += 1
+                    if table_done_count % 4 == 0:
+                        await asyncio.sleep(0.002)
+                    else:
+                        await asyncio.sleep(0)
+                else:
+                    await asyncio.sleep(0)
 
             session["project_id"] = project_id
             sessions[session_id] = session
-            yield encode(
+            final_bytes = await encode_async(
                 {"event": "done", **_resume_payload(project, session_id, session)}
             )
+            yield final_bytes
         except Exception as e:
             yield encode({"event": "error", "message": f"Failed to resume: {e}"})
 
@@ -886,6 +949,15 @@ async def _run_extraction(session_id: str, password: str | None) -> None:
             }
         )
         sessions[session_id].pop("pending_db", None)
+        # Persist parsed extraction so next resume skips CSV parsing.
+        project_id_for_cache = sessions[session_id].get("project_id")
+        if project_id_for_cache:
+            try:
+                from utils import extract_cache as _ec
+
+                _ec.write(project_id_for_cache, result, pending["session_dir"])
+            except Exception:
+                pass
         _auto_save(session_id, "pre-extract")
 
         done_payload = PreExtractResponse(
@@ -1074,6 +1146,17 @@ async def upload_files(
         "audit_trail": audit_trail,
     }
 
+    # Persist the parsed extraction so the next resume skips CSV parsing.
+    # Best-effort: if the cache write fails for any reason the request
+    # still succeeds — resume just falls back to a fresh re-extract.
+    if project_id:
+        try:
+            from utils import extract_cache as _ec
+
+            _ec.write(project_id, result, session_dir)
+        except Exception:
+            pass
+
     _auto_save(session_id, "edit")
 
     # Record upload/extract as a pipeline run
@@ -1102,6 +1185,7 @@ async def get_table_data(session_id: str):
     if session_id not in sessions:
         raise HTTPException(404, "Session not found")
     s = sessions[session_id]
+    _ensure_rows_loaded(s)  # lazy: rows aren't populated by resume
     raw = _visible_raw(s)
     return {
         "tables": raw.get("tables", {}),
@@ -1122,6 +1206,7 @@ async def get_table_page(
     s = sessions[session_id]
     if table_name in _excluded_set(s):
         raise HTTPException(404, f"Table '{table_name}' is excluded")
+    _ensure_rows_loaded(s, [table_name])  # lazy: per-table load is cheap
     raw = s.get("raw", {})
     all_tables = raw.get("tables", {})
     if table_name not in all_tables:
@@ -1147,6 +1232,7 @@ async def save_table_data(session_id: str, body: EditDataRequest):
     if session_id not in sessions:
         raise HTTPException(404, "Session not found")
     s = sessions[session_id]
+    _ensure_rows_loaded(s)  # lazy: edits need the full row set in memory
     raw = s.get("raw", {})
 
     # Replace rows for each table
@@ -1334,8 +1420,96 @@ async def transform(session_id: str):
                 ddl_constraints[tbl] = {"primary_key": pk_cols, "unique": uq_cols}
         config["ddl_constraints"] = ddl_constraints
 
-    transformer = Transformer(_visible_raw(s), config, audit_trail)
-    result = transformer.run()
+    # Per-session progress dict polled by the navbar dock so the user can
+    # see how far the transform has gotten while it runs.
+    progress: Dict[str, Any] = {
+        "status": "running",
+        "tables_done": 0,
+        "tables_total": 0,
+        "current_table": None,
+        "persisted_targets": [],
+    }
+    sessions[session_id]["transform_progress"] = progress
+
+    def _on_progress(table_name: str, done: int, total: int) -> None:
+        progress["tables_done"] = done
+        progress["tables_total"] = total
+        progress["current_table"] = table_name
+
+    # Per-target persistence: write each completed target to disk the
+    # moment every source feeding it has finished. If transform crashes,
+    # users can still pick up the persisted targets from disk. The
+    # directory is wiped at the start of every transform so stale outputs
+    # from a previous (failed) run don't mix with the current one.
+    partial_dir: Optional[str] = None
+    if project_id:
+        partial_dir = os.path.join(project_dir(project_id), "transform_partial")
+        try:
+            shutil.rmtree(partial_dir, ignore_errors=True)
+            os.makedirs(partial_dir, exist_ok=True)
+        except Exception:
+            partial_dir = None
+
+    def _persist_target(target: str, rows: List[Dict[str, Any]]) -> None:
+        if not partial_dir:
+            return
+        # Sanitize the target name for use as a filename — ERPnext doctype
+        # names with spaces would still work on Windows but are uglier.
+        safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in target)
+        path = os.path.join(partial_dir, f"{safe}.json")
+        tmp = path + ".tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(rows, f, ensure_ascii=False, default=str)
+            os.replace(tmp, path)
+            progress.setdefault("persisted_targets", []).append(target)
+        except Exception as e:
+            sessions[session_id].setdefault("warnings", []).append(
+                f"failed to persist target {target}: {e}"
+            )
+
+    # Lazy row loader: pulls one table's rows from the cache only when the
+    # transformer needs them, and the transformer frees the rows after
+    # processing. Avoids loading the entire 1 GB+ dataset into RAM upfront
+    # and keeps the asyncio loop responsive (no big pickle.load on the
+    # event loop or the worker thread).
+    excluded = _excluded_set(s)
+
+    def _row_loader(table_name: str) -> List[Dict[str, Any]]:
+        if table_name in excluded:
+            return []
+        if not project_id:
+            # No project context — fall back to whatever is already in
+            # session memory (e.g. a freshly-uploaded session).
+            return s.get("raw", {}).get("tables", {}).get(table_name, []) or []
+        rows = extract_cache.read_table_rows(project_id, table_name)
+        if rows is None:
+            # Cache miss — fall back to in-memory (may have been edited)
+            # then to a fresh extract.
+            rows = s.get("raw", {}).get("tables", {}).get(table_name)
+            if rows is None:
+                _ensure_rows_loaded(s, [table_name])
+                rows = s.get("raw", {}).get("tables", {}).get(table_name, [])
+        return rows or []
+
+    transformer = Transformer(
+        _visible_raw(s), config, audit_trail,
+        progress_cb=_on_progress,
+        persist_target_cb=_persist_target,
+        row_loader=_row_loader,
+    )
+    try:
+        # Run synchronously off the event loop so the asyncio loop stays
+        # free to serve /api/transform/{sid}/status polls from the dock.
+        result = await asyncio.to_thread(transformer.run)
+    except Exception as e:
+        progress["status"] = "error"
+        progress["error"] = str(e)
+        if run and project_id:
+            finish_pipeline_run(run["id"], "error", 0, str(e))
+        raise
+    progress["status"] = "done"
+    progress["tables_done"] = progress.get("tables_total", 0)
     sessions[session_id]["transformed"] = result
     sessions[session_id]["transformer"] = transformer
     # Merge FK edges from transform config and DDL foreign keys
@@ -1358,6 +1532,95 @@ async def transform(session_id: str):
         finish_pipeline_run(run["id"], "done", total_rows, ", ".join(note_parts))
         _flush_audit_events(project_id, audit_trail, run["id"])
     return TransformResponse(**result)
+
+
+@app.post("/api/reconcile/{session_id}")
+async def reconcile_endpoint(session_id: str, body: dict | None = None):
+    """Run the reconciliation pass over the transformed data and return a
+    structured report. Body is optional and may carry per-project tolerances
+    or invoice-table specs:
+
+      {
+        "voucher_tolerance": 0.01,
+        "account_tolerance": 0.01,
+        "invoice_tolerance": 0.05,
+        "gl_table": "gl_entry",
+        "invoice_specs": [
+          {"invoice_table": "sales_invoice",
+           "line_table": "sales_invoice_item", "label": "sales"},
+          ...
+        ],
+        "fk_specs": [
+          {"child": "sales_invoice_item", "parent": "sales_invoice",
+           "child_field": "parent", "parent_field": "name"},
+          ...
+        ]
+      }
+
+    Legacy balances for the per-account tie-out are pulled from the
+    session's raw extraction (`ACCOUNTT.MBALANCE`-style) when the GL
+    output uses the legacy ACCOUNTID as `account`. If you renamed the
+    account identifier, pass `legacy_account_balances` in the body
+    explicitly.
+    """
+    if session_id not in sessions:
+        raise HTTPException(404, "Session not found")
+    s = sessions[session_id]
+    if "transformed" not in s or not s["transformed"]:
+        _ensure_transformed(session_id)
+    transformed = s["transformed"]
+    target_tables = transformed.get("tables", {})
+
+    body = body or {}
+
+    # If the caller didn't pass legacy balances, derive them from the
+    # session's raw ACCOUNTT (best-effort — lets you run the check on
+    # any AlArabi-shaped project without extra config).
+    legacy_balances = body.get("legacy_account_balances")
+    if not legacy_balances:
+        legacy_balances = {}
+        accountt_rows = (s.get("raw") or {}).get("tables", {}).get("ACCOUNTT") or []
+        for r in accountt_rows:
+            aid = r.get("ACCOUNTID")
+            mbal = r.get("MBALANCE")
+            if aid is not None and mbal not in (None, "", "0"):
+                try:
+                    legacy_balances[aid] = float(mbal)
+                except (TypeError, ValueError):
+                    continue
+
+    from utils import reconcile as _rec
+
+    report = _rec.reconcile(
+        target_tables,
+        legacy_account_balances=legacy_balances or None,
+        invoice_specs=body.get("invoice_specs"),
+        fk_specs=body.get("fk_specs"),
+        gl_table=body.get("gl_table", "gl_entry"),
+        voucher_tolerance=body.get("voucher_tolerance", 0.01),
+        account_tolerance=body.get("account_tolerance", 0.01),
+        invoice_tolerance=body.get("invoice_tolerance", 0.05),
+    )
+    sessions[session_id]["reconcile_report"] = report
+    return report
+
+
+@app.get("/api/transform/{session_id}/status")
+async def transform_status(session_id: str):
+    """Lightweight progress endpoint polled by the navbar dock.
+
+    Returns the same shape as /api/extract/{sid}/status so the dock view
+    can stay symmetrical:
+      {status: "running"|"done"|"error"|"unknown",
+       tables_done, tables_total, current_table}
+    """
+    if session_id not in sessions:
+        return {"status": "unknown"}
+    s = sessions[session_id]
+    progress = s.get("transform_progress")
+    if not progress:
+        return {"status": "unknown"}
+    return progress
 
 
 # ---------------------------------------------------------------------------
@@ -1391,7 +1654,14 @@ async def create_transform_preset(body: dict):
     edits = body.get("edits") or {}
     if not isinstance(table_names, dict) or not isinstance(edits, dict):
         raise HTTPException(400, "table_names and edits must be objects")
-    return presets_store.create_preset(name, table_names, edits)
+    return presets_store.create_preset(
+        name,
+        table_names,
+        edits,
+        dropped_tables=body.get("dropped_tables") or [],
+        table_options=body.get("table_options") or {},
+        extra_configs=body.get("extra_configs") or [],
+    )
 
 
 @app.put("/api/transform-presets/{preset_id}")
@@ -1404,6 +1674,9 @@ async def update_transform_preset(preset_id: str, body: dict):
         name=name.strip() if isinstance(name, str) else None,
         table_names=table_names if isinstance(table_names, dict) else None,
         edits=edits if isinstance(edits, dict) else None,
+        dropped_tables=body.get("dropped_tables"),
+        table_options=body.get("table_options"),
+        extra_configs=body.get("extra_configs"),
     )
     if not updated:
         raise HTTPException(404, "Preset not found")
@@ -1417,13 +1690,132 @@ async def delete_transform_preset(preset_id: str):
     return {"ok": True}
 
 
+def _ensure_rows_loaded(
+    session: Dict[str, Any], tables: Optional[List[str]] = None
+) -> None:
+    """Lazy-load CSV rows from the extract cache (or re-parse from disk
+    if the cache is missing/stale).
+
+    Resume populates the session with metadata only — schema, stats,
+    preview, table names — so opening a project is fast even on a 5 GB
+    dataset. Any endpoint that actually needs the rows (transform,
+    table-data viewer, edit, etc.) calls this helper before reading
+    `session['raw']['tables']`.
+
+    `tables`: optional whitelist of source-table names to load. None means
+    load every table. The per-table cache layout means partial loads cost
+    only the requested tables' pickle files."""
+    raw = session.setdefault("raw", {"tables": {}})
+    raw_tables = raw.setdefault("tables", {})
+
+    project_id = session.get("project_id")
+    if not project_id:
+        return  # nothing we can do without a project
+
+    uploads_dir = project_uploads_dir(project_id)
+
+    # Decide which tables we still need.
+    if tables is None:
+        wanted = list(raw.get("schema", {}).keys()) or _list_cached_tables(project_id)
+    else:
+        wanted = list(tables)
+    needed = [t for t in wanted if t not in raw_tables]
+    if not needed:
+        return
+
+    # Try the cache first.
+    if extract_cache.is_fresh(project_id, uploads_dir):
+        loaded_any = False
+        for name in needed:
+            rows = extract_cache.read_table_rows(project_id, name)
+            if rows is not None:
+                raw_tables[name] = rows
+                loaded_any = True
+        # If every requested table loaded from cache, we're done.
+        if all(t in raw_tables for t in needed):
+            extractor = session.get("extractor")
+            if extractor is not None:
+                extractor._raw_tables = raw_tables
+            return
+        # Otherwise fall through to a full re-parse — something's missing
+        # from the cache and we need to repopulate.
+        if loaded_any:
+            pass
+
+    # Fallback: re-parse the CSVs from disk and rewrite the cache. This
+    # is the slow path; users hit it only when the cache is genuinely
+    # stale or missing.
+    audit_trail = session.get("audit_trail")
+    extractor = session.get("extractor") or Extractor(uploads_dir, audit_trail)
+    result = extractor.extract_all()
+    raw["tables"] = result.get("tables", {}) or {}
+    raw["schema"] = result.get("schema", raw.get("schema", {}))
+    raw["stats"] = result.get("stats", raw.get("stats", {}))
+    raw["preview"] = result.get("preview", raw.get("preview", {}))
+    raw["ddl_schema"] = result.get("ddl_schema", raw.get("ddl_schema", {}))
+    session["extractor"] = extractor
+    try:
+        extract_cache.write(project_id, raw, uploads_dir)
+    except Exception:
+        pass
+
+
+def _list_cached_tables(project_id: str) -> List[str]:
+    """Return the table names recorded in the cache metadata, or [] if
+    the cache isn't there."""
+    try:
+        meta = extract_cache.read_meta(project_id)
+        return list(meta.get("all_table_names", []) or [])
+    except Exception:
+        return []
+
+
+def _ensure_transformed(session_id: str) -> None:
+    """Run the transformer on demand if the session doesn't have its result.
+
+    On project resume we no longer pre-run the transformer (it was costing
+    10–30s per page open for big schemas). Instead any endpoint that needs
+    `s['transformed']` calls this helper, which mirrors what /api/transform
+    does but without the per-step audit-trail bookkeeping.
+    """
+    s = sessions[session_id]
+    if "transformed" in s and s["transformed"]:
+        return
+    # Lazy load: rows aren't populated by resume.
+    _ensure_rows_loaded(s)
+    audit_trail = s.get("audit_trail")
+    config = dict(s.get("config", {}))
+    ddl_constraints_raw = s.get("ddl_constraints_raw", {})
+    ddl_schema_raw = s.get("ddl_schema", {})
+    if ddl_constraints_raw:
+        config["ddl_constraints"] = ddl_constraints_raw
+    elif ddl_schema_raw:
+        constraints: Dict[str, Dict[str, Any]] = {}
+        for tbl, cols_info in ddl_schema_raw.items():
+            pk_cols = [c for c, info in cols_info.items() if info.get("primary_key")]
+            uq_cols = [
+                [c]
+                for c, info in cols_info.items()
+                if info.get("unique") and not info.get("primary_key")
+            ]
+            if pk_cols or uq_cols:
+                constraints[tbl] = {"primary_key": pk_cols, "unique": uq_cols}
+        config["ddl_constraints"] = constraints
+    transformer = Transformer(_visible_raw(s), config, audit_trail)
+    s["transformed"] = transformer.run()
+    s["transformer"] = transformer
+
+
 @app.post("/api/load/{session_id}", response_model=LoadResponse)
 async def load(session_id: str, body: LoadRequest):
     if session_id not in sessions:
         raise HTTPException(404, "Session not found")
     s = sessions[session_id]
-    if "transformed" not in s:
-        raise HTTPException(400, "Run transform first")
+    if "transformed" not in s or not s["transformed"]:
+        # Lazy: resume no longer pre-runs the transformer, so do it now.
+        if not s.get("config"):
+            raise HTTPException(400, "Run transform first")
+        _ensure_transformed(session_id)
 
     project_id = s.get("project_id")
     run = None
@@ -1456,8 +1848,16 @@ async def load(session_id: str, body: LoadRequest):
         if edge not in fk_edges:
             fk_edges.append(edge)
 
+    # The transformer (if it ran in this session) populated self_refs for
+    # any target whose parent column points back at the same target — used
+    # by the loader to sort within tabAccount and friends.
+    self_refs: Dict[str, str] = {}
+    transformer = s.get("transformer")
+    if transformer is not None:
+        self_refs = getattr(transformer, "self_refs", {}) or {}
     loader = Loader(
-        s["transformed"], body.dict(), out_dir, ddl_schema=ddl_schema, fk_edges=fk_edges
+        s["transformed"], body.dict(), out_dir,
+        ddl_schema=ddl_schema, fk_edges=fk_edges, self_refs=self_refs,
     )
     result = loader.run()
     sessions[session_id]["load_result"] = result
@@ -1523,6 +1923,41 @@ async def download_project_file(project_id: str, filename: str):
     if not project:
         raise HTTPException(404, "Project not found")
     base_dir = project_outputs_dir(project_id)
+    safe_dir = os.path.realpath(base_dir)
+    path = os.path.realpath(os.path.join(safe_dir, filename))
+    if not path.startswith(safe_dir + os.sep):
+        raise HTTPException(400, "Invalid filename")
+    if not os.path.exists(path):
+        raise HTTPException(404, "File not found")
+    return FileResponse(path, filename=os.path.basename(path))
+
+
+@app.get("/api/projects/{project_id}/transform-partial")
+async def list_transform_partial(project_id: str):
+    """List the per-target JSON files persisted incrementally during the
+    last (or in-progress) transform. Useful for picking up partial work
+    when transform crashed mid-run — every file here represents a target
+    table that completed end-to-end before the failure."""
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    partial = os.path.join(project_dir(project_id), "transform_partial")
+    if not os.path.isdir(partial):
+        return {"files": []}
+    files = []
+    for f in sorted(os.listdir(partial)):
+        full = os.path.join(partial, f)
+        if os.path.isfile(full) and f.endswith(".json"):
+            files.append({"name": f, "size": os.path.getsize(full)})
+    return {"files": files}
+
+
+@app.get("/api/projects/{project_id}/transform-partial/{filename}")
+async def download_transform_partial(project_id: str, filename: str):
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    base_dir = os.path.join(project_dir(project_id), "transform_partial")
     safe_dir = os.path.realpath(base_dir)
     path = os.path.realpath(os.path.join(safe_dir, filename))
     if not path.startswith(safe_dir + os.sep):

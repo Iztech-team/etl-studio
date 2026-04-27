@@ -104,6 +104,11 @@ class Extractor:
         self._infer_schema()
         self._compute_stats()
 
+        # Aggregate per-cell directional-mark / encoding counters into
+        # one event per (table, column) triple before downstream code
+        # drains the events list.
+        self.audit_trail.flush_counters_to_events()
+
         yield "done", {
             "tables": self._raw_tables,
             "schema": self._schema,

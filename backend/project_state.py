@@ -4,8 +4,8 @@ import shutil
 from pathlib import Path
 
 from core.extractor import Extractor
-from core.transformer import Transformer
 from utils.audit import AuditTrail
+from utils import extract_cache
 
 DATA_DIR = Path(__file__).parent / "data"
 
@@ -104,18 +104,73 @@ def load_state_iter(project_id: str):
 
     extractor = Extractor(uploads_dir, audit_trail)
     raw: dict = {}
-    for event_type, payload in extractor.extract_all_iter():
-        if event_type == "done":
+
+    # Fast path: extract metadata from the cache and leave row data
+    # UNLOADED. The frontend never needs row data on resume — it only
+    # uses schema, stats, preview, and table-name lists. Endpoints that
+    # actually need rows (transform, table-data) call the lazy
+    # `_ensure_rows_loaded` helper in main.py to populate them on demand.
+    if extract_cache.is_fresh(project_id, uploads_dir):
+        try:
+            meta = extract_cache.read_meta(project_id)
+            schema = meta.get("schema", {}) or {}
+            stats = meta.get("stats", {}) or {}
+            preview = meta.get("preview", {}) or {}
+            ddl_schema = meta.get("ddl_schema", {}) or {}
+            table_names = list(meta.get("all_table_names", []) or [])
+            yield "start", {"tables": table_names, "total": len(table_names)}
+            for name in table_names:
+                cols = list(schema.get(name, {}).keys())
+                # Fall back to first preview row's columns if schema entry
+                # is empty (some sources only populate one of these).
+                if not cols:
+                    pv = preview.get(name) or []
+                    if pv:
+                        cols = list(pv[0].keys())
+                rowcount = (stats.get(name) or {}).get("row_count", 0)
+                yield "table_done", {
+                    "name": name,
+                    "rowCount": rowcount,
+                    "columns": cols,
+                }
+            # Empty `tables` dict signals "rows not loaded yet". The lazy
+            # loader fills it from disk on demand.
             raw = {
-                "tables": payload["tables"],
-                "schema": payload["schema"],
-                "stats": payload["stats"],
-                "preview": payload["preview"],
-                "ddl_schema": payload["ddl_schema"],
+                "tables": {},
+                "schema": schema,
+                "stats": stats,
+                "preview": preview,
+                "ddl_schema": ddl_schema,
             }
-        else:
-            # Forward 'start' / 'table_done' so the caller can stream them.
-            yield event_type, payload
+            # Hydrate extractor metadata so /api/table-data's edit endpoint
+            # (which re-uses extractor._infer_schema) keeps working.
+            extractor._raw_tables = {}
+            extractor._schema = schema
+            extractor._stats = stats
+            extractor._ddl_schema = ddl_schema
+        except Exception:
+            # Corrupt cache — fall through to a full re-extract that
+            # rewrites the cache in the new format.
+            raw = {}
+
+    if not raw:
+        for event_type, payload in extractor.extract_all_iter():
+            if event_type == "done":
+                raw = {
+                    "tables": payload["tables"],
+                    "schema": payload["schema"],
+                    "stats": payload["stats"],
+                    "preview": payload["preview"],
+                    "ddl_schema": payload["ddl_schema"],
+                }
+            else:
+                # Forward 'start' / 'table_done' so the caller can stream them.
+                yield event_type, payload
+        # Write cache for next resume. Best-effort.
+        try:
+            extract_cache.write(project_id, raw, uploads_dir)
+        except Exception:
+            pass
 
     session: dict = {
         "raw": raw,
@@ -125,6 +180,11 @@ def load_state_iter(project_id: str):
     }
 
     for key in PERSIST_KEYS:
+        if key == "audit_trail":
+            # We already reconstructed the live AuditTrail object above
+            # from saved["audit_trail"]. Don't overwrite it with the raw
+            # dict — Transformer.run() calls .log_*() methods on it.
+            continue
         if key in saved:
             session[key] = saved[key]
 
@@ -145,30 +205,13 @@ def load_state_iter(project_id: str):
         if os.path.isfile(os.path.join(uploads_dir, fname))
     ]
 
-    phase = session.get("phase", "upload")
-    phase_index = PHASE_ORDER.index(phase) if phase in PHASE_ORDER else 0
-    transform_index = PHASE_ORDER.index("transform")
-
-    if phase_index >= transform_index:
-        config = session.get("config", {})
-        excluded = set(session.get("excluded_tables") or [])
-        if excluded:
-            visible_raw = {
-                "tables": {t: r for t, r in raw["tables"].items() if t not in excluded},
-                "schema": {t: v for t, v in raw["schema"].items() if t not in excluded},
-                "stats": {
-                    t: v for t, v in raw.get("stats", {}).items() if t not in excluded
-                },
-                "preview": {
-                    t: v for t, v in raw.get("preview", {}).items() if t not in excluded
-                },
-                "ddl_schema": raw.get("ddl_schema", {}),
-            }
-        else:
-            visible_raw = raw
-        transformer = Transformer(visible_raw, config, audit_trail)
-        session["transformed"] = transformer.run()
-        session["transformer"] = transformer
+    # NOTE: we used to re-run the full transformer here when resuming a
+    # project on the transform/load phase. For a 100+-table project that's
+    # 10–30 seconds wasted on every page open. The transformed dataset is
+    # easy to recompute from saved config + raw, so we defer it: the
+    # frontend's transform stage will trigger /api/transform if it needs
+    # the data, and /api/load lazily reruns the transformer when it sees
+    # `transformed` is missing. See _ensure_transformed in main.py.
 
     yield "done", session
 

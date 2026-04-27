@@ -6,6 +6,8 @@ ctx is an optional dict carrying {row, column_name} for row-aware ops.
 No DB calls, no side effects, no imports beyond stdlib.
 """
 
+import ast
+import operator
 import re
 import uuid
 from typing import Any, Dict, Optional
@@ -32,17 +34,22 @@ def apply_transforms(
     state: Optional[Dict[str, Any]] = None,
     exceptions: Optional[Dict[str, list]] = None,
     table: str = "",
+    new_row: Optional[Dict[str, Any]] = None,
 ) -> Any:
     """Run a list of {op, params} transforms in order. Returns final value.
 
-    Row-aware ops (concat_template) read sibling cells from `row`.
+    Row-aware ops (concat_template, compute) read sibling cells from `row`
+    (the source row, original column names) and `new_row` (the partially
+    built target row, renamed column names). `compute` looks at `new_row`
+    first so users can reference the clean target names in expressions.
+
     Stateful ops (row_number) accumulate counters via `state` (caller passes a
     fresh dict per table so counters reset between tables).
-    Ops can record review-needed cases by appending to ctx['exceptions'][category].
     Legacy ops accepting (value, params) still work — extra ctx arg is optional.
     """
     ctx = {
         "row": row or {},
+        "new_row": new_row or {},
         "column": column_name,
         "state": state if state is not None else {},
         "exceptions": exceptions if exceptions is not None else {},
@@ -283,6 +290,7 @@ def concat_template(value: Any, params: Dict, ctx: Optional[Dict] = None) -> Any
     strip = params.get("strip", True)
 
     row = (ctx or {}).get("row") or {}
+    new_row = (ctx or {}).get("new_row") or {}
     placeholders = re.findall(r"\{([^{}]+)\}", template)
 
     all_null = True
@@ -290,6 +298,10 @@ def concat_template(value: Any, params: Dict, ctx: Optional[Dict] = None) -> Any
     for key in placeholders:
         if key == "value":
             v = value
+        elif key in new_row:
+            # Prefer renamed (target) columns so users can reference
+            # post-rename / post-FK names like {warehouse}, {customer_name}.
+            v = new_row[key]
         else:
             v = row.get(key)
         if v is not None and str(v) != "":
@@ -375,6 +387,110 @@ def conditional(value: Any, params: Dict) -> Any:
     if default == "original":
         return value
     return default
+
+
+# ---------- compute (arithmetic) ----------
+
+_SAFE_BIN_OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.Mod: operator.mod,
+    ast.FloorDiv: operator.floordiv,
+    ast.Pow: operator.pow,
+}
+_SAFE_UNARY_OPS = {
+    ast.UAdd: operator.pos,
+    ast.USub: operator.neg,
+}
+_COMPUTE_PLACEHOLDER_RE = re.compile(r"\{([^{}]+)\}")
+
+
+def _eval_node(node: ast.AST, names: Dict[str, float]) -> float:
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, (int, float)):
+            return float(node.value)
+        raise ValueError("only numeric constants allowed")
+    if isinstance(node, ast.Num):  # py<3.8 compatibility
+        return float(node.n)
+    if isinstance(node, ast.Name):
+        if node.id not in names:
+            raise ValueError(f"unknown name: {node.id}")
+        return float(names[node.id])
+    if isinstance(node, ast.BinOp) and type(node.op) in _SAFE_BIN_OPS:
+        return _SAFE_BIN_OPS[type(node.op)](
+            _eval_node(node.left, names), _eval_node(node.right, names)
+        )
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _SAFE_UNARY_OPS:
+        return _SAFE_UNARY_OPS[type(node.op)](_eval_node(node.operand, names))
+    raise ValueError(f"disallowed expression node: {type(node).__name__}")
+
+
+@_register("compute")
+def compute(value: Any, params: Dict, ctx: Optional[Dict] = None) -> Any:
+    """Evaluate a small arithmetic expression and return the result.
+
+    The expression supports `+ - * / % // **`, parens, numeric literals, and
+    `{column_name}` placeholders that resolve to sibling cells in the same
+    row (or `{value}` for the current cell). Anything missing or non-numeric
+    is treated as 0 (configurable via `null_as`).
+
+    params:
+        expression: str — e.g. "{quantity} * {unit_price} - {discount_amount}"
+        null_as: number — substitute for missing/non-numeric cells (default 0)
+        round: int | None — round result to N decimals (default no rounding)
+        on_error: "null" | "zero" | "original" — fall-back if eval fails
+                  (default "null")
+    """
+    expr = params.get("expression", "")
+    if not expr:
+        return value
+
+    null_as = params.get("null_as", 0)
+    on_error = params.get("on_error", "null")
+    decimals = params.get("round")
+
+    row = (ctx or {}).get("row") or {}
+    new_row = (ctx or {}).get("new_row") or {}
+
+    placeholders = _COMPUTE_PLACEHOLDER_RE.findall(expr)
+    names: Dict[str, float] = {}
+    sub_expr = expr
+    for i, key in enumerate(placeholders):
+        var = f"_p{i}"
+        if key == "value":
+            raw = value
+        elif key in new_row:
+            # Prefer renamed (target) columns so users can write
+            # {quantity} after CATQTY → quantity rename.
+            raw = new_row[key]
+        else:
+            raw = row.get(key)
+        try:
+            names[var] = float(raw) if raw is not None and raw != "" else float(null_as)
+        except (TypeError, ValueError):
+            names[var] = float(null_as)
+        sub_expr = sub_expr.replace("{" + key + "}", var, 1)
+
+    try:
+        tree = ast.parse(sub_expr, mode="eval")
+        result = _eval_node(tree.body, names)
+    except Exception:
+        if on_error == "zero":
+            return 0
+        if on_error == "original":
+            return value
+        return None
+
+    if decimals is not None:
+        try:
+            result = round(result, int(decimals))
+        except (TypeError, ValueError):
+            pass
+    if isinstance(result, float) and result.is_integer():
+        return int(result)
+    return result
 
 
 @_register("row_number")

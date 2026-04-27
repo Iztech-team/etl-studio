@@ -6,10 +6,18 @@ import { ICheck, IClock, IDisk, IFolder } from "./icons";
 // Same key prefix Pipeline.tsx writes under. Kept in sync by convention —
 // both must use the literal string. If you rename it, rename both places.
 const ACTIVE_EXTRACTION_LS_PREFIX = "etl_studio.active_extraction.";
+const ACTIVE_TRANSFORM_LS_PREFIX = "etl_studio.active_transform.";
 
 type ActiveExtractionInfo = {
 	sessionId: string;
 	filename: string;
+	done: number;
+	total: number;
+	current: string | null;
+};
+
+type ActiveTransformInfo = {
+	sessionId: string;
 	done: number;
 	total: number;
 	current: string | null;
@@ -79,6 +87,80 @@ function useActiveExtraction(): ActiveExtractionInfo | null {
 						return;
 					}
 					// done / error / pending — stop showing
+					setInfo(null);
+				}
+			} catch {
+				// network blip, retry
+			}
+			if (!cancelled) timer = setTimeout(poll, 2500);
+		};
+
+		void poll();
+		return () => {
+			cancelled = true;
+			if (timer) clearTimeout(timer);
+		};
+	}, []);
+
+	return info;
+}
+
+// Sibling of useActiveExtraction: polls /api/transform/{sid}/status while
+// a transform marker is present in localStorage. Surfaces the same
+// {done, total, current} shape so the dock's view can be symmetrical.
+function useActiveTransform(): ActiveTransformInfo | null {
+	const [info, setInfo] = useState<ActiveTransformInfo | null>(null);
+
+	useEffect(() => {
+		let cancelled = false;
+		let timer: ReturnType<typeof setTimeout> | null = null;
+
+		const scanLs = (): { sessionId: string } | null => {
+			for (let i = 0; i < localStorage.length; i++) {
+				const key = localStorage.key(i);
+				if (!key || !key.startsWith(ACTIVE_TRANSFORM_LS_PREFIX)) continue;
+				try {
+					const raw = localStorage.getItem(key);
+					if (!raw) continue;
+					const v = JSON.parse(raw) as { sessionId?: string };
+					if (v.sessionId) return { sessionId: v.sessionId };
+				} catch {
+					// ignore corrupt entry
+				}
+			}
+			return null;
+		};
+
+		const poll = async () => {
+			if (cancelled) return;
+			const active = scanLs();
+			if (!active) {
+				setInfo(null);
+				timer = setTimeout(poll, 2500);
+				return;
+			}
+			try {
+				const res = await fetch(`/api/transform/${active.sessionId}/status`);
+				if (res.ok) {
+					const data = (await res.json()) as {
+						status: string;
+						tables_done?: number;
+						tables_total?: number;
+						current_table?: string | null;
+					};
+					if (cancelled) return;
+					if (data.status === "running") {
+						setInfo({
+							sessionId: active.sessionId,
+							done: data.tables_done ?? 0,
+							total: data.tables_total ?? 0,
+							current: data.current_table ?? null,
+						});
+						if (!cancelled) timer = setTimeout(poll, 800);
+						return;
+					}
+					// done / error — stop showing. The page-level handler
+					// in Pipeline.tsx removes the LS marker on completion.
 					setInfo(null);
 				}
 			} catch {
@@ -328,6 +410,85 @@ function ExtractionDockView({ info }: { info: ActiveExtractionInfo }) {
 	);
 }
 
+function TransformDockView({ info }: { info: ActiveTransformInfo }) {
+	const pct = info.total > 0 ? Math.round((info.done / info.total) * 100) : 0;
+	return (
+		<>
+			<div
+				className="rl-dock-pipe-label pixel"
+				style={{ color: "var(--lg-amber)" }}
+			>
+				TRANSFORMING
+			</div>
+			<div
+				style={{
+					flex: 1,
+					display: "flex",
+					alignItems: "center",
+					gap: 16,
+					minWidth: 0,
+				}}
+			>
+				<div
+					style={{
+						flex: 1,
+						minWidth: 80,
+						display: "flex",
+						flexDirection: "column",
+						gap: 4,
+					}}
+				>
+					<div
+						className="mono"
+						style={{
+							fontSize: 10,
+							color: "var(--lg-ink-mute)",
+							display: "flex",
+							justifyContent: "space-between",
+							gap: 8,
+						}}
+					>
+						<span
+							style={{
+								flex: 1,
+								overflow: "hidden",
+								textOverflow: "ellipsis",
+								whiteSpace: "nowrap",
+							}}
+						>
+							{info.current ? `→ ${info.current}` : "starting…"}
+						</span>
+						<span style={{ color: "var(--lg-amber)", fontVariantNumeric: "tabular-nums" }}>
+							{info.done}/{info.total || "?"} · {pct}%
+						</span>
+					</div>
+					<div
+						style={{
+							height: 4,
+							background: "var(--lg-bg-1, #222)",
+							position: "relative",
+							overflow: "hidden",
+							border: "1px solid var(--lg-border, #333)",
+						}}
+					>
+						<div
+							style={{
+								position: "absolute",
+								top: 0,
+								bottom: 0,
+								left: 0,
+								width: `${pct}%`,
+								background: "var(--lg-amber, #f5b32a)",
+								transition: "width 200ms linear",
+							}}
+						/>
+					</div>
+				</div>
+			</div>
+		</>
+	);
+}
+
 function PipelineDockView({ activeIdx }: { activeIdx: number }) {
 	return (
 		<>
@@ -378,29 +539,38 @@ export function RlDock({
 	const inPipe = pipelineStage != null;
 	const activeIdx = RL_STAGES.findIndex((s) => s.id === pipelineStage);
 	const extraction = useActiveExtraction();
+	const transform = useActiveTransform();
 
-	// When extraction is active AND we're in the pipeline view, alternate
-	// between the pipeline track and the extraction view every few seconds
-	// so the user can see both context (which stage they're on) and status
-	// (what's currently being extracted).
-	const [showExtraction, setShowExtraction] = useState(false);
+	// Cross-fade rules:
+	//  - If a transform is in progress, prefer it over the pipeline track —
+	//    it's the most actionable status the user wants to see right now.
+	//  - Extraction takes longer (often minutes) so when both extraction and
+	//    pipeline context exist, alternate between them every few seconds.
+	//  - If only the pipeline is active, show that.
+	const overlay: "transform" | "extraction" | null = transform
+		? "transform"
+		: extraction
+			? "extraction"
+			: null;
+	const [showOverlay, setShowOverlay] = useState(false);
 	useEffect(() => {
-		if (!extraction) {
-			setShowExtraction(false);
+		if (!overlay) {
+			setShowOverlay(false);
 			return;
 		}
-		if (!inPipe) {
-			// Outside the pipeline (e.g. projects list) — always show extraction
-			setShowExtraction(true);
+		if (!inPipe || overlay === "transform") {
+			// Outside the pipeline, or transforming: lock the overlay on so
+			// the progress bar is always visible while it runs.
+			setShowOverlay(true);
 			return;
 		}
-		setShowExtraction(true);
-		const id = setInterval(() => setShowExtraction((v) => !v), 3500);
+		setShowOverlay(true);
+		const id = setInterval(() => setShowOverlay((v) => !v), 3500);
 		return () => clearInterval(id);
-	}, [extraction, inPipe]);
+	}, [overlay, inPipe]);
 
 	const renderPipeArea = () => {
-		if (!inPipe && !extraction) {
+		if (!inPipe && !overlay) {
 			return (
 				<div className="rl-dock-pipe idle">
 					<span
@@ -417,7 +587,7 @@ export function RlDock({
 			);
 		}
 		// Render two stacked panels and cross-fade between them.
-		const showingExtraction = !!extraction && showExtraction;
+		const showingOverlay = !!overlay && showOverlay;
 		return (
 			<div className="rl-dock-pipe" style={{ position: "relative" }}>
 				<div
@@ -426,10 +596,10 @@ export function RlDock({
 						alignItems: "center",
 						width: "100%",
 						transition: "opacity 350ms ease, transform 350ms ease",
-						opacity: showingExtraction ? 0 : 1,
-						transform: showingExtraction ? "translateY(-4px)" : "translateY(0)",
-						pointerEvents: showingExtraction ? "none" : "auto",
-						position: showingExtraction ? "absolute" : "relative",
+						opacity: showingOverlay ? 0 : 1,
+						transform: showingOverlay ? "translateY(-4px)" : "translateY(0)",
+						pointerEvents: showingOverlay ? "none" : "auto",
+						position: showingOverlay ? "absolute" : "relative",
 						left: 0,
 						right: 0,
 						paddingLeft: 12,
@@ -448,7 +618,7 @@ export function RlDock({
 								margin: "0 auto",
 							}}
 						>
-							[ EXTRACTION IN PROGRESS ]
+							[ {overlay === "transform" ? "TRANSFORM" : "EXTRACTION"} IN PROGRESS ]
 						</span>
 					)}
 				</div>
@@ -458,17 +628,21 @@ export function RlDock({
 						alignItems: "center",
 						width: "100%",
 						transition: "opacity 350ms ease, transform 350ms ease",
-						opacity: showingExtraction ? 1 : 0,
-						transform: showingExtraction ? "translateY(0)" : "translateY(4px)",
-						pointerEvents: showingExtraction ? "auto" : "none",
-						position: showingExtraction ? "relative" : "absolute",
+						opacity: showingOverlay ? 1 : 0,
+						transform: showingOverlay ? "translateY(0)" : "translateY(4px)",
+						pointerEvents: showingOverlay ? "auto" : "none",
+						position: showingOverlay ? "relative" : "absolute",
 						left: 0,
 						right: 0,
 						paddingLeft: 12,
 						paddingRight: 12,
 					}}
 				>
-					{extraction && <ExtractionDockView info={extraction} />}
+					{transform ? (
+						<TransformDockView info={transform} />
+					) : extraction ? (
+						<ExtractionDockView info={extraction} />
+					) : null}
 				</div>
 			</div>
 		);

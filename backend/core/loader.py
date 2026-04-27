@@ -4,6 +4,53 @@ import os
 from typing import Any, Dict, List, Set
 
 
+def _toposort_self_ref(
+    rows: List[Dict[str, Any]], parent_col: str, name_col: str
+) -> List[Dict[str, Any]]:
+    """Reorder rows so each row's `parent_col` value points to a row that
+    appears earlier in the result. Used for self-referential tables like
+    tabAccount where parent_account → name. Roots and orphans (parent
+    pointing to a non-existent row) come out first / where they fit.
+
+    DFS-based; cycles are tolerated (the cycle members fall back to input
+    order among themselves). Rows missing the name column pass through at
+    the end."""
+    by_name: Dict[Any, Dict[str, Any]] = {}
+    for r in rows:
+        n = r.get(name_col)
+        if n is not None and n not in by_name:
+            by_name[n] = r
+
+    visited: Set[Any] = set()
+    in_stack: Set[Any] = set()
+    result: List[Dict[str, Any]] = []
+
+    def visit(name: Any) -> None:
+        if name in visited or name in in_stack:
+            return
+        in_stack.add(name)
+        row = by_name.get(name)
+        if row is not None:
+            parent = row.get(parent_col)
+            if parent is not None and parent != name and parent in by_name:
+                visit(parent)
+            result.append(row)
+        in_stack.discard(name)
+        visited.add(name)
+
+    for r in rows:
+        n = r.get(name_col)
+        if n is not None:
+            visit(n)
+
+    # Tail: rows without a usable name column — keep them in original
+    # order at the end so they aren't silently dropped.
+    for r in rows:
+        if r.get(name_col) is None:
+            result.append(r)
+    return result
+
+
 class Loader:
     """Writes transformed data to JSON or SQL dump files. No destructive DB ops."""
 
@@ -14,6 +61,8 @@ class Loader:
         out_dir: str,
         ddl_schema: Dict[str, Any] | None = None,
         fk_edges: List[tuple] | None = None,
+        self_refs: Dict[str, str] | None = None,
+        name_column: str = "name",
     ):
         self.tables: Dict[str, List[Dict]] = transformed.get("tables", {})
         self.exceptions: Dict[str, List[Dict]] = transformed.get("exceptions", {}) or {}
@@ -21,8 +70,23 @@ class Loader:
         self.out_dir = out_dir
         self.ddl_schema = ddl_schema or {}
         self.fk_edges = fk_edges or []
+        # target_table -> parent column. For each table named here, rows
+        # are sorted topologically on (parent_column → name_column) before
+        # writing so parent rows precede child rows.
+        self.self_refs: Dict[str, str] = self_refs or {}
+        self.name_column = name_column
 
     # ------------------------------------------------------------------
+    def _ordered_rows(self, table: str) -> List[Dict[str, Any]]:
+        """Return rows for `table`, topologically sorted on the parent
+        column if the table is self-referential. Otherwise the original
+        order (already insertion-ordered from the transformer)."""
+        rows = self.tables.get(table, [])
+        parent_col = self.self_refs.get(table)
+        if not parent_col or not rows:
+            return rows
+        return _toposort_self_ref(rows, parent_col, self.name_column)
+
     def run(self) -> Dict[str, Any]:
         fmt = self.config.get("output_format", "json")
         respect_fk = self.config.get("respect_fk_order", True)
@@ -36,7 +100,7 @@ class Loader:
 
         if fmt == "json":
             for table in table_order:
-                rows = self.tables[table]
+                rows = self._ordered_rows(table)
                 fname = f"{table}.json"
                 path = os.path.join(self.out_dir, fname)
                 try:
@@ -49,14 +113,14 @@ class Loader:
 
             # also write combined
             combined_path = os.path.join(self.out_dir, "all_tables.json")
-            combined = {t: self.tables[t] for t in table_order}
+            combined = {t: self._ordered_rows(t) for t in table_order}
             with open(combined_path, "w", encoding="utf-8") as f:
                 json.dump(combined, f, indent=2, default=str)
             output_files.append("all_tables.json")
 
         elif fmt == "csv":
             for table in table_order:
-                rows = self.tables[table]
+                rows = self._ordered_rows(table)
                 if not rows:
                     continue
                 fname = f"{table}.csv"
@@ -80,7 +144,7 @@ class Loader:
             sql_lines.append("")
 
             for table in table_order:
-                rows = self.tables[table]
+                rows = self._ordered_rows(table)
                 if not rows:
                     continue
                 cols = list(rows[0].keys())

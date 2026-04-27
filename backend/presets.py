@@ -72,6 +72,9 @@ def create_preset(
     name: str,
     table_names: Dict[str, str],
     edits: Dict[str, List[Dict[str, Any]]],
+    dropped_tables: Optional[List[str]] = None,
+    table_options: Optional[Dict[str, Dict[str, Any]]] = None,
+    extra_configs: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     _ensure_dir()
     now = datetime.now(timezone.utc).isoformat()
@@ -81,6 +84,11 @@ def create_preset(
         "schema_signature": sorted(edits.keys()),
         "table_names": table_names,
         "edits": edits,
+        # Optional new fields. Backwards-compatible: presets without them
+        # behave exactly as before.
+        "dropped_tables": dropped_tables or [],
+        "table_options": table_options or {},
+        "extra_configs": extra_configs or [],
         "created_at": now,
         "updated_at": now,
     }
@@ -95,6 +103,9 @@ def update_preset(
     name: Optional[str] = None,
     table_names: Optional[Dict[str, str]] = None,
     edits: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    dropped_tables: Optional[List[str]] = None,
+    table_options: Optional[Dict[str, Dict[str, Any]]] = None,
+    extra_configs: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[Dict[str, Any]]:
     existing = get_preset(preset_id)
     if not existing:
@@ -106,6 +117,12 @@ def update_preset(
     if edits is not None:
         existing["edits"] = edits
         existing["schema_signature"] = sorted(edits.keys())
+    if dropped_tables is not None:
+        existing["dropped_tables"] = dropped_tables
+    if table_options is not None:
+        existing["table_options"] = table_options
+    if extra_configs is not None:
+        existing["extra_configs"] = extra_configs
     existing["updated_at"] = datetime.now(timezone.utc).isoformat()
     _path(preset_id).write_text(
         json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8"

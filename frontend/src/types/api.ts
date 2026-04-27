@@ -28,12 +28,44 @@ export interface ColumnConfig {
   reference_map?: Record<string, unknown>
 }
 
+export type FilterOp =
+  | 'eq'
+  | 'ne'
+  | 'in'
+  | 'not_in'
+  | 'gt'
+  | 'lt'
+  | 'ge'
+  | 'le'
+  | 'is_null'
+  | 'is_not_null'
+  | 'contains'
+  | 'starts_with'
+
+export interface FilterCondition {
+  column: string
+  op: FilterOp
+  value?: unknown
+}
+
+export interface RowFilter {
+  mode: 'keep' | 'drop'
+  conditions: FilterCondition[]
+}
+
 export interface TableConfig {
   source_table: string
   target_table?: string
   columns: ColumnConfig[]
   primary_key?: string
   load_order: number
+  // New table-level actions ----------------------------------------------
+  // Drop the table entirely from output.
+  drop_table?: boolean
+  // Filter rows in or out before they reach the output.
+  row_filter?: RowFilter
+  // Note: UNION is expressed by sending two TableConfig entries that share
+  // the same `target_table` — the backend appends their rows.
 }
 
 export interface ConfigureRequest {

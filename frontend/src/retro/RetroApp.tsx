@@ -31,12 +31,59 @@ const PHASE_TO_STAGE: Record<string, number> = {
 	stats: 3,
 };
 
+// Persisted shape stored in localStorage. We deliberately do NOT include
+// `resumed` (the full schema/preview/stats/transform payload) or the full
+// Project object — for a large project those serialize to many MB and blow
+// localStorage's quota. The mount effect re-fetches them on reload.
+type PersistedRoute =
+	| { view: "projects" }
+	| { view: "templates" }
+	| { view: "history" }
+	| { view: "pipeline"; projectId: string | null };
+
+function toPersistedRoute(r: Route): PersistedRoute {
+	if (r.view === "pipeline") {
+		return { view: "pipeline", projectId: r.project?.id ?? null };
+	}
+	return { view: r.view };
+}
+
+function fromPersistedRoute(p: PersistedRoute | null): Route {
+	if (!p) return { view: "projects" };
+	if (p.view === "pipeline") {
+		// project carries only the id; the mount effect refetches the full
+		// project object and the resumed payload.
+		return {
+			view: "pipeline",
+			project: p.projectId ? ({ id: p.projectId } as Project) : null,
+			resumed: null,
+		};
+	}
+	return { view: p.view };
+}
+
 function loadRoute(): Route {
 	try {
 		const raw = localStorage.getItem(LS_ROUTE);
 		if (raw) {
-			const parsed = JSON.parse(raw) as Route;
-			if (parsed?.view) return parsed;
+			// Be tolerant of the legacy fat shape (`{view:"pipeline",
+			// project:{...},resumed:{...}}`) that pre-fix users may have
+			// stored. We extract just the project id and let the mount
+			// effect re-fetch the rest.
+			const parsed: { view?: string; project?: { id?: string }; projectId?: string } =
+				JSON.parse(raw) ?? {};
+			if (parsed?.view === "pipeline") {
+				const projectId =
+					parsed.projectId ?? parsed.project?.id ?? null;
+				return {
+					view: "pipeline",
+					project: projectId ? ({ id: projectId } as Project) : null,
+					resumed: null,
+				};
+			}
+			if (parsed?.view === "templates" || parsed?.view === "history" || parsed?.view === "projects") {
+				return { view: parsed.view };
+			}
 		}
 	} catch {}
 	return { view: "projects" };
@@ -61,10 +108,17 @@ type ResumeProgress = {
 async function fetchResumed(
 	project: Project,
 	onProgress?: (p: ResumeProgress) => void,
+	signal?: AbortSignal,
 ): Promise<ResumedSession | null> {
+	// React StrictMode (and rapid open() clicks) can call this concurrently.
+	// AbortSignal lets the caller cancel in-flight reads; we also early-return
+	// from every callback if signal.aborted, so a stale resume can't squeak
+	// progress events into setResumeProgress and cause the count to oscillate.
+	if (signal?.aborted) return null;
 	try {
 		const res = await fetch(`/api/projects/${project.id}/resume`, {
 			method: "POST",
+			signal,
 		});
 		if (!res.ok || !res.body) return null;
 		const reader = res.body.getReader();
@@ -83,10 +137,26 @@ async function fetchResumed(
 
 		// eslint-disable-next-line no-constant-condition
 		while (true) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			buffer += decoder.decode(value, { stream: true });
+			if (signal?.aborted) {
+				// Make sure the underlying network read is freed.
+				try {
+					await reader.cancel();
+				} catch {
+					/* ignore */
+				}
+				return null;
+			}
+			let chunk: ReadableStreamReadResult<Uint8Array>;
+			try {
+				chunk = await reader.read();
+			} catch (err) {
+				if ((err as { name?: string })?.name === "AbortError") return null;
+				throw err;
+			}
+			if (chunk.done) break;
+			buffer += decoder.decode(chunk.value, { stream: true });
 			let nl: number;
+			let processedInChunk = 0;
 			while ((nl = buffer.indexOf("\n")) >= 0) {
 				const line = buffer.slice(0, nl).trim();
 				buffer = buffer.slice(nl + 1);
@@ -97,14 +167,29 @@ async function fetchResumed(
 				} catch {
 					continue;
 				}
+				if (signal?.aborted) return null;
 				if (evt.event === "error") {
 					return null;
 				}
+				// Yield to the browser between every 8 events so React can
+				// commit the queued setResumeProgress updates and the user
+				// sees the progress bar fill incrementally. Without this,
+				// when many events arrive in one network chunk, React
+				// batches all the state updates and only the final one
+				// becomes visible.
+				processedInChunk++;
+				if (processedInChunk % 8 === 0) {
+					await new Promise((r) => setTimeout(r, 0));
+					if (signal?.aborted) return null;
+				}
 				if (evt.event === "start") {
 					const total = (evt.total as number | undefined) ?? 0;
-					if (total > 0) progress.total = total;
+					// Only ever revise total upward — guards against the
+					// backend's two-start protocol (initial empty start +
+					// real start once listdir runs) showing 0/N momentarily.
+					if (total > progress.total) progress.total = total;
 					if (evt.warm) progress.warm = true;
-					if (onProgress) onProgress({ ...progress });
+					if (onProgress && !signal?.aborted) onProgress({ ...progress });
 				} else if (evt.event === "table_done") {
 					const name = String(evt.name ?? "");
 					const rowCount = (evt.rowCount as number | undefined) ?? 0;
@@ -114,7 +199,7 @@ async function fetchResumed(
 						...progress.recent.slice(-(RECENT_LIMIT - 1)),
 						{ name, rowCount },
 					];
-					if (onProgress) onProgress({ ...progress });
+					if (onProgress && !signal?.aborted) onProgress({ ...progress });
 				} else if (evt.event === "done") {
 					final = {
 						sessionId: String(evt.session_id ?? ""),
@@ -135,8 +220,10 @@ async function fetchResumed(
 				}
 			}
 		}
+		if (signal?.aborted) return null;
 		return final;
-	} catch {
+	} catch (err) {
+		if ((err as { name?: string })?.name === "AbortError") return null;
 		return null;
 	}
 }
@@ -317,6 +404,13 @@ function Shell() {
 		null,
 	);
 
+	// Single-flight resume: a new resume aborts any in-flight one. Without
+	// this React StrictMode (or a rapid second open() click) starts two
+	// concurrent NDJSON streams, each with its own progress counter — they
+	// alternately overwrite resumeProgress and you see the table count go
+	// up, down, up, etc.
+	const resumeAbortRef = useRef<AbortController | null>(null);
+
 	const prevUser = useRef(user);
 	useEffect(() => {
 		if (!prevUser.current && user) {
@@ -339,43 +433,67 @@ function Shell() {
 			setHydrating(false);
 			return;
 		}
-		let cancelled = false;
+		resumeAbortRef.current?.abort();
+		const ac = new AbortController();
+		resumeAbortRef.current = ac;
 		(async () => {
 			try {
-				const projRes = await fetch(`/api/projects/${projectId}`);
+				const projRes = await fetch(`/api/projects/${projectId}`, {
+					signal: ac.signal,
+				});
 				if (!projRes.ok) {
-					if (!cancelled) setRoute({ view: "projects" });
+					if (!ac.signal.aborted) setRoute({ view: "projects" });
 					return;
 				}
 				const project = (await projRes.json()) as Project;
-				const resumed = await fetchResumed(project, (p) => {
-					if (!cancelled) setResumeProgress(p);
-				});
-				if (cancelled) return;
+				const resumed = await fetchResumed(
+					project,
+					(p) => {
+						if (!ac.signal.aborted) setResumeProgress(p);
+					},
+					ac.signal,
+				);
+				if (ac.signal.aborted) return;
 				const idx = PHASE_TO_STAGE[project.phase] ?? 0;
 				setStage(RL_STAGES[idx].id);
 				setRoute({ view: "pipeline", project, resumed });
-			} catch {
-				if (!cancelled) setRoute({ view: "projects" });
+			} catch (err) {
+				if ((err as { name?: string })?.name === "AbortError") return;
+				if (!ac.signal.aborted) setRoute({ view: "projects" });
 			} finally {
-				if (!cancelled) {
+				if (!ac.signal.aborted) {
 					setHydrating(false);
 					setResumeProgress(null);
 				}
 			}
 		})();
 		return () => {
-			cancelled = true;
+			ac.abort();
 		};
 		// Run once on mount, regardless of route changes.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
 	useEffect(() => {
-		localStorage.setItem(LS_ROUTE, JSON.stringify(route));
+		// Persist the minimal route only — never the resumed payload (it's
+		// MBs of schemas/previews/transform output and would blow the
+		// localStorage quota for projects of any real size). The mount
+		// effect re-fetches everything on reload.
+		try {
+			localStorage.setItem(
+				LS_ROUTE,
+				JSON.stringify(toPersistedRoute(route)),
+			);
+		} catch {
+			// QuotaExceededError or storage disabled — non-fatal.
+		}
 	}, [route]);
 	useEffect(() => {
-		localStorage.setItem(LS_STAGE, stage);
+		try {
+			localStorage.setItem(LS_STAGE, stage);
+		} catch {
+			// non-fatal
+		}
 	}, [stage]);
 
 	if (!user) return <LoginScreen />;
@@ -384,7 +502,7 @@ function Shell() {
 		// Navigate to the pipeline view immediately so the user gets visual
 		// feedback even when the resume call is slow. The first time a
 		// 257-table project is opened after a server restart the resume
-		// can take ~50s while CSVs are re-parsed; without an immediate
+		// can take a while while CSVs are re-parsed; without an immediate
 		// route change the projects page just appears frozen and clicks
 		// look like they did nothing.
 		const idx = PHASE_TO_STAGE[p.phase] ?? 0;
@@ -392,12 +510,26 @@ function Shell() {
 		setRoute({ view: "pipeline", project: p, resumed: null });
 		setHydrating(true);
 		setResumeProgress(null);
+		// Abort any prior resume (e.g. mount-effect on a refreshed page) so
+		// we don't have two NDJSON streams writing to setResumeProgress.
+		resumeAbortRef.current?.abort();
+		const ac = new AbortController();
+		resumeAbortRef.current = ac;
 		try {
-			const resumed = await fetchResumed(p, (prog) => setResumeProgress(prog));
+			const resumed = await fetchResumed(
+				p,
+				(prog) => {
+					if (!ac.signal.aborted) setResumeProgress(prog);
+				},
+				ac.signal,
+			);
+			if (ac.signal.aborted) return;
 			setRoute({ view: "pipeline", project: p, resumed });
 		} finally {
-			setHydrating(false);
-			setResumeProgress(null);
+			if (!ac.signal.aborted) {
+				setHydrating(false);
+				setResumeProgress(null);
+			}
 		}
 	};
 
