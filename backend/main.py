@@ -61,6 +61,7 @@ from project_state import (
     project_uploads_dir,
     save_state,
 )
+from state import extraction_store, session_store
 from utils import extract_cache
 from utils.audit import AuditTrail
 
@@ -82,9 +83,6 @@ GUEST_DIR = os.path.join(os.path.dirname(__file__), "data", "guest")
 os.makedirs(GUEST_DIR, exist_ok=True)
 init_db()
 backfill_pipeline_runs()
-
-# In-memory session store (keyed by session_id)
-sessions: dict = {}
 
 
 def _excluded_set(session: dict) -> set:
@@ -128,9 +126,9 @@ def _visible_session(session: dict) -> dict:
     return s
 
 
-def _auto_save(session_id: str, phase: str) -> None:
+async def _auto_save(session_id: str, phase: str) -> None:
     """If the session is linked to a project, persist state and update phase."""
-    s = sessions.get(session_id)
+    s = await session_store.get(session_id)
     if not s or not s.get("project_id"):
         return
     project_id = s["project_id"]
@@ -189,7 +187,7 @@ async def dashboard_stats(username: str):
     projects = list_projects(username)
     project_ids = {p["id"] for p in projects}
     quality_scores: list[float] = []
-    for sess in sessions.values():
+    for sess in (await session_store.all_sessions()).values():
         pid = sess.get("project_id")
         if not pid or pid not in project_ids:
             continue
@@ -297,10 +295,10 @@ async def delete_project_endpoint(project_id: str):
     if not project:
         raise HTTPException(404, "Project not found")
     to_remove = [
-        sid for sid, s in sessions.items() if s.get("project_id") == project_id
+        sid for sid, s in (await session_store.all_sessions()).items() if s.get("project_id") == project_id
     ]
     for sid in to_remove:
-        del sessions[sid]
+        await session_store.remove(sid)
     delete_project_files(project_id)
     delete_project(project_id)
     return {"ok": True}
@@ -370,7 +368,7 @@ async def resume_project(project_id: str):
     async def stream():
         try:
             # Warm path: a session for this project already lives in memory.
-            for sid, sess in sessions.items():
+            for sid, sess in (await session_store.all_sessions()).items():
                 if sess.get("project_id") == project_id and sess.get("raw"):
                     tables = sess["raw"].get("tables", {})
                     table_names = list(tables.keys())
@@ -469,7 +467,7 @@ async def resume_project(project_id: str):
                     await asyncio.sleep(0)
 
             session["project_id"] = project_id
-            sessions[session_id] = session
+            await session_store.put(session_id, session)
             final_bytes = await encode_async(
                 {"event": "done", **_resume_payload(project, session_id, session)}
             )
@@ -486,7 +484,7 @@ async def save_project(project_id: str):
     if not project:
         raise HTTPException(404, "Project not found")
     session = None
-    for s in sessions.values():
+    for s in (await session_store.all_sessions()).values():
         if s.get("project_id") == project_id:
             session = s
             break
@@ -523,8 +521,6 @@ def _is_db_file(filename: str) -> bool:
 # from index 0, then live updates until the terminal event. That's how the
 # user can navigate away and reconnect without losing progress.
 # ---------------------------------------------------------------------------
-
-extraction_states: dict[str, dict] = {}
 
 
 def _new_extraction_state() -> dict:
@@ -600,7 +596,7 @@ async def upload_db(
         db_type=db_type,
     )
 
-    sessions[session_id] = {
+    await session_store.put(session_id, {
         "project_id": project_id,
         "pending_db": {
             "file_path": dest,
@@ -609,12 +605,11 @@ async def upload_db(
             "size": file_size,
             "db_type": db_type,
         },
-    }
+    })
     state = _new_extraction_state()
     state["filename"] = file.filename
     state["project_id"] = project_id
-    extraction_states[session_id] = state
-
+    await extraction_store.put(session_id, state)
     return {
         "ok": True,
         "session_id": session_id,
@@ -633,14 +628,14 @@ async def start_extract(
     current status without restarting. If a previous attempt errored,
     calling again resets state and tries again.
     """
-    if session_id not in sessions:
+    if not await session_store.exists(session_id):
         raise HTTPException(404, "Session not found")
-    s = sessions[session_id]
+    s = (await session_store.require(session_id))
     pending = s.get("pending_db")
     if not pending and "raw" not in s:
         raise HTTPException(400, "No database file pending extraction for this session")
 
-    state = extraction_states.get(session_id)
+    state = await extraction_store.get(session_id)
     if state and state["status"] == "extracting":
         return {"ok": True, "status": "extracting", "session_id": session_id}
     if state and state["status"] == "done":
@@ -655,8 +650,7 @@ async def start_extract(
         "filename"
     )
     new_state["project_id"] = s.get("project_id")
-    extraction_states[session_id] = new_state
-
+    await extraction_store.put(session_id, new_state)
     asyncio.create_task(_run_extraction(session_id, password))
     return {"ok": True, "status": "extracting", "session_id": session_id}
 
@@ -664,7 +658,7 @@ async def start_extract(
 @app.get("/api/extract/{session_id}/status")
 async def extract_status(session_id: str):
     """Lightweight status snapshot (no event log)."""
-    state = extraction_states.get(session_id)
+    state = await extraction_store.get(session_id)
     if not state:
         raise HTTPException(404, "No extraction state for this session")
     return {
@@ -691,13 +685,13 @@ async def stream_extract(session_id: str):
     event history followed by live updates. Late joiners see the same
     sequence, including the terminal event.
     """
-    if session_id not in extraction_states:
+    if not (await extraction_store.get(session_id)):
         raise HTTPException(404, "No extraction state for this session")
 
     async def gen():
         cursor = 0
         while True:
-            state = extraction_states.get(session_id)
+            state = await extraction_store.get(session_id)
             if state is None:
                 break
             new_events = state["events"][cursor:]
@@ -721,7 +715,7 @@ async def cancel_extract(session_id: str):
     """
     from datetime import datetime as _dt
 
-    state = extraction_states.get(session_id)
+    state = await extraction_store.get(session_id)
     if not state:
         raise HTTPException(404, "No extraction state for this session")
 
@@ -732,7 +726,7 @@ async def cancel_extract(session_id: str):
     state["events"].append({"event": "cancelled", "message": "Extraction cancelled"})
     state["finished_at"] = _dt.now(timezone.utc).isoformat()
 
-    s = sessions.get(session_id)
+    s = await session_store.get(session_id)
     if s:
         pending = s.get("pending_db")
         if pending:
@@ -744,7 +738,7 @@ async def cancel_extract(session_id: str):
         # Drop the whole session if extraction never produced data; keep
         # it otherwise so any rows already in `raw` survive.
         if "raw" not in s:
-            sessions.pop(session_id, None)
+            await session_store.remove(session_id)
 
     return {"ok": True, "status": "cancelled", "session_id": session_id}
 
@@ -755,8 +749,8 @@ async def _run_extraction(session_id: str, password: str | None) -> None:
 
     from core.db_extractor import extract_db_to_csvs_iter
 
-    state = extraction_states[session_id]
-    s = sessions[session_id]
+    state = (await extraction_store.get(session_id))
+    s = (await session_store.require(session_id))
     pending = s.get("pending_db")
     if not pending:
         state["status"] = "error"
@@ -839,7 +833,7 @@ async def _run_extraction(session_id: str, password: str | None) -> None:
             db_type=pending["db_type"],
         )
 
-        sessions[session_id].update(
+        (await session_store.require(session_id)).update(
             {
                 "pre_extract": {
                     "file": file_info.dict(),
@@ -852,9 +846,9 @@ async def _run_extraction(session_id: str, password: str | None) -> None:
                 "audit_trail": audit_trail,
             }
         )
-        sessions[session_id].pop("pending_db", None)
+        (await session_store.require(session_id)).pop("pending_db", None)
         # Persist parsed extraction so next resume skips CSV parsing.
-        project_id_for_cache = sessions[session_id].get("project_id")
+        project_id_for_cache = (await session_store.require(session_id)).get("project_id")
         if project_id_for_cache:
             try:
                 from utils import extract_cache as _ec
@@ -862,7 +856,7 @@ async def _run_extraction(session_id: str, password: str | None) -> None:
                 _ec.write(project_id_for_cache, result, pending["session_dir"])
             except Exception:
                 pass
-        _auto_save(session_id, "pre-extract")
+        await _auto_save(session_id, "pre-extract")
 
         done_payload = PreExtractResponse(
             ok=True,
@@ -905,9 +899,9 @@ async def pre_extract_select(session_id: str, body: TableSelectionRequest):
     newly-excluded tables are trimmed. Configure entries for tables that
     survived the change are kept intact.
     """
-    if session_id not in sessions:
+    if not await session_store.exists(session_id):
         raise HTTPException(404, "Session not found")
-    s = sessions[session_id]
+    s = (await session_store.require(session_id))
     raw = s.get("raw", {})
     all_tables = set(raw.get("tables", {}).keys())
     selected = set(body.tables) & all_tables
@@ -954,7 +948,7 @@ async def pre_extract_select(session_id: str, body: TableSelectionRequest):
             except Exception:
                 pass
 
-    _auto_save(session_id, "edit")
+    await _auto_save(session_id, "edit")
     return {
         "ok": True,
         "changed": changed,
@@ -1034,13 +1028,13 @@ async def upload_files(
             list(result.get("tables", {}).keys()),
             sum(len(rows) for rows in result.get("tables", {}).values()),
         )
-    sessions[session_id] = {
+    await session_store.put(session_id, {
         "project_id": project_id,
         "extractor": extractor,
         "raw": result,
         "files": saved,
         "audit_trail": audit_trail,
-    }
+    })
 
     # Persist the parsed extraction so the next resume skips CSV parsing.
     # Best-effort: if the cache write fails for any reason the request
@@ -1053,7 +1047,7 @@ async def upload_files(
         except Exception:
             pass
 
-    _auto_save(session_id, "edit")
+    await _auto_save(session_id, "edit")
 
     # Record upload/extract as a pipeline run
     if project_id:
@@ -1077,9 +1071,9 @@ async def upload_files(
 @app.get("/api/table-data/{session_id}")
 async def get_table_data(session_id: str):
     """Return all rows for all tables in the session."""
-    if session_id not in sessions:
+    if not await session_store.exists(session_id):
         raise HTTPException(404, "Session not found")
-    s = sessions[session_id]
+    s = (await session_store.require(session_id))
     _ensure_rows_loaded(s)  # lazy: rows aren't populated by resume
     raw = _visible_raw(s)
     return {
@@ -1096,9 +1090,9 @@ async def get_table_page(
     page_size: int = Query(100, ge=1, le=500),
 ):
     """Return a single page of rows for a specific table."""
-    if session_id not in sessions:
+    if not await session_store.exists(session_id):
         raise HTTPException(404, "Session not found")
-    s = sessions[session_id]
+    s = (await session_store.require(session_id))
     if table_name in _excluded_set(s):
         raise HTTPException(404, f"Table '{table_name}' is excluded")
     _ensure_rows_loaded(s, [table_name])  # lazy: per-table load is cheap
@@ -1124,9 +1118,9 @@ async def get_table_page(
 @app.post("/api/table-data/{session_id}")
 async def save_table_data(session_id: str, body: EditDataRequest):
     """Replace table rows with edited data and recompute schema/stats."""
-    if session_id not in sessions:
+    if not await session_store.exists(session_id):
         raise HTTPException(404, "Session not found")
-    s = sessions[session_id]
+    s = (await session_store.require(session_id))
     _ensure_rows_loaded(s)  # lazy: edits need the full row set in memory
     raw = s.get("raw", {})
 
@@ -1151,7 +1145,7 @@ async def save_table_data(session_id: str, body: EditDataRequest):
     extractor._infer_schema()
     raw["schema"] = extractor._schema
 
-    _auto_save(session_id, "edit")
+    await _auto_save(session_id, "edit")
     return {
         "ok": True,
         "stats": stats,
@@ -1162,9 +1156,9 @@ async def save_table_data(session_id: str, body: EditDataRequest):
 
 @app.get("/api/session/{session_id}/config")
 async def get_session_config(session_id: str):
-    if session_id not in sessions:
+    if not await session_store.exists(session_id):
         raise HTTPException(404, "Session not found")
-    return sessions[session_id].get("config", {})
+    return (await session_store.require(session_id)).get("config", {})
 
 
 @app.post("/api/configure/{session_id}", response_model=ConfigureResponse)
@@ -1173,19 +1167,19 @@ async def configure(
     body: ConfigureRequest,
     phase: str = Query("configure"),
 ):
-    if session_id not in sessions:
+    if not await session_store.exists(session_id):
         raise HTTPException(404, "Session not found")
-    sessions[session_id]["config"] = body.dict()
-    _auto_save(session_id, phase)
+    (await session_store.require(session_id))["config"] = body.dict()
+    await _auto_save(session_id, phase)
     return ConfigureResponse(ok=True, message="Configuration saved")
 
 
 
 @app.get("/api/transform/{session_id}", response_model=TransformResponse)
 async def transform(session_id: str):
-    if session_id not in sessions:
+    if not await session_store.exists(session_id):
         raise HTTPException(404, "Session not found")
-    s = sessions[session_id]
+    s = (await session_store.require(session_id))
     project_id = s.get("project_id")
     run = None
     if project_id:
@@ -1203,7 +1197,7 @@ async def transform(session_id: str):
         "current_table": None,
         "persisted_targets": [],
     }
-    sessions[session_id]["transform_progress"] = progress
+    (await session_store.require(session_id))["transform_progress"] = progress
 
     def _on_progress(table_name: str, done: int, total: int) -> None:
         progress["tables_done"] = done
@@ -1238,7 +1232,7 @@ async def transform(session_id: str):
             os.replace(tmp, path)
             progress.setdefault("persisted_targets", []).append(target)
         except Exception as e:
-            sessions[session_id].setdefault("warnings", []).append(
+            s.setdefault("warnings", []).append(
                 f"failed to persist target {target}: {e}"
             )
 
@@ -1286,10 +1280,10 @@ async def transform(session_id: str):
         raise
     progress["status"] = "done"
     progress["tables_done"] = progress.get("tables_total", 0)
-    sessions[session_id]["transformed"] = result
-    sessions[session_id]["transformer"] = transformer
-    sessions[session_id]["fk_edges"] = list(transformer.fk_edges)
-    _auto_save(session_id, "transform")
+    (await session_store.require(session_id))["transformed"] = result
+    (await session_store.require(session_id))["transformer"] = transformer
+    (await session_store.require(session_id))["fk_edges"] = list(transformer.fk_edges)
+    await _auto_save(session_id, "transform")
     if run and project_id:
         total_rows = result.get("total_rows", 0)
         note_parts = []
@@ -1333,11 +1327,11 @@ async def reconcile_endpoint(session_id: str, body: dict | None = None):
     account identifier, pass `legacy_account_balances` in the body
     explicitly.
     """
-    if session_id not in sessions:
+    if not await session_store.exists(session_id):
         raise HTTPException(404, "Session not found")
-    s = sessions[session_id]
+    s = (await session_store.require(session_id))
     if "transformed" not in s or not s["transformed"]:
-        _ensure_transformed(session_id)
+        await _ensure_transformed(session_id)
     transformed = s["transformed"]
     target_tables = transformed.get("tables", {})
 
@@ -1371,7 +1365,7 @@ async def reconcile_endpoint(session_id: str, body: dict | None = None):
         account_tolerance=body.get("account_tolerance", 0.01),
         invoice_tolerance=body.get("invoice_tolerance", 0.05),
     )
-    sessions[session_id]["reconcile_report"] = report
+    (await session_store.require(session_id))["reconcile_report"] = report
     return report
 
 
@@ -1384,9 +1378,9 @@ async def transform_status(session_id: str):
       {status: "running"|"done"|"error"|"unknown",
        tables_done, tables_total, current_table}
     """
-    if session_id not in sessions:
+    if not await session_store.exists(session_id):
         return {"status": "unknown"}
-    s = sessions[session_id]
+    s = (await session_store.require(session_id))
     progress = s.get("transform_progress")
     if not progress:
         return {"status": "unknown"}
@@ -1539,7 +1533,7 @@ def _list_cached_tables(project_id: str) -> List[str]:
         return []
 
 
-def _ensure_transformed(session_id: str) -> None:
+async def _ensure_transformed(session_id: str) -> None:
     """Run the transformer on demand if the session doesn't have its result.
 
     On project resume we no longer pre-run the transformer (it was costing
@@ -1547,7 +1541,7 @@ def _ensure_transformed(session_id: str) -> None:
     `s['transformed']` calls this helper, which mirrors what /api/transform
     does but without the per-step audit-trail bookkeeping.
     """
-    s = sessions[session_id]
+    s = (await session_store.require(session_id))
     if "transformed" in s and s["transformed"]:
         return
     # Lazy load: rows aren't populated by resume.
@@ -1561,14 +1555,14 @@ def _ensure_transformed(session_id: str) -> None:
 
 @app.post("/api/load/{session_id}", response_model=LoadResponse)
 async def load(session_id: str, body: LoadRequest):
-    if session_id not in sessions:
+    if not await session_store.exists(session_id):
         raise HTTPException(404, "Session not found")
-    s = sessions[session_id]
+    s = (await session_store.require(session_id))
     if "transformed" not in s or not s["transformed"]:
         # Lazy: resume no longer pre-runs the transformer, so do it now.
         if not s.get("config"):
             raise HTTPException(400, "Run transform first")
-        _ensure_transformed(session_id)
+        await _ensure_transformed(session_id)
 
     project_id = s.get("project_id")
     run = None
@@ -1603,8 +1597,8 @@ async def load(session_id: str, body: LoadRequest):
         self_refs=self_refs,
     )
     result = loader.run()
-    sessions[session_id]["load_result"] = result
-    _auto_save(session_id, "load")
+    (await session_store.require(session_id))["load_result"] = result
+    await _auto_save(session_id, "load")
     if run and project_id:
         total_rows = sum(result.get("rows_written", {}).values())
         status = "error" if result.get("errors") else "done"
@@ -1622,19 +1616,19 @@ async def load(session_id: str, body: LoadRequest):
 
 @app.get("/api/stats/{session_id}", response_model=StatsResponse)
 async def stats(session_id: str):
-    if session_id not in sessions:
+    if not await session_store.exists(session_id):
         raise HTTPException(404, "Session not found")
-    s = sessions[session_id]
+    s = (await session_store.require(session_id))
     from utils.stats import StatsEngine
 
     engine = StatsEngine(_visible_session(s))
-    _auto_save(session_id, "stats")
+    await _auto_save(session_id, "stats")
     return StatsResponse(**engine.compute())
 
 
 @app.get("/api/download/{session_id}/{filename}")
 async def download(session_id: str, filename: str):
-    s = sessions.get(session_id)
+    s = await session_store.get(session_id)
     if s and s.get("project_id"):
         base_dir = project_outputs_dir(s["project_id"])
     else:
@@ -1715,7 +1709,7 @@ async def download_all_project_files(project_id: str):
 async def download_all_session_files(session_id: str):
     """Same as the project variant but for guest sessions that don't have
     a project_id yet."""
-    s = sessions.get(session_id)
+    s = await session_store.get(session_id)
     if s and s.get("project_id"):
         base_dir = project_outputs_dir(s["project_id"])
     else:
