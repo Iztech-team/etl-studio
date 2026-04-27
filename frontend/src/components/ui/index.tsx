@@ -66,37 +66,96 @@ interface DataTableProps {
   columns: string[]
   rows: Record<string, unknown>[]
   maxRows?: number
+  onClose?: () => void
+  onEdit?: (rowIndex: number, row: Record<string, unknown>) => void
+  interactive?: boolean
 }
 
-export function DataTable({ columns, rows, maxRows = 50 }: DataTableProps) {
+export function DataTable({ columns, rows, maxRows = 50, onClose, onEdit, interactive = false }: DataTableProps) {
   const displayRows = rows.slice(0, maxRows)
+  const [selectedRow, setSelectedRow] = useState<number | null>(interactive ? 0 : null)
+  const [selectedCol, setSelectedCol] = useState<number | null>(interactive ? 0 : null)
+
+  useEffect(() => {
+    if (!interactive || selectedRow === null) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+
+      const key = e.key.toLowerCase()
+      if (key === 'arrowup' && selectedRow > 0) {
+        e.preventDefault()
+        setSelectedRow(selectedRow - 1)
+      } else if (key === 'arrowdown' && selectedRow < displayRows.length - 1) {
+        e.preventDefault()
+        setSelectedRow(selectedRow + 1)
+      } else if (key === 'arrowleft' && selectedCol !== null && selectedCol > 0) {
+        e.preventDefault()
+        setSelectedCol(selectedCol - 1)
+      } else if (key === 'arrowright' && selectedCol !== null && selectedCol < columns.length - 1) {
+        e.preventDefault()
+        setSelectedCol(selectedCol + 1)
+      } else if (key === 'e' && selectedRow !== null) {
+        e.preventDefault()
+        onEdit?.(selectedRow, displayRows[selectedRow])
+      } else if (key === 'x' || key === 'escape') {
+        e.preventDefault()
+        onClose?.()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [interactive, selectedRow, selectedCol, displayRows, columns.length, onClose, onEdit])
+
   return (
-    <div className="overflow-x-auto rounded-md border border-border bg-card">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="bg-muted/50 border-b border-border">
-            {columns.map((col) => (
-              <th key={col} className="px-3 py-2 text-left text-xs font-semibold text-primary uppercase tracking-wider whitespace-nowrap">
-                {col}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {displayRows.map((row, i) => (
-            <tr key={i} className="border-b border-border/40 last:border-0 hover:bg-accent/10 transition-colors">
-              {columns.map((col) => (
-                <td key={col} className="px-3 py-2 text-foreground whitespace-nowrap max-w-[200px] truncate">
-                  {row[col] === null ? <span className="text-muted-foreground italic">null</span> : String(row[col] ?? '')}
-                </td>
+    <div className="flex flex-col gap-2">
+      {onClose && (
+        <div className="flex justify-end">
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors" title="Close [X]">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
+      <div className="overflow-x-auto rounded-md border border-border bg-card">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-muted/50 border-b border-border">
+              {columns.map((col, idx) => (
+                <th key={col} className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap transition-colors
+                  ${interactive && selectedCol === idx && selectedRow !== null ? 'bg-primary/20 text-primary' : 'text-primary'}
+                `}>
+                  {col}
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-      {rows.length > maxRows && (
-        <div className="px-3 py-2 text-xs text-muted-foreground bg-muted/30 border-t border-border">
-          Showing {maxRows} of {rows.length} rows
+          </thead>
+          <tbody>
+            {displayRows.map((row, rowIdx) => (
+              <tr key={rowIdx} className={`border-b border-border/40 last:border-0 transition-colors
+                ${interactive && selectedRow === rowIdx ? 'bg-accent/20' : 'hover:bg-accent/10'}
+              `}>
+                {columns.map((col, colIdx) => (
+                  <td key={col} className={`px-3 py-2 whitespace-nowrap max-w-[200px] truncate transition-colors
+                    ${interactive && selectedRow === rowIdx && selectedCol === colIdx ? 'bg-primary/30 text-primary font-semibold ring-1 ring-primary' : 'text-foreground'}
+                  `}>
+                    {row[col] === null ? <span className="text-muted-foreground italic">null</span> : String(row[col] ?? '')}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {rows.length > maxRows && (
+          <div className="px-3 py-2 text-xs text-muted-foreground bg-muted/30 border-t border-border">
+            Showing {maxRows} of {rows.length} rows
+          </div>
+        )}
+      </div>
+      {interactive && (
+        <div className="text-xs text-muted-foreground px-2">
+          {selectedRow !== null && `Row ${selectedRow + 1} of ${displayRows.length}`} · ↑↓ navigate rows · ← → navigate columns · <kbd>E</kbd> edit · <kbd>X</kbd> close
         </div>
       )}
     </div>

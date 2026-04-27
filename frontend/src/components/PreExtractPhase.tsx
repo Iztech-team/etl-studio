@@ -489,7 +489,13 @@ export default function PreExtractPhase() {
             </CardHeader>
             <CardContent>
               {cols.length > 0 ? (
-                <DataTable columns={cols} rows={rows} maxRows={5} />
+                <DataTable
+                  columns={cols}
+                  rows={rows}
+                  maxRows={5}
+                  interactive
+                  onEdit={(idx, row) => console.log('Edit record:', idx, row)}
+                />
               ) : (
                 <p className="text-xs text-muted-foreground">No data in this table.</p>
               )}
