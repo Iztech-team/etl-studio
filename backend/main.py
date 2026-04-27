@@ -11,7 +11,6 @@ from core.load.loader import Loader
 from core.transform.transformer import Transformer
 from persistence.db import (
     _get_conn,
-    backfill_pipeline_runs,
     create_pipeline_run,
     create_project,
     delete_project,
@@ -21,7 +20,6 @@ from persistence.db import get_dashboard_stats as db_get_dashboard_stats
 from persistence.db import get_history as db_get_history
 from persistence.db import (
     get_project,
-    init_db,
     insert_audit_events_batch,
     list_projects,
     rename_project,
@@ -61,11 +59,12 @@ from persistence.project_state import (
     project_uploads_dir,
     save_state,
 )
+from startup import GUEST_DIR, OUTPUT_DIR, UPLOAD_DIR, lifespan
 from state import extraction_store, session_store
 from utils import extract_cache
 from utils.audit import AuditTrail
 
-app = FastAPI(title="ETL Legacy", version="1.0.0")
+app = FastAPI(title="ETL Legacy", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -73,16 +72,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-UPLOAD_DIR = "uploads"
-OUTPUT_DIR = "outputs"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-GUEST_DIR = os.path.join(os.path.dirname(__file__), "data", "guest")
-os.makedirs(GUEST_DIR, exist_ok=True)
-init_db()
-backfill_pipeline_runs()
 
 
 def _excluded_set(session: dict) -> set:
