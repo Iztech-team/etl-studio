@@ -59,7 +59,6 @@ class Loader:
         transformed: Dict[str, Any],
         config: Dict[str, Any],
         out_dir: str,
-        ddl_schema: Dict[str, Any] | None = None,
         fk_edges: List[tuple] | None = None,
         self_refs: Dict[str, str] | None = None,
         name_column: str = "name",
@@ -68,7 +67,6 @@ class Loader:
         self.exceptions: Dict[str, List[Dict]] = transformed.get("exceptions", {}) or {}
         self.config = config
         self.out_dir = out_dir
-        self.ddl_schema = ddl_schema or {}
         self.fk_edges = fk_edges or []
         # target_table -> parent column. For each table named here, rows
         # are sorted topologically on (parent_column → name_column) before
@@ -150,8 +148,6 @@ class Loader:
                 cols = list(rows[0].keys())
                 col_list = ", ".join(f'"{c}"' for c in cols)
                 sql_lines.append(f"-- Table: {table}")
-                create_stmts = self._create_table_sql(table, cols)
-                sql_lines.extend(create_stmts)
                 for row in rows:
                     vals = ", ".join(self._sql_val(row.get(c)) for c in cols)
                     sql_lines.append(
@@ -228,24 +224,6 @@ class Loader:
             except Exception:
                 continue
         return out_paths
-
-    # ------------------------------------------------------------------
-    def _create_table_sql(self, table: str, cols: List[str]) -> List[str]:
-        """Generate CREATE TABLE statement using original DDL types if available."""
-        if table not in self.ddl_schema:
-            return []
-        schema = self.ddl_schema[table]
-        lines = [f'CREATE TABLE IF NOT EXISTS "{table}" (']
-        col_defs = []
-        for col in cols:
-            col_info = schema.get(col, {})
-            col_type = col_info.get("original_type", "TEXT")
-            nullable = col_info.get("nullable", True)
-            null_str = "" if nullable else " NOT NULL"
-            col_defs.append(f'  "{col}" {col_type}{null_str}')
-        lines.append(",\n".join(col_defs))
-        lines.append(");")
-        return ["\n".join(lines), ""]
 
     @staticmethod
     def _sql_val(v: Any) -> str:

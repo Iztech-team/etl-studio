@@ -11,8 +11,6 @@ DATA_DIR = Path(__file__).parent / "data"
 
 PERSIST_KEYS = [
     "phase",
-    "ddl_schema",
-    "applied_ddl",
     "config",
     "load_result",
     "pre_extract",
@@ -116,7 +114,6 @@ def load_state_iter(project_id: str):
             schema = meta.get("schema", {}) or {}
             stats = meta.get("stats", {}) or {}
             preview = meta.get("preview", {}) or {}
-            ddl_schema = meta.get("ddl_schema", {}) or {}
             table_names = list(meta.get("all_table_names", []) or [])
             yield "start", {"tables": table_names, "total": len(table_names)}
             for name in table_names:
@@ -140,14 +137,12 @@ def load_state_iter(project_id: str):
                 "schema": schema,
                 "stats": stats,
                 "preview": preview,
-                "ddl_schema": ddl_schema,
             }
             # Hydrate extractor metadata so /api/table-data's edit endpoint
             # (which re-uses extractor._infer_schema) keeps working.
             extractor._raw_tables = {}
             extractor._schema = schema
             extractor._stats = stats
-            extractor._ddl_schema = ddl_schema
         except Exception:
             # Corrupt cache — fall through to a full re-extract that
             # rewrites the cache in the new format.
@@ -161,7 +156,6 @@ def load_state_iter(project_id: str):
                     "schema": payload["schema"],
                     "stats": payload["stats"],
                     "preview": payload["preview"],
-                    "ddl_schema": payload["ddl_schema"],
                 }
             else:
                 # Forward 'start' / 'table_done' so the caller can stream them.
@@ -187,13 +181,6 @@ def load_state_iter(project_id: str):
             continue
         if key in saved:
             session[key] = saved[key]
-
-    applied_ddl = session.get("applied_ddl")
-    ddl_schema = session.get("ddl_schema")
-    if applied_ddl and ddl_schema:
-        for table in applied_ddl:
-            if table in ddl_schema:
-                raw["schema"][table] = ddl_schema[table]
 
     session["files"] = [
         {

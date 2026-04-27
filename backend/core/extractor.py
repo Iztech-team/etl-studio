@@ -20,7 +20,6 @@ class Extractor:
         self._raw_tables: Dict[str, List[Dict]] = {}
         self._schema: Dict[str, Any] = {}
         self._stats: Dict[str, Any] = {}
-        self._ddl_schema: Dict[str, Any] = {}
 
     # ------------------------------------------------------------------
     def extract_all(self) -> Dict[str, Any]:
@@ -118,7 +117,6 @@ class Extractor:
             "schema": self._schema,
             "stats": self._stats,
             "preview": {t: rows[:5] for t, rows in self._raw_tables.items()},
-            "ddl_schema": self._ddl_schema,
         }
 
     # ------------------------------------------------------------------
@@ -180,12 +178,6 @@ class Extractor:
         parser = SQLParser(content)
         tables = parser.parse()
         self._raw_tables.update(tables)
-        # Also extract DDL schemas from CREATE TABLE statements
-        ddl = parser.parse_ddl()
-        # Only keep DDL for tables that have no data rows (DDL-only files)
-        for table_name, columns in ddl.items():
-            if table_name not in self._raw_tables or not self._raw_tables[table_name]:
-                self._ddl_schema[table_name] = columns
 
     # ------------------------------------------------------------------
     def _infer_schema(self):

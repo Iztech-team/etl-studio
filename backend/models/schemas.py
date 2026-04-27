@@ -226,7 +226,10 @@ class PreExtractResponse(BaseModel):
     preview: Dict[str, Any]
     inferred_schema: Dict[str, Any]
     stats: Dict[str, Any]
-    ddl_schema: Dict[str, Any] = {}
+
+
+class TableSelectionRequest(BaseModel):
+    tables: List[str]
 
 
 class EditDataRequest(BaseModel):
@@ -238,53 +241,3 @@ class EditDataResponse(BaseModel):
     stats: Dict[str, Any]
 
 
-class DDLColumnSchema(BaseModel):
-    inferred_type: str
-    original_type: str
-    nullable: bool
-
-
-class DDLUploadResponse(BaseModel):
-    ok: bool
-    ddl_schema: Dict[str, Dict[str, DDLColumnSchema]]
-    matching_tables: List[str]
-
-
-class ApplyDDLRequest(BaseModel):
-    tables: List[str]
-
-
-class ApplyDDLTableResult(BaseModel):
-    table: str
-    applied: bool
-    errors: List[str] = []
-
-
-class ApplyDDLResponse(BaseModel):
-    ok: bool
-    results: List[ApplyDDLTableResult]
-
-
-class DDLTemplate(BaseModel):
-    id: str
-    project_id: str
-    name: str
-    ddl_content: str
-    created_at: str
-    created_by: Optional[str] = None
-
-
-class CreateTemplateRequest(BaseModel):
-    name: str
-    ddl_content: str
-    created_by: Optional[str] = None
-
-
-class UpdateTemplateRequest(BaseModel):
-    name: Optional[str] = None
-    ddl_content: Optional[str] = None
-
-
-class TemplateListResponse(BaseModel):
-    templates: List[DDLTemplate]
-    total: int

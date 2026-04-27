@@ -22,7 +22,6 @@ from db import get_history as db_get_history
 from db import (
     get_project,
     init_db,
-    init_templates_table,
     insert_audit_events_batch,
     list_projects,
     rename_project,
@@ -41,14 +40,8 @@ from models.project_schemas import (
 )
 from models.schemas import (
     DB_TYPE_EXTENSIONS,
-    ApplyDDLRequest,
-    ApplyDDLResponse,
-    ApplyDDLTableResult,
     ConfigureRequest,
     ConfigureResponse,
-    CreateTemplateRequest,
-    DDLTemplate,
-    DDLUploadResponse,
     EditDataRequest,
     EditDataResponse,
     LoadRequest,
@@ -56,9 +49,8 @@ from models.schemas import (
     PreExtractFileInfo,
     PreExtractResponse,
     StatsResponse,
-    TemplateListResponse,
+    TableSelectionRequest,
     TransformResponse,
-    UpdateTemplateRequest,
 )
 from project_state import (
     delete_project_files,
@@ -89,7 +81,6 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 GUEST_DIR = os.path.join(os.path.dirname(__file__), "data", "guest")
 os.makedirs(GUEST_DIR, exist_ok=True)
 init_db()
-init_templates_table()
 backfill_pipeline_runs()
 
 # In-memory session store (keyed by session_id)
@@ -127,7 +118,6 @@ def _visible_raw(session: dict) -> dict:
         "schema": {t: v for t, v in raw.get("schema", {}).items() if t in keep_set},
         "stats": {t: v for t, v in raw.get("stats", {}).items() if t in keep_set},
         "preview": {t: v for t, v in raw.get("preview", {}).items() if t in keep_set},
-        "ddl_schema": raw.get("ddl_schema", {}),
     }
 
 
@@ -175,92 +165,6 @@ def _flush_audit_events(
     audit_trail.events.clear()
 
 
-# ---------------------------------------------------------------------------
-# Template CRUD helpers
-# ---------------------------------------------------------------------------
-
-
-def save_template(
-    project_id: str, name: str, ddl_content: str, created_by: Optional[str] = None
-) -> str:
-    """Save a new DDL template. Returns template ID."""
-    template_id = str(uuid.uuid4())
-    created_at = datetime.utcnow().isoformat()
-
-    try:
-        with _get_conn() as conn:
-            conn.execute(
-                """
-                INSERT INTO ddl_templates (id, project_id, name, ddl_content, created_at, created_by)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """,
-                (template_id, project_id, name, ddl_content, created_at, created_by),
-            )
-            conn.commit()
-        return template_id
-    except Exception as e:
-        raise ValueError(f"Failed to save template: {str(e)}")
-
-
-def list_templates(project_id: str) -> List[dict]:
-    """List all templates for a project."""
-    with _get_conn() as conn:
-        rows = conn.execute(
-            """
-            SELECT id, project_id, name, ddl_content, created_at, created_by
-            FROM ddl_templates
-            WHERE project_id = ?
-            ORDER BY created_at DESC
-        """,
-            (project_id,),
-        ).fetchall()
-
-        templates = []
-        for row in rows:
-            templates.append(
-                {
-                    "id": row[0],
-                    "project_id": row[1],
-                    "name": row[2],
-                    "ddl_content": row[3],
-                    "created_at": row[4],
-                    "created_by": row[5],
-                }
-            )
-        return templates
-
-
-def get_template(template_id: str) -> dict:
-    """Get a template by ID."""
-    with _get_conn() as conn:
-        row = conn.execute(
-            """
-            SELECT id, project_id, name, ddl_content, created_at, created_by
-            FROM ddl_templates
-            WHERE id = ?
-        """,
-            (template_id,),
-        ).fetchone()
-
-        if not row:
-            raise ValueError("Template not found")
-
-        return {
-            "id": row[0],
-            "project_id": row[1],
-            "name": row[2],
-            "ddl_content": row[3],
-            "created_at": row[4],
-            "created_by": row[5],
-        }
-
-
-def delete_template(template_id: str) -> bool:
-    """Delete a template by ID."""
-    with _get_conn() as conn:
-        conn.execute("DELETE FROM ddl_templates WHERE id = ?", (template_id,))
-        conn.commit()
-    return True
 
 
 @app.get("/api/health")
@@ -424,7 +328,6 @@ def _resume_payload(project: dict, session_id: str, session: dict) -> dict:
         "preview": raw.get("preview", {}),
         "inferred_schema": raw.get("schema", {}),
         "stats": raw.get("stats", {}),
-        "ddl_schema": session.get("ddl_schema", {}),
         "config": session.get("config"),
         "transform": transform_summary,
         "load_result": session.get("load_result"),
@@ -946,8 +849,6 @@ async def _run_extraction(session_id: str, password: str | None) -> None:
                 "extractor": extractor,
                 "raw": result,
                 "files": saved_files,
-                "ddl_schema": result.get("ddl_schema", {}),
-                "applied_ddl": [],
                 "audit_trail": audit_trail,
             }
         )
@@ -972,7 +873,6 @@ async def _run_extraction(session_id: str, password: str | None) -> None:
             preview=result.get("preview", {}),
             inferred_schema=result.get("schema", {}),
             stats=result.get("stats", {}),
-            ddl_schema=result.get("ddl_schema", {}),
         ).dict()
 
         state["result"] = done_payload
@@ -992,7 +892,7 @@ async def _run_extraction(session_id: str, password: str | None) -> None:
 
 
 @app.post("/api/pre-extract-select/{session_id}")
-async def pre_extract_select(session_id: str, body: ApplyDDLRequest):
+async def pre_extract_select(session_id: str, body: TableSelectionRequest):
     """Soft-exclude tables in the session.
 
     Raw extracted data stays put (CSVs and in-memory rows) so the user
@@ -1034,11 +934,6 @@ async def pre_extract_select(session_id: str, body: ApplyDDLRequest):
                     for table in list(section.keys()):
                         if table in new_excluded:
                             section.pop(table, None)
-
-        # Drop applied_ddl entries for excluded tables; their schema in
-        # raw stays untouched so re-including them later restores DDL state.
-        applied = s.get("applied_ddl") or []
-        s["applied_ddl"] = [t for t in applied if t not in new_excluded]
 
         audit_trail = s.get("audit_trail")
         if audit_trail:
@@ -1144,8 +1039,6 @@ async def upload_files(
         "extractor": extractor,
         "raw": result,
         "files": saved,
-        "ddl_schema": result.get("ddl_schema", {}),
-        "applied_ddl": [],
         "audit_trail": audit_trail,
     }
 
@@ -1178,7 +1071,6 @@ async def upload_files(
         "preview": result.get("preview", {}),
         "inferred_schema": result.get("schema", {}),
         "stats": result.get("stats", {}),
-        "ddl_schema": result.get("ddl_schema", {}),
     }
 
 
@@ -1288,108 +1180,6 @@ async def configure(
     return ConfigureResponse(ok=True, message="Configuration saved")
 
 
-@app.post("/api/upload-ddl/{session_id}", response_model=DDLUploadResponse)
-async def upload_ddl(session_id: str, files: List[UploadFile] = File(...)):
-    if session_id not in sessions:
-        raise HTTPException(404, "Session not found")
-
-    from utils.sql_parser import SQLParser
-
-    s = sessions[session_id]
-    ddl_schema = s.get("ddl_schema", {})
-    data_tables = set(s["raw"].get("tables", {}).keys())
-
-    all_foreign_keys = s.get("ddl_foreign_keys", [])
-    all_constraints = s.get("ddl_constraints_raw", {})
-
-    for f in files:
-        content = (await f.read()).decode("utf-8", errors="replace")
-        parser = SQLParser(content)
-        parsed = parser.parse_ddl()
-        ddl_schema.update(parsed)
-        # Collect FK relationships and constraints from DDL
-        all_foreign_keys.extend(getattr(parser, "foreign_keys", []))
-        all_constraints.update(getattr(parser, "constraints", {}))
-
-    s["ddl_schema"] = ddl_schema
-    s["ddl_foreign_keys"] = all_foreign_keys
-    s["ddl_constraints_raw"] = all_constraints
-    matching = [t for t in ddl_schema if t in data_tables]
-
-    return DDLUploadResponse(
-        ok=True,
-        ddl_schema=ddl_schema,
-        matching_tables=matching,
-    )
-
-
-@app.post("/api/apply-ddl/{session_id}", response_model=ApplyDDLResponse)
-async def apply_ddl(session_id: str, body: ApplyDDLRequest):
-    if session_id not in sessions:
-        raise HTTPException(404, "Session not found")
-
-    s = sessions[session_id]
-    ddl_schema = s.get("ddl_schema", {})
-    data_tables = s["raw"].get("tables", {})
-    inferred_schema = s["raw"].get("schema", {})
-    excluded = _excluded_set(s)
-    results = []
-
-    for table in body.tables:
-        errors = []
-
-        if table in excluded:
-            errors.append(f"Table '{table}' is currently excluded")
-            results.append(
-                ApplyDDLTableResult(table=table, applied=False, errors=errors)
-            )
-            continue
-
-        if table not in ddl_schema:
-            errors.append(f"No DDL definition found for table '{table}'")
-            results.append(
-                ApplyDDLTableResult(table=table, applied=False, errors=errors)
-            )
-            continue
-
-        if table not in data_tables or not data_tables[table]:
-            errors.append(f"No data found for table '{table}'")
-            results.append(
-                ApplyDDLTableResult(table=table, applied=False, errors=errors)
-            )
-            continue
-
-        # Strict column match (case-insensitive)
-        ddl_cols = {c.lower() for c in ddl_schema[table]}
-        data_cols = {c.lower() for c in data_tables[table][0].keys()}
-
-        ddl_only = ddl_cols - data_cols
-        data_only = data_cols - ddl_cols
-
-        if ddl_only or data_only:
-            if ddl_only:
-                errors.append(
-                    f"Columns in DDL but not in data: {', '.join(sorted(ddl_only))}"
-                )
-            if data_only:
-                errors.append(
-                    f"Columns in data but not in DDL: {', '.join(sorted(data_only))}"
-                )
-            results.append(
-                ApplyDDLTableResult(table=table, applied=False, errors=errors)
-            )
-            continue
-
-        # Apply DDL schema — overwrite inferred schema for this table
-        inferred_schema[table] = ddl_schema[table]
-        if table not in s.get("applied_ddl", []):
-            s.setdefault("applied_ddl", []).append(table)
-
-        results.append(ApplyDDLTableResult(table=table, applied=True, errors=[]))
-
-    all_ok = all(r.applied for r in results)
-    return ApplyDDLResponse(ok=all_ok, results=results)
-
 
 @app.get("/api/transform/{session_id}", response_model=TransformResponse)
 async def transform(session_id: str):
@@ -1402,26 +1192,7 @@ async def transform(session_id: str):
         run = create_pipeline_run(project_id, "transform")
     audit_trail = s.get("audit_trail")
 
-    # Inject DDL constraints (PK, UNIQUE) into config for dedup
     config = dict(s.get("config", {}))
-    ddl_constraints_raw = s.get("ddl_constraints_raw", {})
-    ddl_schema_raw = s.get("ddl_schema", {})
-    if ddl_constraints_raw:
-        # Use the full constraints parsed from DDL (includes multi-column UNIQUE)
-        config["ddl_constraints"] = ddl_constraints_raw
-    elif ddl_schema_raw:
-        # Fall back to per-column flags from the schema
-        ddl_constraints = {}
-        for tbl, cols_info in ddl_schema_raw.items():
-            pk_cols = [c for c, info in cols_info.items() if info.get("primary_key")]
-            uq_cols = [
-                [c]
-                for c, info in cols_info.items()
-                if info.get("unique") and not info.get("primary_key")
-            ]
-            if pk_cols or uq_cols:
-                ddl_constraints[tbl] = {"primary_key": pk_cols, "unique": uq_cols}
-        config["ddl_constraints"] = ddl_constraints
 
     # Per-session progress dict polled by the navbar dock so the user can
     # see how far the transform has gotten while it runs.
@@ -1517,13 +1288,7 @@ async def transform(session_id: str):
     progress["tables_done"] = progress.get("tables_total", 0)
     sessions[session_id]["transformed"] = result
     sessions[session_id]["transformer"] = transformer
-    # Merge FK edges from transform config and DDL foreign keys
-    fk_edges = list(transformer.fk_edges)
-    for fk in s.get("ddl_foreign_keys", []):
-        edge = (fk["child_table"], fk["parent_table"])
-        if edge not in fk_edges:
-            fk_edges.append(edge)
-    sessions[session_id]["fk_edges"] = fk_edges
+    sessions[session_id]["fk_edges"] = list(transformer.fk_edges)
     _auto_save(session_id, "transform")
     if run and project_id:
         total_rows = result.get("total_rows", 0)
@@ -1757,7 +1522,6 @@ def _ensure_rows_loaded(
     raw["schema"] = result.get("schema", raw.get("schema", {}))
     raw["stats"] = result.get("stats", raw.get("stats", {}))
     raw["preview"] = result.get("preview", raw.get("preview", {}))
-    raw["ddl_schema"] = result.get("ddl_schema", raw.get("ddl_schema", {}))
     session["extractor"] = extractor
     try:
         extract_cache.write(project_id, raw, uploads_dir)
@@ -1790,22 +1554,6 @@ def _ensure_transformed(session_id: str) -> None:
     _ensure_rows_loaded(s)
     audit_trail = s.get("audit_trail")
     config = dict(s.get("config", {}))
-    ddl_constraints_raw = s.get("ddl_constraints_raw", {})
-    ddl_schema_raw = s.get("ddl_schema", {})
-    if ddl_constraints_raw:
-        config["ddl_constraints"] = ddl_constraints_raw
-    elif ddl_schema_raw:
-        constraints: Dict[str, Dict[str, Any]] = {}
-        for tbl, cols_info in ddl_schema_raw.items():
-            pk_cols = [c for c, info in cols_info.items() if info.get("primary_key")]
-            uq_cols = [
-                [c]
-                for c, info in cols_info.items()
-                if info.get("unique") and not info.get("primary_key")
-            ]
-            if pk_cols or uq_cols:
-                constraints[tbl] = {"primary_key": pk_cols, "unique": uq_cols}
-        config["ddl_constraints"] = constraints
     transformer = Transformer(_visible_raw(s), config, audit_trail)
     s["transformed"] = transformer.run()
     s["transformer"] = transformer
@@ -1834,24 +1582,11 @@ async def load(session_id: str, body: LoadRequest):
     os.makedirs(out_dir, exist_ok=True)
 
     excluded = _excluded_set(s)
-    ddl_schema = {
-        t: s["raw"]["schema"].get(t, {})
-        for t in s["raw"].get("tables", {})
-        if t in s.get("applied_ddl", []) and t not in excluded
-    }
     fk_edges = [
         edge
         for edge in s.get("fk_edges", [])
         if edge[0] not in excluded and edge[1] not in excluded
     ]
-    # Also collect FK edges from DDL foreign keys parsed during apply-ddl
-    ddl_fks = s.get("ddl_foreign_keys", [])
-    for fk in ddl_fks:
-        if fk["child_table"] in excluded or fk["parent_table"] in excluded:
-            continue
-        edge = (fk["child_table"], fk["parent_table"])
-        if edge not in fk_edges:
-            fk_edges.append(edge)
 
     # The transformer (if it ran in this session) populated self_refs for
     # any target whose parent column points back at the same target — used
@@ -1864,7 +1599,6 @@ async def load(session_id: str, body: LoadRequest):
         s["transformed"],
         body.dict(),
         out_dir,
-        ddl_schema=ddl_schema,
         fk_edges=fk_edges,
         self_refs=self_refs,
     )
@@ -2046,45 +1780,3 @@ async def download_transform_partial(project_id: str, filename: str):
     return FileResponse(path, filename=os.path.basename(path))
 
 
-# ---------------------------------------------------------------------------
-# Template API routes
-# ---------------------------------------------------------------------------
-
-
-@app.post("/api/projects/{project_id}/templates")
-async def create_template(project_id: str, request: CreateTemplateRequest):
-    """Save a new DDL template."""
-    try:
-        template_id = save_template(
-            project_id=project_id,
-            name=request.name,
-            ddl_content=request.ddl_content,
-            created_by=request.created_by,
-        )
-        return {"id": template_id, "message": "Template saved"}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.get("/api/projects/{project_id}/templates")
-async def list_project_templates(project_id: str):
-    """List all templates for a project."""
-    templates = list_templates(project_id)
-    return {"templates": templates, "total": len(templates)}
-
-
-@app.get("/api/projects/{project_id}/templates/{template_id}")
-async def get_single_template(project_id: str, template_id: str):
-    """Get a specific template."""
-    try:
-        template = get_template(template_id)
-        return template
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-
-@app.delete("/api/projects/{project_id}/templates/{template_id}")
-async def delete_single_template(project_id: str, template_id: str):
-    """Delete a template."""
-    delete_template(template_id)
-    return {"message": "Template deleted"}

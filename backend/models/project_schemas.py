@@ -48,7 +48,6 @@ class ResumeProjectResponse(BaseModel):
     preview: dict
     inferred_schema: dict
     stats: dict
-    ddl_schema: dict
     config: Optional[dict] = None
     transform: Optional[dict] = None
     load_result: Optional[dict] = None
