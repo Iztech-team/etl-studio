@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from core.transformer import Transformer
 from core.loader import _toposort_self_ref
 from utils import reconcile as rec
-from presets import get_preset
+from persistence.presets import get_preset
 
 PRESET_ID = "erpnext-preset-2026-04-27"
 

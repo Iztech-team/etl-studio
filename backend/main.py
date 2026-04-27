@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 from core.extractor import Extractor
 from core.loader import Loader
 from core.transformer import Transformer
-from db import (
+from persistence.db import (
     _get_conn,
     backfill_pipeline_runs,
     create_pipeline_run,
@@ -17,9 +17,9 @@ from db import (
     delete_project,
     finish_pipeline_run,
 )
-from db import get_dashboard_stats as db_get_dashboard_stats
-from db import get_history as db_get_history
-from db import (
+from persistence.db import get_dashboard_stats as db_get_dashboard_stats
+from persistence.db import get_history as db_get_history
+from persistence.db import (
     get_project,
     init_db,
     insert_audit_events_batch,
@@ -52,7 +52,7 @@ from models.schemas import (
     TableSelectionRequest,
     TransformResponse,
 )
-from project_state import (
+from persistence.project_state import (
     delete_project_files,
     ensure_project_dirs,
     load_state,
@@ -1393,7 +1393,7 @@ async def transform_status(session_id: str):
 # legacy schema.
 # ---------------------------------------------------------------------------
 
-import presets as presets_store
+import persistence.presets as presets_store
 
 
 @app.get("/api/transform-presets")
