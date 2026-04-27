@@ -44,14 +44,16 @@ def list_presets() -> List[Dict[str, Any]]:
     for f in sorted(PRESETS_DIR.glob("*.json")):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
-            out.append({
-                "id": data.get("id"),
-                "name": data.get("name"),
-                "schema_signature": data.get("schema_signature", []),
-                "table_count": len(data.get("edits", {})),
-                "created_at": data.get("created_at"),
-                "updated_at": data.get("updated_at"),
-            })
+            out.append(
+                {
+                    "id": data.get("id"),
+                    "name": data.get("name"),
+                    "schema_signature": data.get("schema_signature", []),
+                    "table_count": len(data.get("edits", {})),
+                    "created_at": data.get("created_at"),
+                    "updated_at": data.get("updated_at"),
+                }
+            )
         except Exception:
             # Skip corrupt files rather than failing the whole list.
             continue

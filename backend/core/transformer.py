@@ -10,7 +10,6 @@ from utils.encoding import (
 from utils.audit import AuditTrail
 from core.column_transforms import apply_transforms
 
-
 _CONCAT_PLACEHOLDER_RE = re.compile(r"\{([^{}]+)\}")
 
 
@@ -168,7 +167,9 @@ class Transformer:
         if name in self.tables:
             self.tables[name] = []
 
-    def _build_fk_lookups(self, table_configs: List[Dict[str, Any]]) -> Dict[tuple, Dict]:
+    def _build_fk_lookups(
+        self, table_configs: List[Dict[str, Any]]
+    ) -> Dict[tuple, Dict]:
         """Pre-build lookup dicts for every (table, match_col, source_col)
         triple referenced by any FK column or FK-chain hop in the config.
 
@@ -365,7 +366,8 @@ class Transformer:
             if src and src not in candidate_sources:
                 candidate_sources.append(src)
         total_sources = sum(
-            1 for t in candidate_sources
+            1
+            for t in candidate_sources
             if not (t in dropped_sources and t not in configs_by_source)
         )
         done_sources = 0
@@ -420,12 +422,14 @@ class Transformer:
                         if cc.get("is_new") or not cc.get("include", True):
                             continue
                         target_col = cc.get("target_name") or col
-                        dtype = cc.get("data_type") or schema_for_table.get(col, {}).get(
-                            "inferred_type", "string"
-                        )
+                        dtype = cc.get("data_type") or schema_for_table.get(
+                            col, {}
+                        ).get("inferred_type", "string")
                         ref_map = cc.get("reference_map")
                         transforms_cfg = cc.get("transforms") or None
-                        active_cols.append((col, target_col, dtype, ref_map, transforms_cfg))
+                        active_cols.append(
+                            (col, target_col, dtype, ref_map, transforms_cfg)
+                        )
                 else:
                     # No explicit config — pass every column through under
                     # its original name. Use the schema as the canonical
@@ -442,7 +446,9 @@ class Transformer:
                             rest = list(rows_iter) if rows_iter else []
                             rows_iter = [first_row, *rest]
                     for col in cols:
-                        dtype = schema_for_table.get(col, {}).get("inferred_type", "string")
+                        dtype = schema_for_table.get(col, {}).get(
+                            "inferred_type", "string"
+                        )
                         active_cols.append((col, col, dtype, None, None))
                 # Bind module-level functions to locals for tight-loop speed
                 _strip_marks = strip_directional_marks
@@ -550,11 +556,13 @@ class Transformer:
                             fk_match_col = cc.get("fk_match_column")
                             if not (fk_table and fk_source_col and fk_match_col):
                                 continue
-                            fk_chain = [{
-                                "table": fk_table,
-                                "match_column": fk_match_col,
-                                "source_column": fk_source_col,
-                            }]
+                            fk_chain = [
+                                {
+                                    "table": fk_table,
+                                    "match_column": fk_match_col,
+                                    "source_column": fk_source_col,
+                                }
+                            ]
 
                         target_col = cc.get("target_name") or cc_name
                         # Walk the chain. Each hop reads the previous value
@@ -612,7 +620,10 @@ class Transformer:
                             fallback = cc.get("default_value")
 
                         val = _apply_value_generator(
-                            cc.get("generator"), row_index, new_row, fallback,
+                            cc.get("generator"),
+                            row_index,
+                            new_row,
+                            fallback,
                             source_row=row,
                         )
 
@@ -678,9 +689,7 @@ class Transformer:
                     if pending.issubset(sources_processed):
                         targets_persisted.add(tgt)
                         try:
-                            self.persist_target_cb(
-                                tgt, self._transformed.get(tgt, [])
-                            )
+                            self.persist_target_cb(tgt, self._transformed.get(tgt, []))
                         except Exception as e:
                             self.warnings.append(
                                 f"persist_target_cb failed for '{tgt}': {e}"
@@ -899,7 +908,15 @@ class Transformer:
                 try:
                     a = float(actual)
                     b = float(target)
-                    ok = (a > b) if op == "gt" else (a < b) if op == "lt" else (a >= b) if op == "ge" else (a <= b)
+                    ok = (
+                        (a > b)
+                        if op == "gt"
+                        else (
+                            (a < b)
+                            if op == "lt"
+                            else (a >= b) if op == "ge" else (a <= b)
+                        )
+                    )
                 except (TypeError, ValueError):
                     ok = False
             elif op == "contains":

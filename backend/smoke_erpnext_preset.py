@@ -28,7 +28,6 @@ from core.loader import _toposort_self_ref
 from utils import reconcile as rec
 from presets import get_preset
 
-
 PRESET_ID = "erpnext-preset-2026-04-27"
 
 
@@ -39,7 +38,9 @@ def convert_edit(e):
     out = {
         "name": e["name"],
         "data_type": (
-            e.get("targetType") if op in ("cast", "add", "fk") else e.get("type", "string")
+            e.get("targetType")
+            if op in ("cast", "add", "fk")
+            else e.get("type", "string")
         ),
         "nullable": True,
         "include": op != "drop",
@@ -81,7 +82,12 @@ def preset_to_table_configs(preset, available_sources):
             "columns": [convert_edit(e) for e in preset["edits"][src]],
         }
         opts = preset.get("table_options", {}).get(src) or {}
-        for key in ("row_filter", "aggregate", "load_after", "self_reference_parent_column"):
+        for key in (
+            "row_filter",
+            "aggregate",
+            "load_after",
+            "self_reference_parent_column",
+        ):
             if key in opts:
                 cfg[key] = opts[key]
         configs.append(cfg)
@@ -93,7 +99,12 @@ def preset_to_table_configs(preset, available_sources):
             "target_table": x["target"],
             "columns": [convert_edit(e) for e in x["edits"]],
         }
-        for key in ("row_filter", "aggregate", "load_after", "self_reference_parent_column"):
+        for key in (
+            "row_filter",
+            "aggregate",
+            "load_after",
+            "self_reference_parent_column",
+        ):
             if key in x:
                 cfg[key] = x[key]
         configs.append(cfg)
@@ -110,74 +121,191 @@ def build_synthetic_dataset():
     return {
         "tables": {
             # Lookups
-            "CURT": [{"CURID": 1, "CURNAME": "Sheqel", "CURSHORT": "NIS",
-                      "CURPARTNAME": "Agora"}],
-            "UNITT": [{"UNITID": 0, "UNITNAME": "unit"},
-                      {"UNITID": 1, "UNITNAME": "kg"}],
+            "CURT": [
+                {
+                    "CURID": 1,
+                    "CURNAME": "Sheqel",
+                    "CURSHORT": "NIS",
+                    "CURPARTNAME": "Agora",
+                }
+            ],
+            "UNITT": [
+                {"UNITID": 0, "UNITNAME": "unit"},
+                {"UNITID": 1, "UNITNAME": "kg"},
+            ],
             "STORET": [{"STOREID": 1, "DESCRIPTION": "Main Warehouse"}],
-            "CATBASICSETST": [{"SETID": 5, "SETNAME": "Food",
-                               "SALEACC": 510101, "PURCHACC": 41101,
-                               "STORAGEACC": 11421}],
-            "PRICETYPET": [{"PRICEID": 1, "PRICENAME": "Retail"},
-                           {"PRICEID": 2, "PRICENAME": "Wholesale"}],
-            "SALEPOINTT": [{"SALEPOINTID": 1, "SPNAME": "Main Register",
-                            "STOREID": 1, "PRICELISTID": 1}],
+            "CATBASICSETST": [
+                {
+                    "SETID": 5,
+                    "SETNAME": "Food",
+                    "SALEACC": 510101,
+                    "PURCHACC": 41101,
+                    "STORAGEACC": 11421,
+                }
+            ],
+            "PRICETYPET": [
+                {"PRICEID": 1, "PRICENAME": "Retail"},
+                {"PRICEID": 2, "PRICENAME": "Wholesale"},
+            ],
+            "SALEPOINTT": [
+                {
+                    "SALEPOINTID": 1,
+                    "SPNAME": "Main Register",
+                    "STOREID": 1,
+                    "PRICELISTID": 1,
+                }
+            ],
             "BANKT": [{"BANKID": "B1", "BANKNAME": "Test Bank"}],
-            "BANKACCOUNTT": [{"BANKACCID": "BA1", "ACCOUNTNO": "12345",
-                              "BANKACCOWNERNAME": "AlArabi Co", "BANKID": "B1"}],
+            "BANKACCOUNTT": [
+                {
+                    "BANKACCID": "BA1",
+                    "ACCOUNTNO": "12345",
+                    "BANKACCOWNERNAME": "AlArabi Co",
+                    "BANKID": "B1",
+                }
+            ],
             # Items
             "CATEGORYT": [
-                {"CATID": "7290005369148", "CATNAME": "olives", "UNIT": 0,
-                 "DEFAULTSTOREID": 1, "SETNO": 5, "MANUFACTURER": "Acme",
-                 "COSTFIFO": "3.333", "PURCHPRICE": "2.75", "CACTIVE": "1",
-                 "VAT": "16", "WEIGHT": "0.5", "INSERTDATE": "2017-05-08",
-                 "CHANGEDATE": "2025-12-06"},
-                {"CATID": "7290000436203", "CATNAME": "milk", "UNIT": 1,
-                 "DEFAULTSTOREID": 1, "SETNO": 5, "MANUFACTURER": "Beta",
-                 "COSTFIFO": "4.5", "PURCHPRICE": "4.0", "CACTIVE": "1",
-                 "VAT": "0", "WEIGHT": "1.0", "INSERTDATE": "2018-01-01",
-                 "CHANGEDATE": "2025-11-01"},
+                {
+                    "CATID": "7290005369148",
+                    "CATNAME": "olives",
+                    "UNIT": 0,
+                    "DEFAULTSTOREID": 1,
+                    "SETNO": 5,
+                    "MANUFACTURER": "Acme",
+                    "COSTFIFO": "3.333",
+                    "PURCHPRICE": "2.75",
+                    "CACTIVE": "1",
+                    "VAT": "16",
+                    "WEIGHT": "0.5",
+                    "INSERTDATE": "2017-05-08",
+                    "CHANGEDATE": "2025-12-06",
+                },
+                {
+                    "CATID": "7290000436203",
+                    "CATNAME": "milk",
+                    "UNIT": 1,
+                    "DEFAULTSTOREID": 1,
+                    "SETNO": 5,
+                    "MANUFACTURER": "Beta",
+                    "COSTFIFO": "4.5",
+                    "PURCHPRICE": "4.0",
+                    "CACTIVE": "1",
+                    "VAT": "0",
+                    "WEIGHT": "1.0",
+                    "INSERTDATE": "2018-01-01",
+                    "CHANGEDATE": "2025-11-01",
+                },
                 # Inactive — should be filtered out
-                {"CATID": "DISCONTINUED", "CATNAME": "old product", "UNIT": 0,
-                 "MANUFACTURER": "Acme", "CACTIVE": "0", "SETNO": 5},
+                {
+                    "CATID": "DISCONTINUED",
+                    "CATNAME": "old product",
+                    "UNIT": 0,
+                    "MANUFACTURER": "Acme",
+                    "CACTIVE": "0",
+                    "SETNO": 5,
+                },
             ],
             "CATESYNONYMT": [
-                {"CATID": "7290000436203", "SYNCATID": "7290004267124",
-                 "SYNCATNAME": "milk-pack-of-6", "CREATEDATE": "2017-05-08"},
+                {
+                    "CATID": "7290000436203",
+                    "SYNCATID": "7290004267124",
+                    "SYNCATNAME": "milk-pack-of-6",
+                    "CREATEDATE": "2017-05-08",
+                },
             ],
             "CATPRICET": [
-                {"PRICEID": 1, "CATID": "7290005369148",
-                 "SALEPRICE": "3.66", "SALECUR": 1, "CHANGEDATE": "2020-01-04"},
-                {"PRICEID": 2, "CATID": "7290005369148",
-                 "SALEPRICE": "3.20", "SALECUR": 1, "CHANGEDATE": "2020-01-04"},
+                {
+                    "PRICEID": 1,
+                    "CATID": "7290005369148",
+                    "SALEPRICE": "3.66",
+                    "SALECUR": 1,
+                    "CHANGEDATE": "2020-01-04",
+                },
+                {
+                    "PRICEID": 2,
+                    "CATID": "7290005369148",
+                    "SALEPRICE": "3.20",
+                    "SALECUR": 1,
+                    "CHANGEDATE": "2020-01-04",
+                },
             ],
             "CATSTORET": [
-                {"STOREID": 1, "CATID": "7290005369148", "QTYBALANCE": "100",
-                 "STOREMINQTY": "10", "STOREMAXQTY": "200"},
+                {
+                    "STOREID": 1,
+                    "CATID": "7290005369148",
+                    "QTYBALANCE": "100",
+                    "STOREMINQTY": "10",
+                    "STOREMAXQTY": "200",
+                },
                 {"STOREID": 1, "CATID": "7290000436203", "QTYBALANCE": "50"},
             ],
             "CATSUPPLIERT": [
-                {"CATID": "7290005369148", "SUPPLIER": 621001,
-                 "INSERTDATE": "2018-12-12"},
+                {
+                    "CATID": "7290005369148",
+                    "SUPPLIER": 621001,
+                    "INSERTDATE": "2018-12-12",
+                },
             ],
             # Parties
             "ACCOUNTT": [
-                {"ACCOUNTID": 0, "FATHERID": None, "NAME": "غير محدد",
-                 "MBALANCE": 0, "CURID": 1, "CLASS": 0},
-                {"ACCOUNTID": 1, "FATHERID": None, "NAME": "Root", "MBALANCE": 0,
-                 "CURID": 1, "CLASS": 0},
-                {"ACCOUNTID": 6110001, "FATHERID": 1, "NAME": "Acme Wholesale",
-                 "MBALANCE": 100, "CURID": 1, "CLASS": 11},
-                {"ACCOUNTID": 621001, "FATHERID": 1, "NAME": "TestSupplier Inc",
-                 "MBALANCE": -200, "CURID": 1, "CLASS": 21},
-                {"ACCOUNTID": 510101, "FATHERID": 1, "NAME": "Sales Revenue",
-                 "MBALANCE": -100, "CURID": 1, "CLASS": 4},
-                {"ACCOUNTID": 11421, "FATHERID": 1, "NAME": "Inventory Asset",
-                 "MBALANCE": 0, "CURID": 1, "CLASS": 1},
+                {
+                    "ACCOUNTID": 0,
+                    "FATHERID": None,
+                    "NAME": "غير محدد",
+                    "MBALANCE": 0,
+                    "CURID": 1,
+                    "CLASS": 0,
+                },
+                {
+                    "ACCOUNTID": 1,
+                    "FATHERID": None,
+                    "NAME": "Root",
+                    "MBALANCE": 0,
+                    "CURID": 1,
+                    "CLASS": 0,
+                },
+                {
+                    "ACCOUNTID": 6110001,
+                    "FATHERID": 1,
+                    "NAME": "Acme Wholesale",
+                    "MBALANCE": 100,
+                    "CURID": 1,
+                    "CLASS": 11,
+                },
+                {
+                    "ACCOUNTID": 621001,
+                    "FATHERID": 1,
+                    "NAME": "TestSupplier Inc",
+                    "MBALANCE": -200,
+                    "CURID": 1,
+                    "CLASS": 21,
+                },
+                {
+                    "ACCOUNTID": 510101,
+                    "FATHERID": 1,
+                    "NAME": "Sales Revenue",
+                    "MBALANCE": -100,
+                    "CURID": 1,
+                    "CLASS": 4,
+                },
+                {
+                    "ACCOUNTID": 11421,
+                    "FATHERID": 1,
+                    "NAME": "Inventory Asset",
+                    "MBALANCE": 0,
+                    "CURID": 1,
+                    "CLASS": 1,
+                },
             ],
             "CUSTT": [
-                {"CUSTID": 6110001, "ACCOUNT": 6110001, "PRICEID": 2, "DUEDAYS": 30,
-                 "DISCOUNT": "5"},
+                {
+                    "CUSTID": 6110001,
+                    "ACCOUNT": 6110001,
+                    "PRICEID": 2,
+                    "DUEDAYS": 30,
+                    "DISCOUNT": "5",
+                },
                 # Walk-in — should be filtered out
                 {"CUSTID": 0, "ACCOUNT": 0, "PRICEID": 1, "DUEDAYS": 0},
             ],
@@ -185,78 +313,177 @@ def build_synthetic_dataset():
                 {"SUPPID": 621001, "ACCOUNT": 621001, "DISCOUNT": "0"},
             ],
             "CONTACTST": [
-                {"CONTACTID": "C1", "ACCOUNTID": 6110001,
-                 "NAME": "Ali", "MOBILE": "0599-111-2222",
-                 "EMAIL": "ali@example.com", "ADDRESS": "Ramallah"},
+                {
+                    "CONTACTID": "C1",
+                    "ACCOUNTID": 6110001,
+                    "NAME": "Ali",
+                    "MOBILE": "0599-111-2222",
+                    "EMAIL": "ali@example.com",
+                    "ADDRESS": "Ramallah",
+                },
             ],
             "EMPLOYEET": [
-                {"EMPID": "E1", "ACCOUNT": 6110001, "GENDER": 1,
-                 "ISWORKING": "1", "STARTDATE": "2020-01-15",
-                 "WANTEDHOURS": 8, "VOCDAY": 7, "CARDID": "37"},
+                {
+                    "EMPID": "E1",
+                    "ACCOUNT": 6110001,
+                    "GENDER": 1,
+                    "ISWORKING": "1",
+                    "STARTDATE": "2020-01-15",
+                    "WANTEDHOURS": 8,
+                    "VOCDAY": 7,
+                    "CARDID": "37",
+                },
             ],
             # Documents — sales
             "CATESINVDOCT": [
-                {"DOCSERIAL": 1, "DOCNO": 100, "INVTYPE": 1,
-                 "ACCOUNTID": 6110001, "STOREID": 1, "CURID": 1,
-                 "CURVALUE": "1.0", "DOCDATE": "2026-01-01",
-                 "SUBTOTAL": "100", "DISCOUNTV": "0", "VATAMOUNT": "16",
-                 "DOCVALUE": "116", "DOCMVALUE": "116"},
+                {
+                    "DOCSERIAL": 1,
+                    "DOCNO": 100,
+                    "INVTYPE": 1,
+                    "ACCOUNTID": 6110001,
+                    "STOREID": 1,
+                    "CURID": 1,
+                    "CURVALUE": "1.0",
+                    "DOCDATE": "2026-01-01",
+                    "SUBTOTAL": "100",
+                    "DISCOUNTV": "0",
+                    "VATAMOUNT": "16",
+                    "DOCVALUE": "116",
+                    "DOCMVALUE": "116",
+                },
             ],
             "CATESINVDOCDETT": [
-                {"DOCNO": 100, "INVTYPE": 1, "SERIAL": 10,
-                 "CATID": "7290005369148", "CATNAME": "olives", "CATUNIT": "unit",
-                 "CATQTY": "20", "CATPRICE": "5", "CATDISCOUNT": "0",
-                 "STOREID": 1, "SALEACCID": 510101, "VAT": "16"},
+                {
+                    "DOCNO": 100,
+                    "INVTYPE": 1,
+                    "SERIAL": 10,
+                    "CATID": "7290005369148",
+                    "CATNAME": "olives",
+                    "CATUNIT": "unit",
+                    "CATQTY": "20",
+                    "CATPRICE": "5",
+                    "CATDISCOUNT": "0",
+                    "STOREID": 1,
+                    "SALEACCID": 510101,
+                    "VAT": "16",
+                },
             ],
             "CATESRETINVDOCT": [
-                {"DOCSERIAL": 2, "DOCNO": 200, "INVTYPE": 1,
-                 "ACCOUNTID": 6110001, "STOREID": 1, "CURID": 1,
-                 "CURVALUE": "1.0", "DOCDATE": "2026-01-15",
-                 "SUBTOTAL": "10", "VATAMOUNT": "1.6",
-                 "DOCVALUE": "11.6", "DOCMVALUE": "11.6"},
+                {
+                    "DOCSERIAL": 2,
+                    "DOCNO": 200,
+                    "INVTYPE": 1,
+                    "ACCOUNTID": 6110001,
+                    "STOREID": 1,
+                    "CURID": 1,
+                    "CURVALUE": "1.0",
+                    "DOCDATE": "2026-01-15",
+                    "SUBTOTAL": "10",
+                    "VATAMOUNT": "1.6",
+                    "DOCVALUE": "11.6",
+                    "DOCMVALUE": "11.6",
+                },
             ],
             "CATESRETINVDOCDETT": [
-                {"DOCNO": 200, "INVTYPE": 1, "SERIAL": 10,
-                 "CATID": "7290005369148", "CATNAME": "olives", "CATUNIT": "unit",
-                 "CATQTY": "2", "CATPRICE": "5", "CATDISCOUNT": "0",
-                 "STOREID": 1, "SALERETACCID": 510101, "VAT": "16"},
+                {
+                    "DOCNO": 200,
+                    "INVTYPE": 1,
+                    "SERIAL": 10,
+                    "CATID": "7290005369148",
+                    "CATNAME": "olives",
+                    "CATUNIT": "unit",
+                    "CATQTY": "2",
+                    "CATPRICE": "5",
+                    "CATDISCOUNT": "0",
+                    "STOREID": 1,
+                    "SALERETACCID": 510101,
+                    "VAT": "16",
+                },
             ],
             # GL Entries — must balance
             "LEDGERT": [
                 # Sales invoice posting
-                {"ENTRYID": "G1", "DOCSERIAL": "1", "ENTRYACCOUNT": 6110001,
-                 "ENTRYDEBIT": 116, "ENTRYCREDIT": 0, "ENTRYTRANSDATE": "2026-01-01",
-                 "ENTRYCUR": 1, "ENTRYVALUE": 116, "INSERTDATE": "2026-01-01"},
-                {"ENTRYID": "G2", "DOCSERIAL": "1", "ENTRYACCOUNT": 510101,
-                 "ENTRYDEBIT": 0, "ENTRYCREDIT": 100, "ENTRYTRANSDATE": "2026-01-01",
-                 "ENTRYCUR": 1, "ENTRYVALUE": -100, "INSERTDATE": "2026-01-01"},
-                {"ENTRYID": "G3", "DOCSERIAL": "1", "ENTRYACCOUNT": 11421,
-                 "ENTRYDEBIT": 0, "ENTRYCREDIT": 16, "ENTRYTRANSDATE": "2026-01-01",
-                 "ENTRYCUR": 1, "ENTRYVALUE": -16, "INSERTDATE": "2026-01-01"},
+                {
+                    "ENTRYID": "G1",
+                    "DOCSERIAL": "1",
+                    "ENTRYACCOUNT": 6110001,
+                    "ENTRYDEBIT": 116,
+                    "ENTRYCREDIT": 0,
+                    "ENTRYTRANSDATE": "2026-01-01",
+                    "ENTRYCUR": 1,
+                    "ENTRYVALUE": 116,
+                    "INSERTDATE": "2026-01-01",
+                },
+                {
+                    "ENTRYID": "G2",
+                    "DOCSERIAL": "1",
+                    "ENTRYACCOUNT": 510101,
+                    "ENTRYDEBIT": 0,
+                    "ENTRYCREDIT": 100,
+                    "ENTRYTRANSDATE": "2026-01-01",
+                    "ENTRYCUR": 1,
+                    "ENTRYVALUE": -100,
+                    "INSERTDATE": "2026-01-01",
+                },
+                {
+                    "ENTRYID": "G3",
+                    "DOCSERIAL": "1",
+                    "ENTRYACCOUNT": 11421,
+                    "ENTRYDEBIT": 0,
+                    "ENTRYCREDIT": 16,
+                    "ENTRYTRANSDATE": "2026-01-01",
+                    "ENTRYCUR": 1,
+                    "ENTRYVALUE": -16,
+                    "INSERTDATE": "2026-01-01",
+                },
             ],
             # POS payment split
             "POSPAYST": [
-                {"DOCSERIAL": 1, "DOCCLASS": 100, "SERIAL": 1,
-                 "PAYTYPE": 1, "PAYAMOUNT": "100",
-                 "PAYAMOUNTM": "100", "DESCR": "cash"},
-                {"DOCSERIAL": 1, "DOCCLASS": 100, "SERIAL": 2,
-                 "PAYTYPE": 3, "PAYAMOUNT": "16",
-                 "PAYAMOUNTM": "16", "DESCR": "credit card"},
+                {
+                    "DOCSERIAL": 1,
+                    "DOCCLASS": 100,
+                    "SERIAL": 1,
+                    "PAYTYPE": 1,
+                    "PAYAMOUNT": "100",
+                    "PAYAMOUNTM": "100",
+                    "DESCR": "cash",
+                },
+                {
+                    "DOCSERIAL": 1,
+                    "DOCCLASS": 100,
+                    "SERIAL": 2,
+                    "PAYTYPE": 3,
+                    "PAYAMOUNT": "16",
+                    "PAYAMOUNTM": "16",
+                    "DESCR": "credit card",
+                },
             ],
             # Some empty tables that the preset still needs to handle
             "CHEQUET": [],
-            "RECDOCT": [], "RECDOCDETT": [],
-            "PAYDOCT": [], "PAYDOCDETT": [],
-            "ENTRYDOCT": [], "ENTRYDOCDETT": [],
-            "STARTENTRYDOCT": [], "STARTENTRYDOCDETT": [],
-            "DNOTEDOCT": [], "DNOTEDOCDETT": [],
-            "CNOTEDOCT": [], "CNOTEDOCDETT": [],
-            "BANKENTRYDOCT": [], "BANKENTRYDOCDETT": [],
-            "CATEPINVDOCT": [], "CATEPINVDOCDETT": [],
-            "CATEPRETINVDOCT": [], "CATEPRETINVDOCDETT": [],
-            "CATEINDOCT": [], "CATEINDOCDETT": [],
-            "DIVISIONDOCT": [], "DIVISIONDOCDETT": [],
-            "STOCKTAKINGT": [], "STOCKTAKINGDETT": [],
+            "RECDOCT": [],
+            "RECDOCDETT": [],
+            "PAYDOCT": [],
+            "PAYDOCDETT": [],
+            "ENTRYDOCT": [],
+            "ENTRYDOCDETT": [],
+            "STARTENTRYDOCT": [],
+            "STARTENTRYDOCDETT": [],
+            "DNOTEDOCT": [],
+            "DNOTEDOCDETT": [],
+            "CNOTEDOCT": [],
+            "CNOTEDOCDETT": [],
+            "BANKENTRYDOCT": [],
+            "BANKENTRYDOCDETT": [],
+            "CATEPINVDOCT": [],
+            "CATEPINVDOCDETT": [],
+            "CATEPRETINVDOCT": [],
+            "CATEPRETINVDOCDETT": [],
+            "CATEINDOCT": [],
+            "CATEINDOCDETT": [],
+            "DIVISIONDOCT": [],
+            "DIVISIONDOCDETT": [],
+            "STOCKTAKINGT": [],
+            "STOCKTAKINGDETT": [],
             "CATLEDGERT": [],
             "IMPORTCOSTCENTERT": [{"CENTERID": "CC1"}],
             "PROJECTST": [],
@@ -298,26 +525,50 @@ def main() -> int:
         for r in rows[:5]:
             print("  " + " | ".join(f"{f}={r.get(f)!r}" for f in fields if f in r))
 
-    show("item", "Items (active only)",
-         ["name", "item_code", "item_name", "stock_uom", "item_group", "valuation_rate"])
+    show(
+        "item",
+        "Items (active only)",
+        ["name", "item_code", "item_name", "stock_uom", "item_group", "valuation_rate"],
+    )
     show("brand", "Brands (DISTINCT manufacturer)", ["name", "brand_name"])
-    show("item_barcode", "Item Barcodes (UNION primary + synonyms)",
-         ["name", "barcode", "parent"])
-    show("item_price", "Item Prices",
-         ["item_code", "price_list", "price_list_rate", "currency"])
+    show(
+        "item_barcode",
+        "Item Barcodes (UNION primary + synonyms)",
+        ["name", "barcode", "parent"],
+    )
+    show(
+        "item_price",
+        "Item Prices",
+        ["item_code", "price_list", "price_list_rate", "currency"],
+    )
     show("bin", "Bin", ["name", "item_code", "warehouse", "actual_qty"])
-    show("customer", "Customers (walk-in filtered)",
-         ["name", "customer_name", "default_currency"])
+    show(
+        "customer",
+        "Customers (walk-in filtered)",
+        ["name", "customer_name", "default_currency"],
+    )
     show("supplier", "Suppliers", ["name", "supplier_name"])
-    show("account", "Accounts", ["name", "account_name", "parent_account", "account_currency"])
-    show("sales_invoice", "Sales Invoices (incl. returns)",
-         ["name", "customer", "grand_total", "is_return"])
-    show("sales_invoice_item", "Sales Invoice Items (with computed amount)",
-         ["parent", "item_code", "qty", "rate", "amount", "net_amount"])
-    show("payment_entry", "Payment Entries (POS aggregated by receipt)",
-         ["name", "payment_type", "party", "paid_amount"])
-    show("mode_of_payment", "Mode of Payment seed",
-         ["name", "mode_of_payment"])
+    show(
+        "account",
+        "Accounts",
+        ["name", "account_name", "parent_account", "account_currency"],
+    )
+    show(
+        "sales_invoice",
+        "Sales Invoices (incl. returns)",
+        ["name", "customer", "grand_total", "is_return"],
+    )
+    show(
+        "sales_invoice_item",
+        "Sales Invoice Items (with computed amount)",
+        ["parent", "item_code", "qty", "rate", "amount", "net_amount"],
+    )
+    show(
+        "payment_entry",
+        "Payment Entries (POS aggregated by receipt)",
+        ["name", "payment_type", "party", "paid_amount"],
+    )
+    show("mode_of_payment", "Mode of Payment seed", ["name", "mode_of_payment"])
     show("gl_entry", "GL Entries", ["name", "account", "debit", "credit"])
     show("employee", "Employees", ["name", "employee_name", "status", "gender"])
 
@@ -336,12 +587,18 @@ def main() -> int:
         targets,
         legacy_account_balances=legacy_balances,
         invoice_specs=[
-            {"invoice_table": "sales_invoice", "line_table": "sales_invoice_item",
-             "label": "sales"},
+            {
+                "invoice_table": "sales_invoice",
+                "line_table": "sales_invoice_item",
+                "label": "sales",
+            },
         ],
         fk_specs=[
-            {"child": "sales_invoice_item", "parent": "sales_invoice",
-             "child_field": "parent"},
+            {
+                "child": "sales_invoice_item",
+                "parent": "sales_invoice",
+                "child_field": "parent",
+            },
             {"child": "item_barcode", "parent": "item", "child_field": "parent"},
             {"child": "item_price", "parent": "item", "child_field": "item_code"},
             {"child": "bin", "parent": "item", "child_field": "item_code"},

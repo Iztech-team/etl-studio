@@ -107,7 +107,9 @@ def write(project_id: str, raw: Dict[str, Any], uploads_dir: str) -> None:
 
     # Write metadata atomically: temp file + rename.
     meta_tmp = meta_path.with_suffix(".json.tmp")
-    meta_tmp.write_text(json.dumps(meta, ensure_ascii=False, default=str), encoding="utf-8")
+    meta_tmp.write_text(
+        json.dumps(meta, ensure_ascii=False, default=str), encoding="utf-8"
+    )
     os.replace(meta_tmp, meta_path)
 
     # Write one pickle per table. Existing rows files for tables no longer

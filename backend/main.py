@@ -1,72 +1,76 @@
 import asyncio
 import json
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
-import os, shutil, uuid
-from datetime import timezone, datetime
+import os
+import shutil
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from core.extractor import Extractor
-from core.transformer import Transformer
 from core.loader import Loader
-from utils.audit import AuditTrail
+from core.transformer import Transformer
+from db import (
+    _get_conn,
+    backfill_pipeline_runs,
+    create_pipeline_run,
+    create_project,
+    delete_project,
+    finish_pipeline_run,
+)
+from db import get_dashboard_stats as db_get_dashboard_stats
+from db import get_history as db_get_history
+from db import (
+    get_project,
+    init_db,
+    init_templates_table,
+    insert_audit_events_batch,
+    list_projects,
+    rename_project,
+    update_project_phase,
+)
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, StreamingResponse
+from models.project_schemas import (
+    AuthResponse,
+    CreateProjectRequest,
+    LoginRequest,
+    ProjectListResponse,
+    ProjectResponse,
+    RenameProjectRequest,
+)
 from models.schemas import (
-    ConfigureRequest,
-    ConfigureResponse,
-    TransformResponse,
-    LoadRequest,
-    LoadResponse,
-    StatsResponse,
-    DDLUploadResponse,
+    DB_TYPE_EXTENSIONS,
     ApplyDDLRequest,
     ApplyDDLResponse,
     ApplyDDLTableResult,
-    PreExtractResponse,
-    PreExtractFileInfo,
-    DB_TYPE_EXTENSIONS,
+    ConfigureRequest,
+    ConfigureResponse,
+    CreateTemplateRequest,
+    DDLTemplate,
+    DDLUploadResponse,
     EditDataRequest,
     EditDataResponse,
-    CreateTemplateRequest,
-    UpdateTemplateRequest,
-    DDLTemplate,
+    LoadRequest,
+    LoadResponse,
+    PreExtractFileInfo,
+    PreExtractResponse,
+    StatsResponse,
     TemplateListResponse,
-)
-from db import (
-    init_db,
-    init_templates_table,
-    create_project,
-    list_projects,
-    get_project,
-    rename_project,
-    delete_project,
-    update_project_phase,
-    create_pipeline_run,
-    finish_pipeline_run,
-    get_history as db_get_history,
-    get_dashboard_stats as db_get_dashboard_stats,
-    insert_audit_events_batch,
-    backfill_pipeline_runs,
-    _get_conn,
+    TransformResponse,
+    UpdateTemplateRequest,
 )
 from project_state import (
-    save_state,
-    load_state,
-    ensure_project_dirs,
-    project_uploads_dir,
-    project_outputs_dir,
-    project_dir,
     delete_project_files,
+    ensure_project_dirs,
+    load_state,
+    project_dir,
+    project_outputs_dir,
+    project_uploads_dir,
+    save_state,
 )
 from utils import extract_cache
-from models.project_schemas import (
-    LoginRequest,
-    AuthResponse,
-    CreateProjectRequest,
-    RenameProjectRequest,
-    ProjectResponse,
-    ProjectListResponse,
-)
+from utils.audit import AuditTrail
 
 app = FastAPI(title="ETL Legacy", version="1.0.0")
 
@@ -410,9 +414,7 @@ def _resume_payload(project: dict, session_id: str, session: dict) -> dict:
     transform_summary = None
     if isinstance(transformed, dict):
         transform_summary = {
-            k: v
-            for k, v in transformed.items()
-            if k not in ("tables", "exceptions")
+            k: v for k, v in transformed.items() if k not in ("tables", "exceptions")
         }
     return {
         "session_id": session_id,
@@ -847,6 +849,7 @@ async def cancel_extract(session_id: str):
 async def _run_extraction(session_id: str, password: str | None) -> None:
     """Background worker: drives the iter, writes events to state."""
     from datetime import datetime as _dt
+
     from core.db_extractor import extract_db_to_csvs_iter
 
     state = extraction_states[session_id]
@@ -1493,7 +1496,9 @@ async def transform(session_id: str):
         return rows or []
 
     transformer = Transformer(
-        _visible_raw(s), config, audit_trail,
+        _visible_raw(s),
+        config,
+        audit_trail,
         progress_cb=_on_progress,
         persist_target_cb=_persist_target,
         row_loader=_row_loader,
@@ -1856,8 +1861,12 @@ async def load(session_id: str, body: LoadRequest):
     if transformer is not None:
         self_refs = getattr(transformer, "self_refs", {}) or {}
     loader = Loader(
-        s["transformed"], body.dict(), out_dir,
-        ddl_schema=ddl_schema, fk_edges=fk_edges, self_refs=self_refs,
+        s["transformed"],
+        body.dict(),
+        out_dir,
+        ddl_schema=ddl_schema,
+        fk_edges=fk_edges,
+        self_refs=self_refs,
     )
     result = loader.run()
     sessions[session_id]["load_result"] = result
@@ -1930,6 +1939,76 @@ async def download_project_file(project_id: str, filename: str):
     if not os.path.exists(path):
         raise HTTPException(404, "File not found")
     return FileResponse(path, filename=os.path.basename(path))
+
+
+@app.get("/api/projects/{project_id}/download-all")
+async def download_all_project_files(project_id: str):
+    """Bundle every file in the project's outputs/ directory into a single
+    .zip and stream it back. Used by the Export step's "download all"
+    action so users don't have to grab files one by one."""
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    out_dir = project_outputs_dir(project_id)
+    if not os.path.isdir(out_dir):
+        raise HTTPException(404, "No outputs to bundle")
+    files = sorted(
+        f for f in os.listdir(out_dir) if os.path.isfile(os.path.join(out_dir, f))
+    )
+    if not files:
+        raise HTTPException(404, "No outputs to bundle")
+
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for name in files:
+            zf.write(os.path.join(out_dir, name), arcname=name)
+    buf.seek(0)
+
+    project_name = project.get("name") or project_id
+    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in project_name)
+    filename = f"{safe_name}_outputs.zip"
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/download-all/{session_id}")
+async def download_all_session_files(session_id: str):
+    """Same as the project variant but for guest sessions that don't have
+    a project_id yet."""
+    s = sessions.get(session_id)
+    if s and s.get("project_id"):
+        base_dir = project_outputs_dir(s["project_id"])
+    else:
+        base_dir = os.path.join(OUTPUT_DIR, session_id)
+    if not os.path.isdir(base_dir):
+        raise HTTPException(404, "No outputs to bundle")
+    files = sorted(
+        f for f in os.listdir(base_dir) if os.path.isfile(os.path.join(base_dir, f))
+    )
+    if not files:
+        raise HTTPException(404, "No outputs to bundle")
+
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for name in files:
+            zf.write(os.path.join(base_dir, name), arcname=name)
+    buf.seek(0)
+
+    filename = f"session_{session_id[:8]}_outputs.zip"
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/projects/{project_id}/transform-partial")

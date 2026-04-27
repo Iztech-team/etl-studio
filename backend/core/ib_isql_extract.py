@@ -20,7 +20,6 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-
 _DEFAULT_ISQL_PATHS = (
     r"C:\Program Files\Embarcadero\InterBase\bin\isql.exe",
     r"C:\Program Files (x86)\Embarcadero\InterBase\bin\isql.exe",
@@ -224,9 +223,9 @@ def extract_ib_tables_iter(
     env_pw = os.environ.get("IB_PASSWORD")
     pw = password or env_pw or "masterkey"
     pw_source = (
-        "form" if password
-        else "IB_PASSWORD env var" if env_pw
-        else "default 'masterkey'"
+        "form"
+        if password
+        else "IB_PASSWORD env var" if env_pw else "default 'masterkey'"
     )
     default_enc = source_encoding or os.environ.get("IB_SOURCE_ENCODING", "cp1256")
     overrides = {k.upper(): v for k, v in (charset_overrides or {}).items()}
@@ -274,8 +273,12 @@ def extract_ib_tables_iter(
         if not raw_path.exists():
             results.append((table, [], []))
             yield "table_done", {
-                "name": table, "rows": 0, "index": i, "total": total,
-                "columns": [], "data": [],
+                "name": table,
+                "rows": 0,
+                "index": i,
+                "total": total,
+                "columns": [],
+                "data": [],
             }
             continue
 
@@ -288,8 +291,12 @@ def extract_ib_tables_iter(
         if not records:
             results.append((table, [], []))
             yield "table_done", {
-                "name": table, "rows": 0, "index": i, "total": total,
-                "columns": [], "data": [],
+                "name": table,
+                "rows": 0,
+                "index": i,
+                "total": total,
+                "columns": [],
+                "data": [],
             }
             continue
 
@@ -305,9 +312,7 @@ def extract_ib_tables_iter(
         for r in records:
             rows.append(
                 tuple(
-                    _decode_value(
-                        r.get(c), f"{table}.{c}", default_enc, overrides
-                    )
+                    _decode_value(r.get(c), f"{table}.{c}", default_enc, overrides)
                     for c in cols
                 )
             )

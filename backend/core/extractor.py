@@ -3,7 +3,11 @@ import csv
 import json
 from typing import Any, Dict, List, Optional
 from utils.sql_parser import SQLParser
-from utils.encoding import detect_and_convert, normalize_arabic_digits, strip_directional_marks
+from utils.encoding import (
+    detect_and_convert,
+    normalize_arabic_digits,
+    strip_directional_marks,
+)
 from utils.audit import AuditTrail
 
 
@@ -159,7 +163,9 @@ class Extractor:
                         original = v
                         v = strip_directional_marks(v)
                         if v != original:
-                            self.audit_trail.log_directional_marks_stripped(sheet, headers[i])
+                            self.audit_trail.log_directional_marks_stripped(
+                                sheet, headers[i]
+                            )
                     cleaned_row[headers[i]] = v
                 data.append(cleaned_row)
             key = (

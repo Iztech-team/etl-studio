@@ -88,9 +88,7 @@ def extract_db_to_csvs_iter(
     yield "done", {"csv_files": csv_files}
 
 
-def _iter_firebird_to_csvs(
-    db_path: str, output_dir: str, password: Optional[str]
-):
+def _iter_firebird_to_csvs(db_path: str, output_dir: str, password: Optional[str]):
     """Stream IB extraction events through, writing each table's CSV
     as it lands. Strips the heavy 'columns'/'data' fields from
     'table_done' events before forwarding so they stay JSON-light.

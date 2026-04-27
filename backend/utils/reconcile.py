@@ -102,7 +102,9 @@ def check_account_balances(
         a = r.get(account_field)
         if a is None or a == "":
             continue
-        derived[a] = derived.get(a, 0.0) + _num(r.get(debit_field)) - _num(r.get(credit_field))
+        derived[a] = (
+            derived.get(a, 0.0) + _num(r.get(debit_field)) - _num(r.get(credit_field))
+        )
 
     issues: List[Issue] = []
     all_accounts = set(derived) | set(legacy_balances)
@@ -196,7 +198,9 @@ def check_fk_integrity(
         parent_rows = target_tables.get(parent_t, [])
         if not child_rows or not parent_rows:
             continue
-        parent_keys = {r.get(parent_f) for r in parent_rows if r.get(parent_f) is not None}
+        parent_keys = {
+            r.get(parent_f) for r in parent_rows if r.get(parent_f) is not None
+        }
         orphans = 0
         sample: List[Any] = []
         for r in child_rows:
@@ -253,7 +257,9 @@ def reconcile(
             )
             summary["checks_run"].append("account_balance")
         else:
-            summary["checks_skipped"].append("account_balance (no legacy balances provided)")
+            summary["checks_skipped"].append(
+                "account_balance (no legacy balances provided)"
+            )
     else:
         summary["checks_skipped"].append(f"voucher_balance ({gl_table} not in output)")
         summary["checks_skipped"].append(f"account_balance ({gl_table} not in output)")
@@ -267,10 +273,13 @@ def reconcile(
         inv_rows = target_tables.get(inv_t, [])
         line_rows = target_tables.get(line_t, [])
         if not inv_rows or not line_rows:
-            summary["checks_skipped"].append(f"invoice_line_totals[{label}] (missing rows)")
+            summary["checks_skipped"].append(
+                f"invoice_line_totals[{label}] (missing rows)"
+            )
             continue
         issues += check_invoice_line_totals(
-            inv_rows, line_rows,
+            inv_rows,
+            line_rows,
             tolerance=invoice_tolerance,
             label=label,
         )

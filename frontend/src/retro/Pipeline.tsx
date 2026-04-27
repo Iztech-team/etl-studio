@@ -5993,6 +5993,21 @@ function RlExport({ onDone }: { onDone: () => void }) {
 				<div className="panel-body">
 					{loadResult ? (
 						<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+							{loadResult.output_files.length > 1 && (
+								<a
+									href={projectId
+										? `/api/projects/${projectId}/download-all`
+										: `/api/download-all/${uploadResult?.sessionId}`}
+									download
+									className="btn btn-primary"
+									style={{
+										justifyContent: "center",
+										marginBottom: 4,
+									}}
+								>
+									⬇ DOWNLOAD ALL AS ZIP ({loadResult.output_files.length} FILES)
+								</a>
+							)}
 							{loadResult.output_files.map((file) => (
 								<div key={file} className="rl-file-row">
 									<IDisk size={12} />
