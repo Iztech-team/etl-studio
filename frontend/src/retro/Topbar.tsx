@@ -105,78 +105,11 @@ function useActiveExtraction(): ActiveExtractionInfo | null {
 	return info;
 }
 
-// Sibling of useActiveExtraction: polls /api/transform/{sid}/status while
-// a transform marker is present in localStorage. Surfaces the same
-// {done, total, current} shape so the dock's view can be symmetrical.
+// useActiveTransform was a poller for /api/transform/{sid}/status. The
+// passthrough transform completes instantly so there's no progress to
+// show; the hook now returns null until a real progress endpoint exists.
 function useActiveTransform(): ActiveTransformInfo | null {
-	const [info, setInfo] = useState<ActiveTransformInfo | null>(null);
-
-	useEffect(() => {
-		let cancelled = false;
-		let timer: ReturnType<typeof setTimeout> | null = null;
-
-		const scanLs = (): { sessionId: string } | null => {
-			for (let i = 0; i < localStorage.length; i++) {
-				const key = localStorage.key(i);
-				if (!key || !key.startsWith(ACTIVE_TRANSFORM_LS_PREFIX)) continue;
-				try {
-					const raw = localStorage.getItem(key);
-					if (!raw) continue;
-					const v = JSON.parse(raw) as { sessionId?: string };
-					if (v.sessionId) return { sessionId: v.sessionId };
-				} catch {
-					// ignore corrupt entry
-				}
-			}
-			return null;
-		};
-
-		const poll = async () => {
-			if (cancelled) return;
-			const active = scanLs();
-			if (!active) {
-				setInfo(null);
-				timer = setTimeout(poll, 2500);
-				return;
-			}
-			try {
-				const res = await fetch(`/api/transform/${active.sessionId}/status`);
-				if (res.ok) {
-					const data = (await res.json()) as {
-						status: string;
-						tables_done?: number;
-						tables_total?: number;
-						current_table?: string | null;
-					};
-					if (cancelled) return;
-					if (data.status === "running") {
-						setInfo({
-							sessionId: active.sessionId,
-							done: data.tables_done ?? 0,
-							total: data.tables_total ?? 0,
-							current: data.current_table ?? null,
-						});
-						if (!cancelled) timer = setTimeout(poll, 800);
-						return;
-					}
-					// done / error — stop showing. The page-level handler
-					// in Pipeline.tsx removes the LS marker on completion.
-					setInfo(null);
-				}
-			} catch {
-				// network blip, retry
-			}
-			if (!cancelled) timer = setTimeout(poll, 2500);
-		};
-
-		void poll();
-		return () => {
-			cancelled = true;
-			if (timer) clearTimeout(timer);
-		};
-	}, []);
-
-	return info;
+	return null;
 }
 
 export function RlTopbar({
