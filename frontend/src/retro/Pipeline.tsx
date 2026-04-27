@@ -12,7 +12,6 @@ import {
 import { createPortal } from "react-dom";
 import { RL_STAGES, type Project, type ResumedSession, type StageId } from "./data";
 import { IArrow, ICheck, IDisk, IUpload, IX } from "./icons";
-import { MascotDeploy, MascotLoad } from "./Sprites";
 import { RlTopbar } from "./Topbar";
 import { RlPromptModal } from "./PromptModal";
 
@@ -2008,7 +2007,7 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 														display: "flex",
 														alignItems: "center",
 														justifyContent: "center",
-														color: "#1a1006",
+														color: "#0a0410",
 													}}
 												>
 													{isPicked && <ICheck size={8} />}
@@ -2264,7 +2263,7 @@ function RlTableSidebar({
 									padding: "6px 10px",
 									cursor: "pointer",
 									background: active ? "var(--lg-amber)" : "transparent",
-									color: active ? "#1a1006" : "var(--lg-ink)",
+									color: active ? "#0a0410" : "var(--lg-ink)",
 									borderBottom: "1px solid var(--lg-border)",
 									fontFamily: "var(--lg-pixel)",
 									fontSize: 9,
@@ -3749,624 +3748,142 @@ function TableActionsPanel({
 }
 
 function RlTransform({ onNext }: { onNext: () => void }) {
-	const { uploadResult, setTransformResult, projectId } = usePipelineCtx();
+	const { uploadResult, transformResult, setTransformResult, projectId } =
+		usePipelineCtx();
+	const [strategies, setStrategies] = useState<TransformPresetSummary[]>([]);
+	const [sel, setSel] = useState<string>("");
 	const [running, setRunning] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const [result, setResult] = useState<TransformResult | null>(null);
+	const [result, setResult] = useState<TransformResult | null>(
+		transformResult ?? null,
+	);
+
 	const excluded = useMemo(
 		() => new Set(uploadResult?.excludedTables ?? []),
 		[uploadResult?.excludedTables],
 	);
-	const tables = (uploadResult?.tables ?? []).filter((t) => !excluded.has(t.name));
-	const preview = uploadResult?.preview ?? {};
+	const tables = (uploadResult?.tables ?? []).filter(
+		(t) => !excluded.has(t.name),
+	);
 	const schema = uploadResult?.schema ?? {};
 
-	const [activeTable, setActiveTable] = useState<string>(tables[0]?.name ?? "");
-	const [sel, setSel] = useState(0);
-	const [renamingTable, setRenamingTable] = useState<string | null>(null);
-	const [tableNames, setTableNames] = useState<Record<string, string>>(() =>
-		Object.fromEntries(tables.map((t) => [t.name, t.name])),
-	);
-
-	// Per-table column edits state: { [tableName]: ColEdit[] }
-	const [allEdits, setAllEdits] = useState<Record<string, ColEdit[]>>(() => {
-		const init: Record<string, ColEdit[]> = {};
-		for (const t of tables) {
-			const tSchema = schema[t.name] ?? {};
-			init[t.name] = Object.keys(tSchema).map((col) => ({
-				name: col,
-				type: resolveType(tSchema[col]),
-				op: "keep" as ColOp,
-				targetName: col.toLowerCase(),
-				targetType: resolveType(tSchema[col]),
-			}));
-		}
-		return init;
-	});
-
-	// Table-level actions added alongside per-column edits:
-	//   droppedTables  — sources to skip entirely in the transformer.
-	//   rowFilters     — keep/drop rows matching a predicate.
-	//   extraConfigs   — additional outputs from one source (UNION ALL via
-	//                    multiple TableConfigs with the same target_table).
-	//                    Currently only populated by preset apply; UI editor
-	//                    is a follow-up.
-	const [droppedTables, setDroppedTables] = useState<Set<string>>(() => new Set());
-	const [rowFilters, setRowFilters] = useState<Record<string, RowFilter>>({});
-	// Other per-source TableConfig options the preset format can carry —
-	// kept generic so adding new fields server-side is just a forward.
-	type TableConfigOptions = {
-		aggregate?: { group_by?: string[]; aggregations?: Record<string, string>; concat_separator?: string };
-		load_after?: string[];
-		self_reference_parent_column?: string;
-	};
-	const [tableOpts, setTableOpts] = useState<Record<string, TableConfigOptions>>({});
-	type ExtraConfig = {
-		target_table: string;
-		columns: ColEdit[];
-		aggregate?: TableConfigOptions["aggregate"];
-		row_filter?: RowFilter;
-		load_after?: string[];
-		self_reference_parent_column?: string;
-	};
-	const [extraConfigs, setExtraConfigs] = useState<Record<string, ExtraConfig[]>>({});
-
-	// Preset state — see /api/transform-presets endpoints. Tables that
-	// the most recently applied preset *didn't* touch are flagged in the
-	// table sidebar so the user knows they still need manual attention.
-	const [presets, setPresets] = useState<TransformPresetSummary[]>([]);
-	const [selectedPresetId, setSelectedPresetId] = useState<string>("");
-	const [appliedTables, setAppliedTables] = useState<Set<string>>(
-		() => new Set(),
-	);
-	const [appliedPresetName, setAppliedPresetName] = useState<string | null>(
-		null,
-	);
-	const [presetMessage, setPresetMessage] = useState<string | null>(null);
-	const [presetBusy, setPresetBusy] = useState(false);
-	const [showSavePresetModal, setShowSavePresetModal] = useState(false);
-
 	useEffect(() => {
-		void listTransformPresets().then(setPresets);
+		void listTransformPresets().then(setStrategies);
 	}, []);
 
-	const applyPreset = async (presetId: string) => {
-		if (!presetId) return;
-		setPresetBusy(true);
-		setError(null);
-		try {
-			const preset = await getTransformPreset(presetId);
-			if (!preset) {
-				setError("Failed to load preset");
-				return;
-			}
-			const projectTableNames = new Set(tables.map((t) => t.name));
-			const appliedSet = new Set<string>();
-			setAllEdits((prev) => {
-				const next = { ...prev };
-				for (const [tableName, presetEdits] of Object.entries(preset.edits)) {
-					if (!projectTableNames.has(tableName)) continue;
-					const existing = next[tableName] ?? [];
-					const presetCols = new Map<string, ColEdit>();
-					for (const pc of presetEdits) presetCols.set(pc.name, pc);
-					const presetColNames = new Set(presetEdits.map((p) => p.name));
-					const merged: ColEdit[] = [];
-					// Walk existing columns:
-					//  - real (source) columns: take preset's edit if it has one,
-					//    else keep existing as-is.
-					//  - synthetic (isNew) columns from a previous preset / user
-					//    add: drop them unless the new preset also defines them.
-					//    This is what makes "switch preset" actually replace
-					//    rather than accumulate.
-					for (const ec of existing) {
-						const presetCol = presetCols.get(ec.name);
-						if (presetCol) {
-							merged.push({ ...presetCol });
-							continue;
-						}
-						if (ec.isNew) continue; // stale synthetic — drop
-						merged.push(ec);
-					}
-					// Append preset's synthetic columns that we haven't already
-					// re-applied above (added cols, FKs the preset author created).
-					const mergedNames = new Set(merged.map((c) => c.name));
-					for (const pc of presetEdits) {
-						if (!mergedNames.has(pc.name)) merged.push({ ...pc });
-					}
-					// Sort: source-schema columns first (in preset's column order
-					// when known, else original), then synthetic columns last.
-					next[tableName] = merged;
-					appliedSet.add(tableName);
-					// Avoid unused-var warning for presetColNames; we may use it
-					// in future logic for sorting/marking.
-					void presetColNames;
-				}
-				return next;
-			});
-			// Apply preset's table-level options (drop_table, row_filter)
-			// and extra UNION configs. Backend already supports them; the
-			// preset format gained matching optional fields.
-			const presetDropped = (preset.dropped_tables ?? []) as string[];
-			if (presetDropped.length > 0) {
-				setDroppedTables((prev) => {
-					const next = new Set(prev);
-					for (const t of presetDropped) {
-						if (projectTableNames.has(t)) next.add(t);
-					}
-					return next;
-				});
-			}
-			// table_options carries every per-source TableConfig field the
-			// preset wants to set: row_filter (legacy), aggregate, load_after,
-			// self_reference_parent_column. Each goes to its own state slot.
-			const presetTableOpts = (preset.table_options ?? {}) as Record<
-				string,
-				{
-					row_filter?: RowFilter;
-					aggregate?: TableConfigOptions["aggregate"];
-					load_after?: string[];
-					self_reference_parent_column?: string;
-				}
-			>;
-			if (Object.keys(presetTableOpts).length > 0) {
-				setRowFilters((prev) => {
-					const next = { ...prev };
-					for (const [t, opts] of Object.entries(presetTableOpts)) {
-						if (!projectTableNames.has(t)) continue;
-						if (opts?.row_filter) next[t] = opts.row_filter;
-					}
-					return next;
-				});
-				setTableOpts((prev) => {
-					const next = { ...prev };
-					for (const [t, opts] of Object.entries(presetTableOpts)) {
-						if (!projectTableNames.has(t)) continue;
-						const merged: TableConfigOptions = { ...(next[t] ?? {}) };
-						if (opts?.aggregate) merged.aggregate = opts.aggregate;
-						if (opts?.load_after) merged.load_after = opts.load_after;
-						if (opts?.self_reference_parent_column)
-							merged.self_reference_parent_column =
-								opts.self_reference_parent_column;
-						if (Object.keys(merged).length > 0) next[t] = merged;
-					}
-					return next;
-				});
-			}
-			const presetExtras = (preset.extra_configs ?? []) as Array<{
-				source: string;
-				target: string;
-				edits: ColEdit[];
-				aggregate?: TableConfigOptions["aggregate"];
-				row_filter?: RowFilter;
-				load_after?: string[];
-				self_reference_parent_column?: string;
-			}>;
-			if (presetExtras.length > 0) {
-				setExtraConfigs((prev) => {
-					const next = { ...prev };
-					for (const x of presetExtras) {
-						if (!projectTableNames.has(x.source)) continue;
-						const list = next[x.source] ? [...next[x.source]] : [];
-						list.push({
-							target_table: x.target,
-							columns: x.edits,
-							aggregate: x.aggregate,
-							row_filter: x.row_filter,
-							load_after: x.load_after,
-							self_reference_parent_column: x.self_reference_parent_column,
-						});
-						next[x.source] = list;
-					}
-					return next;
-				});
-			}
-			setTableNames((prev) => {
-				const next = { ...prev };
-				for (const [src, dest] of Object.entries(preset.table_names)) {
-					if (next[src] !== undefined) next[src] = dest;
-				}
-				return next;
-			});
-			setAppliedTables(appliedSet);
-			setAppliedPresetName(preset.name);
-			const matched = appliedSet.size;
-			const total = tables.length;
-			const untouched = total - matched;
-			setPresetMessage(
-				`Applied "${preset.name}": ${matched} matched · ${untouched} untouched` +
-					(untouched > 0 ? " (flagged in sidebar)" : ""),
-			);
-		} finally {
-			setPresetBusy(false);
-		}
-	};
-
-	const submitNewPreset = async (name: string) => {
-		setShowSavePresetModal(false);
-		setPresetBusy(true);
-		setError(null);
-		try {
-			const preset = await createTransformPreset(name, tableNames, allEdits);
-			if (!preset) {
-				setError("Failed to save preset");
-				return;
-			}
-			const summary: TransformPresetSummary = {
-				id: preset.id,
-				name: preset.name,
-				schema_signature: preset.schema_signature,
-				table_count: Object.keys(preset.edits).length,
-				created_at: preset.created_at,
-				updated_at: preset.updated_at,
+	// Strategy metadata — color/tier/tag/desc, heuristic mapping by name.
+	// Strategies that don't match a known shape fall back to "PARTNER / B".
+	const meta = (s: TransformPresetSummary) => {
+		const n = s.name.toLowerCase();
+		if (n.includes("erpnext")) {
+			return {
+				color: "var(--lg-magenta)",
+				tier: "S",
+				tag: "OFFICIAL",
+				desc: "Standard ERPNext doctype layout. Customers, items, invoices, ledgers.",
 			};
-			setPresets((prev) => [...prev, summary]);
-			setSelectedPresetId(preset.id);
-			setAppliedPresetName(preset.name);
-			setPresetMessage(`Saved as "${name}"`);
-		} finally {
-			setPresetBusy(false);
 		}
-	};
-
-	const overrideSelectedPreset = async () => {
-		if (!selectedPresetId) return;
-		const target = presets.find((p) => p.id === selectedPresetId);
-		if (!target) return;
-		if (!confirm(`Overwrite preset "${target.name}" with current state?`)) return;
-		setPresetBusy(true);
-		setError(null);
-		try {
-			const preset = await updateTransformPreset(
-				selectedPresetId,
-				tableNames,
-				allEdits,
-			);
-			if (!preset) {
-				setError("Failed to update preset");
-				return;
-			}
-			setPresets((prev) =>
-				prev.map((p) =>
-					p.id === preset.id
-						? {
-								...p,
-								name: preset.name,
-								schema_signature: preset.schema_signature,
-								table_count: Object.keys(preset.edits).length,
-								updated_at: preset.updated_at,
-							}
-						: p,
-				),
-			);
-			setPresetMessage(`Updated "${preset.name}"`);
-		} finally {
-			setPresetBusy(false);
+		if (n.includes("alarabi") || n.includes("al-arabi")) {
+			return {
+				color: "var(--lg-cyan)",
+				tier: "A",
+				tag: "PARTNER",
+				desc: "AlArabi internal schema. RTL-safe text, region codes, dual-date.",
+			};
 		}
-	};
-
-	const removeSelectedPreset = async () => {
-		if (!selectedPresetId) return;
-		const target = presets.find((p) => p.id === selectedPresetId);
-		if (!target) return;
-		if (!confirm(`Delete preset "${target.name}"?`)) return;
-		setPresetBusy(true);
-		try {
-			const ok = await deleteTransformPreset(selectedPresetId);
-			if (!ok) {
-				setError("Failed to delete preset");
-				return;
-			}
-			setPresets((prev) => prev.filter((p) => p.id !== selectedPresetId));
-			setSelectedPresetId("");
-			if (appliedPresetName === target.name) setAppliedPresetName(null);
-			setPresetMessage(`Deleted "${target.name}"`);
-		} finally {
-			setPresetBusy(false);
-		}
-	};
-
-	const cols = allEdits[activeTable] ?? [];
-	const c = cols[sel] ?? cols[0];
-
-	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			const target = e.target as HTMLElement;
-			const isInput = target.tagName === "INPUT" || target.tagName === "TEXTAREA";
-			if (isInput) return;
-
-			switch (e.key.toLowerCase()) {
-				case "arrowup":
-					e.preventDefault();
-					setSel((s) => Math.max(0, s - 1));
-					break;
-				case "arrowdown":
-					e.preventDefault();
-					setSel((s) => Math.min(cols.length - 1, s + 1));
-					break;
-				case "tab":
-					e.preventDefault();
-					const idx = tables.findIndex((t) => t.name === activeTable);
-					if (e.shiftKey) {
-						if (idx > 0) {
-							setActiveTable(tables[idx - 1].name);
-							setSel(0);
-						}
-					} else {
-						if (idx < tables.length - 1) {
-							setActiveTable(tables[idx + 1].name);
-							setSel(0);
-						}
-					}
-					break;
-				case "d":
-					if (c && !c.isNew) {
-						e.preventDefault();
-						setOp(sel, c.op === "drop" ? "keep" : "drop");
-					}
-					break;
-				case "c":
-					if (c && !c.isNew && c.op !== "drop") {
-						e.preventDefault();
-						setOp(sel, c.op === "cast" ? "keep" : "cast");
-					}
-					break;
-				case "r":
-					if (e.altKey) {
-						e.preventDefault();
-						setRenamingTable(activeTable);
-					} else if (c && !c.isNew && c.op !== "drop") {
-						e.preventDefault();
-						const inp = document.querySelector('[data-rename-input]') as HTMLInputElement;
-						inp?.focus();
-					}
-					break;
-			}
+		return {
+			color: "var(--lg-ink-mute)",
+			tier: "B",
+			tag: "CUSTOM",
+			desc: "Saved transform configuration.",
 		};
-		window.addEventListener("keydown", handleKeyDown);
-		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [sel, c, cols.length, activeTable, tables]);
+	};
 
-	const updateCol = (idx: number, patch: Partial<ColEdit>) => {
-		setAllEdits((prev) => {
-			const tableCols = [...(prev[activeTable] ?? [])];
-			tableCols[idx] = { ...tableCols[idx], ...patch };
-			return { ...prev, [activeTable]: tableCols };
+	// Built-in passthrough: send every table unchanged. Always available so
+	// the user has at least one option even with no JSON presets on disk.
+	const PASSTHROUGH_ID = "__passthrough__";
+	const PASSTHROUGH = {
+		id: PASSTHROUGH_ID,
+		name: "PASSTHROUGH",
+		schema_signature: [],
+		table_count: tables.length,
+		created_at: "",
+		updated_at: "",
+	} as TransformPresetSummary;
+
+	const items = [PASSTHROUGH, ...strategies];
+	const selectedSummary = items.find((s) => s.id === sel) ?? null;
+
+	const buildConfigFromPreset = (preset: TransformPreset) => {
+		// Convert preset.edits into the shape POST /api/configure expects.
+		// Only edits present on visible tables are honored; everything else
+		// passes through under its source name.
+		const tableConfigs = tables.map((t) => {
+			const edits = preset.edits[t.name];
+			if (!edits) {
+				return {
+					source_table: t.name,
+					target_table: preset.table_names?.[t.name] ?? t.name,
+					columns: Object.keys(schema[t.name] ?? {}).map((col) => ({
+						name: col,
+						target_name: col,
+						data_type: resolveType((schema[t.name] ?? {})[col]),
+						nullable: true,
+						include: true,
+					})),
+				};
+			}
+			return {
+				source_table: t.name,
+				target_table: preset.table_names?.[t.name] ?? t.name,
+				columns: edits.map((e) => ({
+					name: e.name,
+					target_name: e.targetName ?? e.name,
+					data_type: e.targetType ?? e.type,
+					nullable: e.nullable ?? true,
+					include: e.op !== "drop",
+					is_new: e.op === "add" || e.op === "fk" || undefined,
+					generator: e.generator,
+					fk_source_table: e.fkSourceTable,
+					fk_source_column: e.fkSourceColumn,
+					fk_match_column: e.fkMatchColumn,
+					fk_local_column: e.fkLocalColumn,
+				})),
+				drop_table: preset.dropped_tables?.includes(t.name) || undefined,
+				row_filter: preset.table_options?.[t.name]?.row_filter,
+			};
 		});
+		return tableConfigs;
 	};
 
-	const setOp = (idx: number, op: ColOp) => {
-		const col = cols[idx];
-		const patch: Partial<ColEdit> = { op };
-		if (op === "keep") {
-			patch.targetName = col.name.toLowerCase();
-			patch.targetType = col.type;
-		}
-		if (op === "rename") {
-			patch.targetType = col.type;
-		}
-		if (op === "cast") {
-			patch.targetName = col.targetName || col.name.toLowerCase();
-		}
-		updateCol(idx, patch);
-	};
-
-	const addNewColumn = () => {
-		const id = `__new_${Date.now()}`;
-		const col: ColEdit = {
-			name: id,
-			type: "string",
-			op: "add",
-			targetName: "",
-			targetType: "string",
-			isNew: true,
-			nullable: true,
-			defaultValue: "",
-		};
-		setAllEdits((prev) => ({
-			...prev,
-			[activeTable]: [...(prev[activeTable] ?? []), col],
+	const buildPassthroughConfig = () =>
+		tables.map((t) => ({
+			source_table: t.name,
+			target_table: t.name,
+			columns: Object.keys(schema[t.name] ?? {}).map((col) => ({
+				name: col,
+				target_name: col,
+				data_type: resolveType((schema[t.name] ?? {})[col]),
+				nullable: true,
+				include: true,
+			})),
 		}));
-		setSel(cols.length);
-	};
 
-	const addFkColumn = () => {
-		const id = `__fk_${Date.now()}`;
-		const col: ColEdit = {
-			name: id,
-			type: "string",
-			op: "fk",
-			targetName: "",
-			targetType: "string",
-			isNew: true,
-			fkSourceTable: tables.find((t) => t.name !== activeTable)?.name ?? "",
-			fkSourceColumn: "",
-			fkMatchColumn: "",
-			fkLocalColumn: "",
-		};
-		setAllEdits((prev) => ({
-			...prev,
-			[activeTable]: [...(prev[activeTable] ?? []), col],
-		}));
-		setSel(cols.length);
-	};
-
-	const removeCol = (idx: number) => {
-		setAllEdits((prev) => {
-			const tableCols = [...(prev[activeTable] ?? [])];
-			tableCols.splice(idx, 1);
-			return { ...prev, [activeTable]: tableCols };
-		});
-		setSel((s) => Math.max(0, Math.min(s, cols.length - 2)));
-	};
-
-	// New transforms are now configured in a modal and committed in one
-	// shot rather than tweaked param-by-param inline. The list view shows
-	// compact summary cards; clicking one re-opens the modal in edit mode.
-	const addTransformWithParams = (
-		op: string,
-		params: Record<string, unknown>,
-	) => {
-		setAllEdits((prev) => {
-			const tableCols = [...(prev[activeTable] ?? [])];
-			const col = { ...tableCols[sel] };
-			const transforms = [...(col.transforms ?? [])];
-			transforms.push({ op, params });
-			col.transforms = transforms;
-			tableCols[sel] = col;
-			return { ...prev, [activeTable]: tableCols };
-		});
-	};
-
-	const replaceTransform = (
-		tIdx: number,
-		op: string,
-		params: Record<string, unknown>,
-	) => {
-		setAllEdits((prev) => {
-			const tableCols = [...(prev[activeTable] ?? [])];
-			const col = { ...tableCols[sel] };
-			const transforms = [...(col.transforms ?? [])];
-			transforms[tIdx] = { op, params };
-			col.transforms = transforms;
-			tableCols[sel] = col;
-			return { ...prev, [activeTable]: tableCols };
-		});
-	};
-
-	const removeTransform = (tIdx: number) => {
-		setAllEdits((prev) => {
-			const tableCols = [...(prev[activeTable] ?? [])];
-			const col = { ...tableCols[sel] };
-			const transforms = [...(col.transforms ?? [])];
-			transforms.splice(tIdx, 1);
-			col.transforms = transforms;
-			tableCols[sel] = col;
-			return { ...prev, [activeTable]: tableCols };
-		});
-	};
-
-	const activePreview = (preview[activeTable] ?? []) as Record<string, unknown>[];
-	const kept = cols.filter((c) => c.op !== "drop");
-	const tableRenameCount = Object.entries(tableNames).filter(([k, v]) => k !== v && v.trim() !== "").length;
-	const transformCount = cols.reduce((n, c) => n + (c.transforms?.length ?? 0), 0);
-	const opCounts = {
-		rename: cols.filter((c) => c.op === "rename").length,
-		cast: cols.filter((c) => c.op === "cast").length,
-		drop: cols.filter((c) => c.op === "drop").length,
-		add: cols.filter((c) => c.op === "add").length,
-		fk: cols.filter((c) => c.op === "fk").length,
-		tableRename: tableRenameCount,
-		transforms: transformCount,
-	};
-
-	const serializeTransforms = (transforms?: ColTransform[]) => {
-		if (!transforms || transforms.length === 0) return [];
-		return transforms.map((tr) => {
-			const params: Record<string, unknown> = {};
-			for (const [k, v] of Object.entries(tr.params)) {
-				if (k === "mapping" && typeof v === "string") {
-					// Parse "key=value" lines into { key: value } dict
-					const mapping: Record<string, string> = {};
-					for (const line of v.split("\n")) {
-						const trimmed = line.trim();
-						if (!trimmed) continue;
-						const eq = trimmed.indexOf("=");
-						if (eq > 0) mapping[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
-					}
-					params[k] = mapping;
-				} else if (k === "rules" && typeof v === "string") {
-					// Parse "when=then" lines into [{when, then}] array
-					const rules: { when: string; then: string }[] = [];
-					for (const line of v.split("\n")) {
-						const trimmed = line.trim();
-						if (!trimmed) continue;
-						const eq = trimmed.indexOf("=");
-						if (eq > 0) rules.push({ when: trimmed.slice(0, eq).trim(), then: trimmed.slice(eq + 1).trim() });
-					}
-					params[k] = rules;
-				} else {
-					params[k] = v;
-				}
-			}
-			return { op: tr.op, params };
-		});
-	};
-
-	const saveAndTransform = async () => {
+	const runTransform = async () => {
 		if (!uploadResult?.sessionId) return;
+		if (!sel) {
+			setError("Pick a strategy first");
+			return;
+		}
 		setRunning(true);
 		setError(null);
 		try {
-			// 1. Save configuration
-			const buildColumns = (edits: ColEdit[]) =>
-				edits.map((e) => {
-					if (e.op === "add") {
-						return {
-							name: e.name,
-							target_name: e.targetName,
-							data_type: e.targetType,
-							nullable: e.nullable ?? true,
-							default_value: !e.nullable ? (e.defaultValue ?? null) : null,
-							generator: e.generator ?? null,
-							include: true,
-							is_new: true,
-							transforms: serializeTransforms(e.transforms),
-						};
-					}
-					if (e.op === "fk") {
-						return {
-							name: e.name,
-							target_name: e.targetName,
-							data_type: e.targetType,
-							nullable: true,
-							include: true,
-							is_new: true,
-							fk_source_table: e.fkSourceTable,
-							fk_source_column: e.fkSourceColumn,
-							fk_match_column: e.fkMatchColumn,
-							fk_local_column: e.fkLocalColumn,
-							transforms: serializeTransforms(e.transforms),
-						};
-					}
-					return {
-						name: e.name,
-						target_name: e.op === "rename" || e.op === "cast" ? e.targetName : undefined,
-						data_type: e.op === "cast" ? e.targetType : e.type,
-						nullable: true,
-						include: e.op !== "drop",
-						transforms: serializeTransforms(e.transforms),
-					};
-				});
-			const tableConfigs = tables.flatMap((t) => {
-				const edits = allEdits[t.name] ?? [];
-				const opts = tableOpts[t.name] ?? {};
-				const primary = {
-					source_table: t.name,
-					target_table: tableNames[t.name] || t.name,
-					columns: buildColumns(edits),
-					drop_table: droppedTables.has(t.name) || undefined,
-					row_filter: rowFilters[t.name],
-					aggregate: opts.aggregate,
-					load_after: opts.load_after,
-					self_reference_parent_column: opts.self_reference_parent_column,
-				};
-				// UNION ALL: any extra configs declared by a preset (e.g.
-				// CATESYNONYMT also feeding product_barcodes) become
-				// additional TableConfig entries with the same source. Each
-				// can carry its own aggregate/row_filter/load_after — that's
-				// how the ERPnext preset gets Brand seed (DISTINCT manufacturer)
-				// from CATEGORYT alongside the regular Item mapping.
-				const extras = (extraConfigs[t.name] ?? []).map((extra) => ({
-					source_table: t.name,
-					target_table: extra.target_table,
-					columns: buildColumns(extra.columns),
-					aggregate: extra.aggregate,
-					row_filter: extra.row_filter,
-					load_after: extra.load_after,
-					self_reference_parent_column: extra.self_reference_parent_column,
-				}));
-				return [primary, ...extras];
-			});
+			const tableConfigs =
+				sel === PASSTHROUGH_ID
+					? buildPassthroughConfig()
+					: buildConfigFromPreset(
+							(await getTransformPreset(sel)) ?? ({} as TransformPreset),
+					  );
 			const cfgRes = await fetch(
 				`/api/configure/${uploadResult.sessionId}`,
 				{
@@ -4379,26 +3896,18 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 				const err = await cfgRes.json().catch(() => null);
 				throw new Error(err?.detail || "Configuration failed");
 			}
-
-			// 2. Run transform — drop a localStorage marker so the navbar
-			// dock's useActiveTransform hook can poll the status endpoint
-			// and show progress, mirroring the extraction indicator.
 			const lsKey = ACTIVE_TRANSFORM_LS_PREFIX + (projectId ?? "guest");
 			try {
 				localStorage.setItem(
 					lsKey,
 					JSON.stringify({
 						sessionId: uploadResult.sessionId,
-						projectId: projectId,
+						projectId,
 					}),
 				);
-			} catch {
-				/* localStorage quota issues — non-fatal */
-			}
+			} catch {}
 			try {
-				const res = await fetch(
-					`/api/transform/${uploadResult.sessionId}`,
-				);
+				const res = await fetch(`/api/transform/${uploadResult.sessionId}`);
 				if (!res.ok) {
 					const err = await res.json().catch(() => null);
 					throw new Error(err?.detail || "Transform failed");
@@ -4409,9 +3918,7 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 			} finally {
 				try {
 					localStorage.removeItem(lsKey);
-				} catch {
-					/* noop */
-				}
+				} catch {}
 			}
 		} catch (e) {
 			setError(e instanceof Error ? e.message : "Transform failed");
@@ -4420,981 +3927,138 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 		}
 	};
 
-	return (
-		<div
-			style={{
-				marginTop: 14,
-				display: "grid",
-				gridTemplateColumns: "240px 1fr",
-				gap: 14,
-				minHeight: 0,
-			}}
-		>
-			<RlTableSidebar
-				tables={tables.map((t) => ({ name: t.name, rowCount: t.rowCount }))}
-				activeTable={activeTable}
-				onPick={(name) => {
-					setActiveTable(name);
-					setSel(0);
-				}}
-				rename={{
-					names: tableNames,
-					setNames: setTableNames,
-					renaming: renamingTable,
-					setRenaming: setRenamingTable,
-				}}
-				badge={(name) => {
-					if (appliedTables.size === 0) return null;
-					if (appliedTables.has(name)) return null;
-					return (
-						<span
-							className="badge badge-warn"
-							style={{ fontSize: 7, padding: "0 4px" }}
-							title="Not touched by applied preset — review manually"
-						>
-							!
-						</span>
-					);
-				}}
-			/>
-			<div
-				style={{
-					display: "flex",
-					flexDirection: "column",
-					gap: 14,
-					minWidth: 0,
-				}}
-			>
-				{/* Ops summary across the top of the main area */}
-				<div
-					className="panel"
-					style={{
-						padding: "8px 14px",
-						display: "flex",
-						alignItems: "center",
-						gap: 12,
-						flexWrap: "wrap",
-					}}
-				>
-					<span
-						className="pixel"
-						style={{
-							fontSize: 9,
-							color: "var(--lg-amber)",
-							letterSpacing: "0.1em",
-						}}
-					>
-						{activeTable.toUpperCase()}
-					</span>
-					<span
-						className="mono"
-						style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}
-					>
-						·
-					</span>
-					<span
-						className="pixel"
-						style={{ fontSize: 8, color: "var(--lg-ink-mute)", letterSpacing: "0.1em" }}
-					>
-						OPS
-					</span>
-					<span
-						className="pixel"
-						style={{ fontSize: 12, color: "var(--lg-amber)" }}
-					>
-						{opCounts.rename + opCounts.cast + opCounts.drop + opCounts.add + opCounts.fk + opCounts.tableRename + opCounts.transforms}
-					</span>
-					<span className="mono" style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}>
-						{opCounts.rename} rename · {opCounts.cast} cast · {opCounts.drop} drop{opCounts.add > 0 ? ` · ${opCounts.add} new` : ""}{opCounts.fk > 0 ? ` · ${opCounts.fk} fk` : ""}{opCounts.tableRename > 0 ? ` · ${opCounts.tableRename} tbl rename` : ""}{opCounts.transforms > 0 ? ` · ${opCounts.transforms} transforms` : ""}
-					</span>
-				</div>
-
-				{/* TABLE-LEVEL ACTIONS — drop the table entirely or filter
-				    rows out before they reach the output. These run on top
-				    of the column edits below. */}
-				{activeTable ? (
-					<TableActionsPanel
-						tableName={activeTable}
-						isDropped={droppedTables.has(activeTable)}
-						setDropped={(dropped) =>
-							setDroppedTables((prev) => {
-								const next = new Set(prev);
-								if (dropped) next.add(activeTable);
-								else next.delete(activeTable);
-								return next;
-							})
-						}
-						rowFilter={rowFilters[activeTable]}
-						setRowFilter={(rf) =>
-							setRowFilters((prev) => {
-								const next = { ...prev };
-								if (rf) next[activeTable] = rf;
-								else delete next[activeTable];
-								return next;
-							})
-						}
-						availableColumns={(allEdits[activeTable] ?? [])
-							.filter((c) => c.op !== "drop")
-							.map((c) => c.targetName || c.name)}
-						extraOutputs={(extraConfigs[activeTable] ?? []).map(
-							(e) => e.target_table,
-						)}
-					/>
-				) : null}
-
-				{/* PRESET — apply or save the entire transform config so it can be
-				    reused for other clients with the same legacy schema. */}
+	if (result) {
+		return (
+			<div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
 				<div className="panel">
-					<div
-						className="panel-head"
-						style={{ display: "flex", alignItems: "center", gap: 8 }}
-					>
-						<span>PRESET</span>
-						<span
-							className="mono"
-							style={{
-								fontSize: 9,
-								color: "var(--lg-ink-mute)",
-								letterSpacing: 0,
-								textTransform: "none",
-								fontWeight: "normal",
-							}}
-						>
-							(reuse the same transforms across clients with matching schemas)
-						</span>
-					</div>
-					<div
-						className="panel-body"
-						style={{
-							display: "flex",
-							flexWrap: "wrap",
-							alignItems: "center",
-							gap: 8,
-						}}
-					>
-						<select
-							value={selectedPresetId}
-							onChange={(e) => setSelectedPresetId(e.target.value)}
-							disabled={presetBusy}
-							style={{
-								flex: "1 1 220px",
-								minWidth: 200,
-								maxWidth: 360,
-								background: "var(--lg-bg)",
-								border: "1px solid var(--lg-border)",
-								color: "var(--lg-ink)",
-								fontFamily: "var(--lg-mono)",
-								fontSize: 11,
-								padding: "5px 8px",
-								textTransform: "none",
-								letterSpacing: 0,
-							}}
-						>
-							<option value="">
-								{presets.length === 0
-									? "— no presets saved yet —"
-									: "— select a preset —"}
-							</option>
-							{presets.map((p) => (
-								<option key={p.id} value={p.id}>
-									{p.name} ({p.table_count} tables)
-								</option>
-							))}
-						</select>
-
-						<button
-							className="btn btn-primary"
-							style={{ padding: "5px 12px", fontSize: 10 }}
-							onClick={() => applyPreset(selectedPresetId)}
-							disabled={!selectedPresetId || presetBusy || tables.length === 0}
-						>
-							APPLY
-						</button>
-
-						<button
-							className="btn btn-ghost"
-							style={{ padding: "5px 12px", fontSize: 10 }}
-							onClick={overrideSelectedPreset}
-							disabled={!selectedPresetId || presetBusy}
-							title="Save current state into the selected preset"
-						>
-							OVERWRITE
-						</button>
-
-						<button
-							className="btn btn-ghost"
-							style={{ padding: "5px 8px", fontSize: 10 }}
-							onClick={removeSelectedPreset}
-							disabled={!selectedPresetId || presetBusy}
-							title="Delete the selected preset"
-						>
-							<IX size={9} />
-						</button>
-
-						<div style={{ flex: 1 }} />
-
-						<button
-							className="btn btn-primary"
-							style={{ padding: "5px 12px", fontSize: 10 }}
-							onClick={() => setShowSavePresetModal(true)}
-							disabled={presetBusy || tables.length === 0}
-						>
-							SAVE AS NEW
-						</button>
-
-						{presetMessage && (
-							<div
-								className="mono"
-								style={{
-									flexBasis: "100%",
-									fontSize: 10,
-									color: appliedPresetName
-										? "var(--lg-amber)"
-										: "var(--lg-ink-dim)",
-								}}
-							>
-								{presetMessage}
-							</div>
-						)}
-					</div>
-				</div>
-
-				{/* Column list + edit panel */}
-				<div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 14, minWidth: 0 }}>
-				<div className="panel">
-					<div className="panel-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-						<span>COLUMN EDITS — {activeTable.toUpperCase()}</span>
-						<div style={{ display: "flex", gap: 4 }}>
-							<button
-								className="btn btn-ghost"
-								style={{ padding: "3px 8px", fontSize: 9 }}
-								onClick={addNewColumn}
-							>
-								+ COLUMN
-							</button>
-							<button
-								className="btn btn-ghost"
-								style={{ padding: "3px 8px", fontSize: 9 }}
-								onClick={addFkColumn}
-							>
-								+ FK
-							</button>
-						</div>
-					</div>
-					<div className="panel-body" style={{ padding: 0 }}>
-						{cols.length === 0 ? (
-							<div
-								className="mono"
-								style={{ fontSize: 11, color: "var(--lg-ink-mute)", padding: 20, textAlign: "center" }}
-							>
-								No columns available.
-							</div>
-						) : (
-							cols.map((col, i) => (
-								<div
-									key={col.name}
-									className={`rl-col-row ${i === sel ? "row-selected" : ""} ${col.op === "drop" ? "dropped" : ""}`}
-									onClick={() => setSel(i)}
-									style={{ cursor: "pointer" }}
-								>
-									<div style={{ flex: 1.4 }}>
-										{col.op === "add" || col.op === "fk" ? (
-											<span
-												style={{
-													color: "var(--lg-amber)",
-													fontFamily: "var(--lg-pixel)",
-													fontSize: 9,
-												}}
-											>
-												{col.targetName || "(unnamed)"}
-											</span>
-										) : col.op === "rename" || col.op === "cast" ? (
-											<>
-												<span
-													style={{
-														color: "var(--lg-ink-mute)",
-														textDecoration: "line-through",
-														marginRight: 6,
-														fontSize: 10,
-													}}
-												>
-													{col.name}
-												</span>
-												<span
-													style={{
-														color: "var(--lg-amber)",
-														fontFamily: "var(--lg-pixel)",
-														fontSize: 9,
-													}}
-												>
-													{col.targetName}
-												</span>
-											</>
-										) : (
-											<span
-												style={{
-													color: col.op === "drop" ? "var(--lg-ink-mute)" : "var(--lg-ink)",
-													fontFamily: "var(--lg-pixel)",
-													fontSize: 9,
-													textDecoration: col.op === "drop" ? "line-through" : "none",
-												}}
-											>
-												{col.name}
-											</span>
-										)}
-									</div>
-									<div
-										style={{
-											flex: 1,
-											fontFamily: "var(--lg-mono)",
-											fontSize: 10,
-											color: "var(--lg-ink-dim)",
-										}}
-									>
-										{col.op === "cast" ? (
-											<>
-												<span style={{ textDecoration: "line-through", marginRight: 4 }}>
-													{col.type.toUpperCase()}
-												</span>
-												<span style={{ color: "var(--lg-amber)" }}>
-													{col.targetType.toUpperCase()}
-												</span>
-											</>
-										) : col.op === "fk" ? (
-											<span style={{ color: "var(--lg-ink-mute)", fontSize: 9 }}>
-												{col.fkSourceTable ? `${col.fkSourceTable}.${col.fkSourceColumn || "?"}` : "—"}
-											</span>
-										) : (
-											(col.op === "add" ? col.targetType : col.type).toUpperCase()
-										)}
-									</div>
-									<div style={{ width: 80, textAlign: "right" }}>
-										{col.op === "keep" && <span className="badge badge-mute">KEEP</span>}
-										{col.op === "rename" && <span className="badge badge-ok">RENAME</span>}
-										{col.op === "cast" && <span className="badge badge-warn">CAST</span>}
-										{col.op === "drop" && <span className="badge badge-err">DROP</span>}
-										{col.op === "add" && <span className="badge badge-solid">NEW</span>}
-										{col.op === "fk" && <span className="badge badge-solid">FK</span>}
-									</div>
-								</div>
-							))
-						)}
-					</div>
-				</div>
-
-				<div className="panel">
-					<div className="panel-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-						<span>EDIT · {c ? (c.isNew ? (c.targetName || "(unnamed)") : c.name) : "—"}</span>
-						{c?.isNew && (
-							<button
-								className="btn btn-ghost"
-								style={{ padding: "2px 6px", fontSize: 9, color: "var(--lg-coral)" }}
-								onClick={() => removeCol(sel)}
-							>
-								<IX size={8} /> REMOVE
-							</button>
-						)}
-					</div>
+					<div className="panel-head">▼ TRANSFORM COMPLETE</div>
 					<div className="panel-body">
-						{c && !c.isNew && (
-							<>
-								<div
-									className="pixel"
-									style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4, letterSpacing: "0.1em" }}
-								>
-									OPERATION
-								</div>
-								<div
-									style={{
-										display: "grid",
-										gridTemplateColumns: "repeat(4,1fr)",
-										gap: 4,
-										marginBottom: 12,
-									}}
-								>
-									{(["keep", "cast", "drop"] as const).map((k) => (
-										<button
-											key={k}
-											className={`btn ${c.op === k ? "btn-primary" : "btn-ghost"}`}
-											style={{ padding: "5px 6px", fontSize: 9, justifyContent: "center" }}
-											onClick={() => setOp(sel, k)}
-										>
-											{k.toUpperCase()}
-										</button>
-									))}
-								</div>
-
-								<div style={{ marginBottom: 12 }}>
-									<div
-										className="pixel"
-										style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4 }}
-									>
-										RENAME (OPTIONAL)
-									</div>
-									<input
-										data-rename-input
-										className="input"
-										placeholder="Keep original name if empty"
-										value={c.targetName}
-										onChange={(e) => updateCol(sel, { targetName: e.target.value })}
-									/>
-								</div>
-
-								{c.op === "cast" && (
-									<>
-										<div
-											className="pixel"
-											style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4 }}
-										>
-											CAST TO
-										</div>
-										<div
-											style={{
-												display: "grid",
-												gridTemplateColumns: "repeat(3,1fr)",
-												gap: 3,
-												marginBottom: 12,
-												maxHeight: 180,
-												overflowY: "auto",
-											}}
-										>
-											{CAST_TYPES.map((tp) => (
-												<button
-													key={tp}
-													className={`btn ${c.targetType === tp ? "btn-primary" : "btn-ghost"}`}
-													style={{ padding: "4px 6px", fontSize: 8, justifyContent: "flex-start" }}
-													onClick={() => updateCol(sel, { targetType: tp })}
-												>
-													{tp.toUpperCase()}
-												</button>
-											))}
-										</div>
-										<div
-											className="pixel"
-											style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4 }}
-										>
-											RENAME (OPTIONAL)
-										</div>
-										<input
-											className="input"
-											value={c.targetName}
-											onChange={(e) => updateCol(sel, { targetName: e.target.value })}
-										/>
-									</>
-								)}
-
-								{c.op === "drop" && (
-									<div
-										style={{
-											padding: 10,
-											border: "1px solid var(--lg-coral)",
-											color: "var(--lg-coral)",
-											fontSize: 11,
-										}}
-									>
-										Column will be removed. Source data is preserved.
-									</div>
-								)}
-
-								{c.op === "keep" && (
-									<div
-										style={{
-											padding: 10,
-											border: "1px solid var(--lg-border)",
-											color: "var(--lg-ink-dim)",
-											fontSize: 11,
-										}}
-									>
-										Pass-through · value and type preserved.
-									</div>
-								)}
-
-								<TransformsCardList
-									transforms={c.transforms ?? []}
-									onAdd={addTransformWithParams}
-									onReplace={replaceTransform}
-									onRemove={removeTransform}
-								/>
-							</>
-						)}
-
-						{c?.op === "add" && (
-							<>
-								<div
-									className="pixel"
-									style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4, letterSpacing: "0.1em" }}
-								>
-									COLUMN NAME
-								</div>
-								<input
-									className="input"
-									style={{ marginBottom: 12 }}
-									value={c.targetName}
-									placeholder="new_column"
-									onChange={(e) => updateCol(sel, { targetName: e.target.value })}
-								/>
-
-								<div
-									className="pixel"
-									style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4, letterSpacing: "0.1em" }}
-								>
-									DATA TYPE
-								</div>
-								<div
-									style={{
-										display: "grid",
-										gridTemplateColumns: "repeat(3,1fr)",
-										gap: 3,
-										marginBottom: 12,
-										maxHeight: 180,
-										overflowY: "auto",
-									}}
-								>
-									{CAST_TYPES.map((tp) => (
-										<button
-											key={tp}
-											className={`btn ${c.targetType === tp ? "btn-primary" : "btn-ghost"}`}
-											style={{ padding: "4px 6px", fontSize: 8, justifyContent: "flex-start" }}
-											onClick={() => updateCol(sel, { targetType: tp })}
-										>
-											{tp.toUpperCase()}
-										</button>
-									))}
-								</div>
-
-								<div
-									className="pixel"
-									style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4, letterSpacing: "0.1em" }}
-								>
-									NULLABLE
-								</div>
-								<div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
-									<button
-										className={`btn ${c.nullable ? "btn-primary" : "btn-ghost"}`}
-										style={{ padding: "5px 10px", fontSize: 9, flex: 1, justifyContent: "center" }}
-										onClick={() => updateCol(sel, { nullable: true, defaultValue: "" })}
-									>
-										NULLABLE
-									</button>
-									<button
-										className={`btn ${!c.nullable ? "btn-primary" : "btn-ghost"}`}
-										style={{ padding: "5px 10px", fontSize: 9, flex: 1, justifyContent: "center" }}
-										onClick={() => updateCol(sel, { nullable: false })}
-									>
-										NOT NULL
-									</button>
-								</div>
-
-								{!c.nullable && (
-									<GeneratorEditor
-										col={c}
-										otherColumns={cols
-											.filter((x) => x.name !== c.name && x.op !== "drop")
-											.map((x) => x.targetName || x.name.toLowerCase())}
-										onChange={(gen) => updateCol(sel, { generator: gen })}
-									/>
-								)}
-
-								{c.nullable && (
-									<div
-										style={{
-											padding: 10,
-											border: "1px solid var(--lg-border)",
-											color: "var(--lg-ink-dim)",
-											fontSize: 11,
-										}}
-									>
-										All rows will have NULL for this column.
-									</div>
-								)}
-
-								{/* Column transforms for new columns */}
-								<TransformsCardList
-									transforms={c.transforms ?? []}
-									onAdd={addTransformWithParams}
-									onReplace={replaceTransform}
-									onRemove={removeTransform}
-								/>
-							</>
-						)}
-
-						{c?.op === "fk" && (
-							<>
-								<div
-									className="pixel"
-									style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4, letterSpacing: "0.1em" }}
-								>
-									COLUMN NAME
-								</div>
-								<input
-									className="input"
-									style={{ marginBottom: 12 }}
-									value={c.targetName}
-									placeholder="looked_up_column"
-									onChange={(e) => updateCol(sel, { targetName: e.target.value })}
-								/>
-
-								<div
-									className="pixel"
-									style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4, letterSpacing: "0.1em" }}
-								>
-									DATA TYPE
-								</div>
-								<div
-									style={{
-										display: "grid",
-										gridTemplateColumns: "repeat(3,1fr)",
-										gap: 3,
-										marginBottom: 12,
-										maxHeight: 180,
-										overflowY: "auto",
-									}}
-								>
-									{CAST_TYPES.map((tp) => (
-										<button
-											key={tp}
-											className={`btn ${c.targetType === tp ? "btn-primary" : "btn-ghost"}`}
-											style={{ padding: "4px 6px", fontSize: 8, justifyContent: "flex-start" }}
-											onClick={() => updateCol(sel, { targetType: tp })}
-										>
-											{tp.toUpperCase()}
-										</button>
-									))}
-								</div>
-
-								<div
-									className="pixel"
-									style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4, letterSpacing: "0.1em" }}
-								>
-									LOCAL COLUMN (FK)
-								</div>
-								<select
-									className="input"
-									style={{ marginBottom: 12 }}
-									value={c.fkLocalColumn ?? ""}
-									onChange={(e) => updateCol(sel, { fkLocalColumn: e.target.value })}
-								>
-									<option value="">— select column —</option>
-									{cols.filter((x) => !x.isNew).map((x) => (
-										<option key={x.name} value={x.name}>{x.name}</option>
-									))}
-								</select>
-
-								<div
-									className="pixel"
-									style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4, letterSpacing: "0.1em" }}
-								>
-									SOURCE TABLE
-								</div>
-								<select
-									className="input"
-									style={{ marginBottom: 12 }}
-									value={c.fkSourceTable ?? ""}
-									onChange={(e) => {
-										updateCol(sel, {
-											fkSourceTable: e.target.value,
-											fkMatchColumn: "",
-											fkSourceColumn: "",
-										});
-									}}
-								>
-									<option value="">— select table —</option>
-									{tables.map((t) => (
-										<option key={t.name} value={t.name}>{t.name}</option>
-									))}
-								</select>
-
-								{c.fkSourceTable && (
-									<>
-										<div
-											className="pixel"
-											style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4, letterSpacing: "0.1em" }}
-										>
-											MATCH COLUMN (in {c.fkSourceTable.toUpperCase()})
-										</div>
-										<select
-											className="input"
-											style={{ marginBottom: 12 }}
-											value={c.fkMatchColumn ?? ""}
-											onChange={(e) => updateCol(sel, { fkMatchColumn: e.target.value })}
-										>
-											<option value="">— select column —</option>
-											{(tables.find((t) => t.name === c.fkSourceTable)?.columns ?? []).map((col) => (
-												<option key={col} value={col}>{col}</option>
-											))}
-										</select>
-
-										<div
-											className="pixel"
-											style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 4, letterSpacing: "0.1em" }}
-										>
-											VALUE COLUMN (pull from {c.fkSourceTable.toUpperCase()})
-										</div>
-										<select
-											className="input"
-											value={c.fkSourceColumn ?? ""}
-											onChange={(e) => updateCol(sel, { fkSourceColumn: e.target.value })}
-										>
-											<option value="">— select column —</option>
-											{(tables.find((t) => t.name === c.fkSourceTable)?.columns ?? []).map((col) => (
-												<option key={col} value={col}>{col}</option>
-											))}
-										</select>
-									</>
-								)}
-
-								{c.fkLocalColumn && c.fkSourceTable && c.fkMatchColumn && c.fkSourceColumn && (
-									<div
-										style={{
-											marginTop: 12,
-											padding: 10,
-											border: "1px solid var(--lg-amber)",
-											color: "var(--lg-ink-dim)",
-											fontSize: 10,
-											lineHeight: 1.6,
-											fontFamily: "var(--lg-mono)",
-										}}
-									>
-										{activeTable}.{c.fkLocalColumn} → {c.fkSourceTable}.{c.fkMatchColumn}
-										<br />
-										pull: {c.fkSourceTable}.{c.fkSourceColumn}
-									</div>
-								)}
-
-								{/* Column transforms for FK columns */}
-								<TransformsCardList
-									transforms={c.transforms ?? []}
-									onAdd={addTransformWithParams}
-									onReplace={replaceTransform}
-									onRemove={removeTransform}
-								/>
-							</>
+						<div className="pixel glow-magenta" style={{ fontSize: 22, color: "var(--lg-magenta)" }}>
+							{(result.total_rows ?? 0).toLocaleString()} ROWS
+						</div>
+						<div className="mono" style={{ fontSize: 11, color: "var(--lg-ink-dim)", marginTop: 6 }}>
+							{result.tables_transformed} target tables · {result.encoding_conversions ?? 0} encoding fixes · {result.type_conversions ?? 0} type conversions
+						</div>
+						{result.warnings && result.warnings.length > 0 && (
+							<div style={{ marginTop: 10, fontSize: 10, color: "var(--lg-warn)" }}>
+								{result.warnings.length} warning(s) — see export step for details
+							</div>
 						)}
 					</div>
+				</div>
+				<div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+					<button className="btn btn-ghost" onClick={() => { setResult(null); setSel(""); }}>
+						RE-PICK STRATEGY
+					</button>
+					<button className="btn btn-primary pulse" onClick={onNext}>
+						▶ EXPORT
+					</button>
 				</div>
 			</div>
+		);
+	}
 
-			{/* Preview table (before → after) */}
-			{activePreview.length > 0 && (
-				<div className="panel">
-					<div className="panel-head">
-						BEFORE / AFTER · {activeTable.toUpperCase()} · {activePreview.length} SAMPLE ROWS
-					</div>
-					<div className="panel-body" style={{ padding: 0 }}>
-						<div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, minWidth: 0 }}>
-							<div style={{ borderRight: "1px solid var(--lg-border)", minWidth: 0 }}>
-								<div
-									className="pixel"
-									style={{ fontSize: 9, color: "var(--lg-ink-mute)", padding: "8px 10px", letterSpacing: "0.1em" }}
-								>
-									SOURCE · {activeTable.toUpperCase()}
-								</div>
-								<div style={{ overflowX: "auto", overflowY: "hidden", maxWidth: "100%" }}>
-									<table className="table" style={{ tableLayout: "auto", whiteSpace: "nowrap" }}>
-										<thead>
-											<tr>
-												{cols.map((cl) => (
-													<th
-														key={cl.name}
-														className={
-															cl.op === "drop" ? "col-drop"
-																: cl.op === "rename" ? "col-rename"
-																: cl.op === "cast" ? "col-cast" : ""
-														}
-													>
-														{cl.name}
-													</th>
-												))}
-											</tr>
-										</thead>
-										<tbody>
-											{activePreview.slice(0, 4).map((row, ri) => (
-												<tr key={ri}>
-													{cols.map((cl) => (
-														<td
-															key={cl.name}
-															className={
-																cl.op === "drop" ? "col-drop"
-																	: cl.op === "rename" ? "col-rename"
-																	: cl.op === "cast" ? "col-cast" : ""
-															}
-														>
-															{row[cl.name] != null ? String(row[cl.name]) : "—"}
-														</td>
-													))}
-												</tr>
-											))}
-										</tbody>
-									</table>
-								</div>
-							</div>
-							<div style={{ minWidth: 0 }}>
-								<div
-									className="pixel"
-									style={{ fontSize: 9, color: "var(--lg-amber)", padding: "8px 10px", letterSpacing: "0.1em" }}
-								>
-									→ OUTPUT · {(tableNames[activeTable] || activeTable).toLowerCase()}
-								</div>
-								<div style={{ overflowX: "auto", overflowY: "hidden", maxWidth: "100%" }}>
-									<table className="table" style={{ tableLayout: "auto", whiteSpace: "nowrap" }}>
-										<thead>
-											<tr>
-												{kept.map((cl) => (
-													<th
-														key={cl.name}
-														className={
-															cl.op === "cast" ? "col-cast"
-																: cl.op === "rename" ? "col-rename" : ""
-														}
-													>
-														{cl.targetName || "(unnamed)"}
-														<div
-															style={{
-																fontFamily: "var(--lg-mono)",
-																fontSize: 9,
-																color: "var(--lg-ink-mute)",
-																fontWeight: 400,
-																letterSpacing: 0,
-															}}
-														>
-															{(cl.op === "cast" || cl.op === "add" || cl.op === "fk" ? cl.targetType : cl.type).toUpperCase()}
-															{cl.op === "fk" && " (FK)"}
-														</div>
-													</th>
-												))}
-											</tr>
-										</thead>
-										<tbody>
-											{activePreview.slice(0, 4).map((row, ri) => (
-												<tr key={ri}>
-													{kept.map((cl) => {
-														const cellValue =
-															cl.op === "add"
-																? renderAddedCellPreview(cl, ri)
-																: cl.op === "fk"
-																	? null
-																	: (() => {
-																			const after = applyAllTransforms(
-																				row[cl.name],
-																				cl,
-																				row,
-																			);
-																			return after != null ? String(after) : null;
-																		})();
-														const hasTransforms =
-															(cl.transforms?.length ?? 0) > 0;
-														return (
-															<td
-																key={cl.name}
-																className={
-																	cl.op === "cast"
-																		? "col-cast"
-																		: cl.op === "rename"
-																			? "col-rename"
-																			: ""
-																}
-																style={
-																	hasTransforms
-																		? { background: "rgba(255,179,71,0.08)" }
-																		: undefined
-																}
-															>
-																{cl.op === "fk" ? (
-																	<span
-																		style={{
-																			color: "var(--lg-ink-mute)",
-																			fontStyle: "italic",
-																		}}
-																	>
-																		fk lookup
-																	</span>
-																) : cellValue == null ? (
-																	"—"
-																) : (
-																	cellValue
-																)}
-															</td>
-														);
-													})}
-												</tr>
-											))}
-										</tbody>
-									</table>
-								</div>
-							</div>
-						</div>
-					</div>
+	return (
+		<div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
+			<div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+				<div className="pixel glow-cyan" style={{ fontSize: 11, color: "var(--lg-cyan)" }}>
+					▣ CHOOSE YOUR STRATEGY
 				</div>
-			)}
+				<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}>
+					— each strategy converts your tables to a known target schema —
+				</div>
+				<div style={{ flex: 1 }} />
+				<span className="badge badge-cyan">{items.length} STRATEGIES</span>
+			</div>
 
-			{/* Transform result stats */}
-			{result && (
-				<div className="panel">
-					<div className="panel-head">TRANSFORM RESULT</div>
-					<div className="panel-body" style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-						<dl className="kv">
-							<dt>TABLES</dt>
-							<dd>{result.tables_transformed}</dd>
-							<dt>ROWS</dt>
-							<dd>{result.total_rows.toLocaleString()}</dd>
-							<dt>ENCODING FIXES</dt>
-							<dd>{result.encoding_conversions}</dd>
-							<dt>TYPE CONVERSIONS</dt>
-							<dd>{result.type_conversions}</dd>
-							<dt>NULL NORMALIZATIONS</dt>
-							<dd>{result.null_normalizations}</dd>
-						</dl>
-						{result.warnings.length > 0 && (
-							<div>
-								{result.warnings.map((w, i) => (
-									<div key={i} className="mono" style={{ fontSize: 10, color: "var(--lg-coral)", marginTop: 4 }}>
-										! {w}
+			<div className="rl-strat-grid">
+				{items.map((s) => {
+					const m = meta(s);
+					const active = s.id === sel;
+					return (
+						<div
+							key={s.id}
+							className={`rl-strat ${active ? "active" : ""}`}
+							onClick={() => setSel(s.id)}
+							style={{ ["--c" as string]: m.color } as React.CSSProperties}
+						>
+							<div className="rl-strat-tier" style={{ color: m.color }}>
+								{m.tier}
+							</div>
+							<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+								<div className="rl-strat-icon" style={{ background: m.color }}>
+									<IDisk size={20} />
+								</div>
+								<div>
+									<div className="pixel" style={{ fontSize: 11, color: m.color, letterSpacing: "0.1em" }}>
+										{s.name}
 									</div>
-								))}
+									<div className="pixel" style={{ fontSize: 7, color: "var(--lg-ink-mute)", letterSpacing: "0.15em", marginTop: 4 }}>
+										{m.tag}
+									</div>
+								</div>
 							</div>
-						)}
-					</div>
-				</div>
-			)}
+							<div className="mono" style={{ fontSize: 10.5, color: "var(--lg-ink-dim)", marginTop: 10, lineHeight: 1.5 }}>
+								{m.desc}
+							</div>
+							<div className="rl-strat-stats">
+								<div>
+									<div className="lab pixel">TBLS</div>
+									<div className="val pixel" style={{ color: m.color }}>{s.id === PASSTHROUGH_ID ? tables.length : s.table_count}</div>
+								</div>
+								<div>
+									<div className="lab pixel">SIG</div>
+									<div className="val pixel" style={{ color: m.color }}>{s.id === PASSTHROUGH_ID ? "—" : s.schema_signature.length}</div>
+								</div>
+								<div>
+									<div className="lab pixel">TIER</div>
+									<div className="val pixel" style={{ color: m.color }}>{m.tier}</div>
+								</div>
+								<div>
+									<div className="lab pixel">FIT</div>
+									<div className="val pixel" style={{ color: m.color }}>{s.id === PASSTHROUGH_ID ? "—" : "AUTO"}</div>
+								</div>
+							</div>
+							{active && (
+								<div className="rl-strat-eq">
+									<span className="pixel" style={{ fontSize: 7, color: m.color }}>★ EQUIPPED</span>
+								</div>
+							)}
+						</div>
+					);
+				})}
+			</div>
 
 			{error && (
-				<div className="mono" style={{ fontSize: 11, color: "var(--lg-coral)" }}>
-					{"> "}{error}
+				<div className="panel" style={{ borderColor: "var(--lg-coral)", padding: 12 }}>
+					<div className="mono" style={{ fontSize: 11, color: "var(--lg-coral)" }}>
+						{error}
+					</div>
 				</div>
 			)}
 
-			<div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-				{!result ? (
-					<button
-						className="btn btn-primary"
-						onClick={saveAndTransform}
-						disabled={running || !uploadResult?.sessionId}
-					>
-						{running ? "TRANSFORMING…" : "RUN TRANSFORM"} <IArrow size={10} />
-					</button>
-				) : (
-					<button className="btn btn-primary" onClick={onNext}>
-						CONTINUE TO EXPORT <IArrow size={10} />
-					</button>
-				)}
+			<div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+				<div className="mono" style={{ fontSize: 11, color: "var(--lg-ink-dim)" }}>
+					{selectedSummary ? (
+						<>
+							<span className="pixel" style={{ color: "var(--lg-cyan)" }}>SELECTED:</span> {selectedSummary.name}
+						</>
+					) : (
+						<span className="pixel" style={{ color: "var(--lg-ink-mute)" }}>NO STRATEGY EQUIPPED</span>
+					)}
+				</div>
+				<button
+					className={`btn btn-primary ${sel && !running ? "pulse" : ""}`}
+					disabled={!sel || running}
+					onClick={runTransform}
+				>
+					{running ? "TRANSFORMING…" : "▶ RUN TRANSFORM"}
+				</button>
 			</div>
-			</div>
-			{showSavePresetModal && (
-				<RlPromptModal
-					title="SAVE PRESET"
-					label="PRESET NAME"
-					placeholder="e.g. AlArabi v1"
-					confirmText="SAVE"
-					onConfirm={submitNewPreset}
-					onCancel={() => setShowSavePresetModal(false)}
-				/>
-			)}
 		</div>
 	);
 }
 
-
-// ---------- export ----------
 
 function RlExport({ onDone }: { onDone: () => void }) {
 	const { projectId, uploadResult, transformResult, loadResult, setLoadResult } = usePipelineCtx();
@@ -5469,7 +4133,7 @@ function RlExport({ onDone }: { onDone: () => void }) {
 								className="pixel"
 								style={{
 									fontSize: 9,
-									color: fmt === f.id ? "#1a1006" : "var(--lg-amber)",
+									color: fmt === f.id ? "#0a0410" : "var(--lg-amber)",
 									letterSpacing: "0.1em",
 								}}
 							>
@@ -5479,7 +4143,7 @@ function RlExport({ onDone }: { onDone: () => void }) {
 								className="mono"
 								style={{
 									fontSize: 10,
-									color: fmt === f.id ? "#1a1006" : "var(--lg-ink-mute)",
+									color: fmt === f.id ? "#0a0410" : "var(--lg-ink-mute)",
 									marginTop: 3,
 								}}
 							>
@@ -5604,25 +4268,14 @@ function RlExport({ onDone }: { onDone: () => void }) {
 			</div>
 
 			<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-				<div className="rl-mascot-slot">
-					<MascotLoad size={150} />
-				</div>
 				<div className="panel">
-					<div className="panel-head">
-						{loadResult ? "COMPLETE" : "READY TO RUN"}
-					</div>
+					<div className="panel-head">FINAL BOSS</div>
 					<div className="panel-body">
-						<div
-							className="pixel"
-							style={{ fontSize: 22, color: "var(--lg-amber)" }}
-						>
+						<div className="pixel glow-magenta" style={{ fontSize: 22, color: "var(--lg-magenta)" }}>
 							{totalRows.toLocaleString()}
 						</div>
-						<div
-							className="mono"
-							style={{ fontSize: 11, color: "var(--lg-ink-dim)" }}
-						>
-							{loadResult ? "ROWS EXPORTED" : "ROWS WILL EXPORT"}
+						<div className="mono" style={{ fontSize: 11, color: "var(--lg-ink-dim)" }}>
+							{loadResult ? "ROWS EXPORTED" : "ROWS WILL MIGRATE"}
 						</div>
 					</div>
 				</div>
@@ -5647,29 +4300,20 @@ function RlExport({ onDone }: { onDone: () => void }) {
 				)}
 
 				{!loadResult ? (
-					<div className="rl-run-cluster">
-						<div className="rl-mascot-slot rl-mascot-slot-sm">
-							<MascotDeploy size={130} />
-						</div>
-						<button
-							className="btn btn-primary"
-							onClick={runLoad}
-							disabled={running || !uploadResult?.sessionId}
-						>
-							{running ? "EXPORTING…" : "▶ RUN PIPELINE"}
-						</button>
-					</div>
+					<button
+						className={`btn btn-primary ${!running ? "pulse" : ""}`}
+						onClick={runLoad}
+						disabled={running || !uploadResult?.sessionId}
+						style={{ fontSize: 13, padding: "12px 14px", justifyContent: "center" }}
+					>
+						{running ? "EXPORTING…" : "▶ EXPORT"}
+					</button>
 				) : (
 					<button
 						className="btn btn-primary"
 						onClick={async () => {
-							// Call stats to finalize the pipeline phase
 							if (uploadResult?.sessionId) {
-								try {
-									await fetch(`/api/stats/${uploadResult.sessionId}`);
-								} catch {
-									// non-critical
-								}
+								try { await fetch(`/api/stats/${uploadResult.sessionId}`); } catch {}
 							}
 							onDone();
 						}}

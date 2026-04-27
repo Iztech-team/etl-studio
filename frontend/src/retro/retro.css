@@ -444,26 +444,6 @@ body { font-family: var(--lg-mono); }
 }
 .rl-proj-path > span { min-width: 0; }
 
-.rl-tpl-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 10px;
-  align-content: start;
-}
-.rl-tpl {
-  background: var(--lg-bg-1);
-  border: 1px solid var(--lg-border);
-  padding: 14px;
-  cursor: pointer;
-  min-height: 110px;
-}
-.rl-tpl:hover { border-color: var(--lg-amber); }
-.rl-tpl.active {
-  border-color: var(--lg-amber);
-  background: rgba(176,102,255,0.06);
-  box-shadow: 2px 2px 0 var(--lg-amber-dim);
-}
-
 .rl-drop {
   border: 2px dashed var(--lg-border-br);
   background: var(--lg-bg);
@@ -720,14 +700,6 @@ dialog.rl-col-dialog::backdrop {
 .rl-proj { transition: transform .12s ease-out, border-color .12s; }
 .rl-proj:hover { transform: translateY(-2px); border-color: var(--lg-amber); }
 
-.rl-tpl { animation: rl-card-in .26s ease-out both; transition: transform .12s, border-color .12s, box-shadow .12s; }
-.rl-tpl:nth-child(1) { animation-delay: 0ms; }
-.rl-tpl:nth-child(2) { animation-delay: 50ms; }
-.rl-tpl:nth-child(3) { animation-delay: 100ms; }
-.rl-tpl:nth-child(4) { animation-delay: 150ms; }
-.rl-tpl:nth-child(n+5) { animation-delay: 200ms; }
-.rl-tpl:hover { transform: translateY(-2px); }
-
 .panel { animation: rl-fade-in .22s ease-out both; }
 
 .btn { transition: transform .05s, background .1s, box-shadow .1s; }
@@ -758,50 +730,8 @@ dialog.rl-col-dialog::backdrop {
   94%, 96%      { opacity: 1; }
 }
 
-/* Empty state — center stage for the sprite */
-.rl-empty {
-  display: flex; flex-direction: column; align-items: center;
-  gap: 14px;
-  padding: 40px 20px 48px;
-  text-align: center;
-  position: relative;
-}
-.rl-empty-mascot {
-  display: inline-flex;
-  padding: 18px 22px;
-  position: relative;
-}
-.rl-empty-title {
-  font-family: var(--lg-pixel);
-  font-size: 11px;
-  color: var(--lg-amber);
-  letter-spacing: 0.15em;
-  margin-top: 4px;
-}
-.rl-empty-sub {
-  font-family: var(--lg-mono);
-  font-size: 12px;
-  color: var(--lg-ink-dim);
-  max-width: 420px;
-  line-height: 1.7;
-}
-
-/* Sprites */
+/* Sprites — login screen only */
 .sp { display: block; image-rendering: pixelated; }
-.rl-mascot-img { image-rendering: pixelated; display: block; }
-.rl-mascot-slot {
-  display: flex;
-  justify-content: center;
-  align-items: flex-end;
-  padding: 4px 0 0;
-}
-.rl-mascot-slot-sm { padding: 0; margin-bottom: -6px; }
-.rl-run-cluster {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
-}
 .sp-bob { animation: sp-bob 1.4s ease-in-out infinite; }
 .sp-bob-slow { animation: sp-bob-slow 2.2s ease-in-out infinite; }
 .sp-eye {
@@ -1087,7 +1017,7 @@ dialog.rl-col-dialog::backdrop {
 
 /* Reduce motion */
 @media (prefers-reduced-motion: reduce) {
-  .rl-page, .rl-proj, .rl-tpl, .panel,
+  .rl-page, .rl-proj, .panel,
   .btn-primary, .progress > span,
   .rl-dock-pipe-step.active, .rl-dock-pipe-step.active .dot,
   .rl-dock-brand, .rl-avatar::after,
@@ -1096,5 +1026,5 @@ dialog.rl-col-dialog::backdrop {
   .rl-user-menu, .blink, .pulse, .rl-achievement, .rl-strat:hover {
     animation: none !important;
   }
-  .rl-proj:hover, .rl-tpl:hover, .rl-strat:hover { transform: none; }
+  .rl-proj:hover, .rl-strat:hover { transform: none; }
 }
