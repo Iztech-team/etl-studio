@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { UploadCloud } from 'lucide-react'
 import { usePipeline } from '../store/pipeline'
@@ -8,10 +8,12 @@ import { PhaseHeader, Spinner, DataTable } from './ui'
 
 export default function UploadPhase() {
   const { state, dispatch } = usePipeline()
+  const [closedPreviews, setClosedPreviews] = useState<Set<string>>(new Set())
 
   const onDrop = useCallback(async (accepted: File[]) => {
     if (accepted.length === 0) return
     dispatch({ type: 'SET_LOADING', loading: true })
+    setClosedPreviews(new Set())
     try {
       const result = await uploadFiles(accepted, state.projectId ?? undefined)
       dispatch({ type: 'SET_UPLOAD', result })
@@ -115,6 +117,7 @@ export default function UploadPhase() {
           )}
 
           {Object.entries(state.uploadResult.preview).map(([table, rows]) => {
+            if (closedPreviews.has(table)) return null
             const cols = rows.length > 0 ? Object.keys(rows[0]) : []
             return (
               <Card key={table}>
@@ -127,7 +130,14 @@ export default function UploadPhase() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <DataTable columns={cols} rows={rows} maxRows={5} />
+                  <DataTable
+                    columns={cols}
+                    rows={rows}
+                    maxRows={5}
+                    interactive
+                    onClose={() => setClosedPreviews(prev => new Set([...prev, table]))}
+                    onEdit={(idx, row) => console.log('Edit row', idx, row)}
+                  />
                 </CardContent>
               </Card>
             )
