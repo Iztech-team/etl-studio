@@ -60,7 +60,6 @@ def init_db() -> None:
 def backfill_pipeline_runs() -> int:
     """One-time migration: scan project state files and insert historical pipeline_runs."""
     import json
-    import os
 
     data_dir = Path(__file__).parent.parent / "data" / "projects"
     if not data_dir.exists():

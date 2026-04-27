@@ -5,7 +5,7 @@ import them without circular dependencies.
 """
 
 from datetime import timezone
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from persistence.db import insert_audit_events_batch, update_project_phase
 from persistence.project_state import save_state

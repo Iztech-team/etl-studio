@@ -1,6 +1,5 @@
 import os
 import csv
-import json
 from typing import Any, Dict, List, Optional
 from utils.sql_parser import SQLParser
 from utils.encoding import (
