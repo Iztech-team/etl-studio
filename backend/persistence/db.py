@@ -14,7 +14,6 @@ from definitions import (
     DELETE_PROJECT,
     FINISH_PIPELINE_RUN,
     GET_DASHBOARD_STATS,
-    GET_HISTORY,
     GET_PIPELINE_RUN,
     GET_PROJECT,
     GET_PROJECT_USERNAME,
@@ -196,11 +195,6 @@ def finish_pipeline_run(
 def list_pipeline_runs(project_id: str) -> list[dict]:
     with _get_conn() as conn:
         return [dict(r) for r in conn.execute(LIST_PIPELINE_RUNS, (project_id,)).fetchall()]
-
-
-def get_history(username: str) -> list[dict]:
-    with _get_conn() as conn:
-        return [dict(r) for r in conn.execute(GET_HISTORY, (username,)).fetchall()]
 
 
 def get_dashboard_stats(username: str) -> dict:

@@ -37,16 +37,3 @@ export type ResumedSession = {
 	loadResult: Record<string, unknown> | null;
 };
 
-export type HistoryStatus = "running" | "done" | "error";
-
-export type HistoryRow = {
-	t: string;
-	d: string;
-	project: string;
-	stage: string;
-	status: HistoryStatus;
-	rows: number;
-	note: string;
-};
-
-export const RL_HISTORY: HistoryRow[] = [];

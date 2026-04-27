@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useAuth } from "./Auth";
 import { RL_STAGES, type StageId } from "./data";
-import { ICheck, IClock, IDisk, IFolder } from "./icons";
+import { ICheck, IDisk, IFolder } from "./icons";
 
 // Same key prefix Pipeline.tsx writes under. Kept in sync by convention —
 // both must use the literal string. If you rename it, rename both places.
@@ -315,7 +315,7 @@ function UserButton() {
 	);
 }
 
-type PageId = "projects" | "history";
+type PageId = "projects";
 
 function ExtractionDockView({ info }: { info: ActiveExtractionInfo }) {
 	const pct = info.total > 0 ? Math.round((info.done / info.total) * 100) : 0;
@@ -533,7 +533,6 @@ export function RlDock({
 		I: (p: { size?: number }) => JSX.Element;
 	}[] = [
 		{ id: "projects", label: "PROJECTS", I: IFolder },
-		{ id: "history", label: "HISTORY", I: IClock },
 	];
 	const inPipe = pipelineStage != null;
 	const activeIdx = RL_STAGES.findIndex((s) => s.id === pipelineStage);

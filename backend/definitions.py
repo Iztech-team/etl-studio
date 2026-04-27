@@ -101,14 +101,6 @@ LIST_PIPELINE_RUNS = (
 LIST_PROJECTS_FOR_BACKFILL = "SELECT id, phase, created_at, updated_at FROM projects"
 CHECK_PIPELINE_RUN_EXISTS = "SELECT 1 FROM pipeline_runs WHERE project_id = ? LIMIT 1"
 
-GET_HISTORY = """
-    SELECT r.*, p.name AS project_name
-    FROM pipeline_runs r
-    JOIN projects p ON p.id = r.project_id
-    WHERE p.username = ?
-    ORDER BY r.started_at DESC
-"""
-
 GET_DASHBOARD_STATS = """
     SELECT
         COUNT(DISTINCT r.project_id) AS projects_with_data,

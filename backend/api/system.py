@@ -9,7 +9,6 @@ from helpers import (
 from models.project_schemas import AuthResponse, LoginRequest
 from persistence.db import (
     get_dashboard_stats as db_get_dashboard_stats,
-    get_history as db_get_history,
     list_projects,
 )
 from state import session_store
@@ -58,34 +57,6 @@ async def dashboard_stats(username: str):
         "avg_quality_score": avg_quality,
         "projects_with_data": db_stats.get("projects_with_data", 0),
     }
-
-
-@router.get("/history")
-async def history_endpoint(username: str):
-    from datetime import datetime as _dt
-
-    runs = db_get_history(username)
-    rows = []
-    for r in runs:
-        try:
-            dt = _dt.fromisoformat(r["started_at"])
-            time_str = dt.strftime("%H:%M")
-            date_str = dt.strftime("%Y-%m-%d")
-        except (ValueError, TypeError):
-            time_str = "—"
-            date_str = "—"
-        rows.append(
-            {
-                "t": time_str,
-                "d": date_str,
-                "project": r["project_name"],
-                "stage": r["phase"].upper(),
-                "status": r["status"],
-                "rows": r["rows_affected"],
-                "note": r["note"],
-            }
-        )
-    return {"history": rows}
 
 
 @router.post("/auth/login", response_model=AuthResponse)
