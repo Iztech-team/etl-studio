@@ -620,6 +620,29 @@ body { font-family: var(--lg-mono); }
 }
 .rl-dock-pipe-sep.done { background: var(--lg-amber); }
 
+/* ---------- dialog modal ---------- */
+dialog.rl-col-dialog {
+  position: fixed;
+  inset: 0;
+  margin: 0;
+  background: transparent;
+  border: none;
+  padding: 0;
+  max-width: 100vw;
+  max-height: 100vh;
+  width: 100vw;
+  height: 100vh;
+  color: var(--lg-ink);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: rl-fade-in .18s ease-out both;
+}
+dialog.rl-col-dialog::backdrop {
+  background: rgba(10, 8, 5, 0.78);
+}
+
 /* ---------- animations ---------- */
 
 @keyframes rl-page-in {

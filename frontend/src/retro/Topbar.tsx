@@ -494,7 +494,19 @@ export function RlDock({
 				})}
 			</div>
 			<div className="rl-dock-divider" />
-			{renderPipeArea()}
+			{activePage === "templates" ? (
+				<div className="rl-dock-pipe" style={{ justifyContent: "center" }}>
+					<div className="mono" style={{ fontSize: 9, color: "var(--lg-ink-mute)", display: "flex", gap: 14, alignItems: "center" }}>
+						<span className="pixel" style={{ fontSize: 8, color: "var(--lg-ink-faint)", letterSpacing: "0.1em" }}>SHORTCUTS</span>
+						{[["↑↓", "nav"], ["R", "rename"], ["D", "drop"], ["Space", "preview"], ["Esc", "close"]].map(([k, label]) => (
+							<span key={k}>
+								<span style={{ fontFamily: "var(--lg-mono)", color: "var(--lg-amber)", marginRight: 3 }}>{k}</span>
+								<span style={{ color: "var(--lg-ink-faint)" }}>{label}</span>
+							</span>
+						))}
+					</div>
+				</div>
+			) : renderPipeArea()}
 		</div>
 	);
 }

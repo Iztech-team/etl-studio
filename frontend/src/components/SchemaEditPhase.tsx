@@ -506,6 +506,15 @@ export default function SchemaEditPhase() {
         description="Rename tables/columns, drop tables, reorder columns (optional step)"
       />
 
+      <div className="text-xs bg-muted/40 border rounded p-2 text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
+        <span className="font-semibold text-foreground">Shortcuts:</span>
+        <span><span className="font-mono bg-muted px-1 rounded">↑↓</span> navigate</span>
+        <span><span className="font-mono bg-muted px-1 rounded">R</span> rename</span>
+        <span><span className="font-mono bg-muted px-1 rounded">D</span> drop/restore</span>
+        <span><span className="font-mono bg-muted px-1 rounded">Space</span> expand columns</span>
+        <span><span className="font-mono bg-muted px-1 rounded">Esc</span> skip phase</span>
+      </div>
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Tables ({filteredTables.length})</CardTitle>
