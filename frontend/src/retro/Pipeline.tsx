@@ -1189,6 +1189,9 @@ function TablePreviewModal({
 	const [editedRows, setEditedRows] = useState<Record<string, unknown>[]>([]);
 	const [saving, setSaving] = useState(false);
 	const [dirty, setDirty] = useState(false);
+	const [focusedRow, setFocusedRow] = useState(0);
+	const [focusedCol, setFocusedCol] = useState(0);
+	const focusedCellRef = useRef<HTMLTableCellElement | null>(null);
 
 	const fetchPage = async (p: number) => {
 		setLoading(true);
@@ -1282,6 +1285,121 @@ function TablePreviewModal({
 
 	const totalPages = data?.total_pages ?? 1;
 	const displayRows = editing ? editedRows : (data?.rows ?? []);
+
+	// Reset focus when page or data changes
+	useEffect(() => {
+		setFocusedRow(0);
+		setFocusedCol(0);
+	}, [page, tableName]);
+
+	// Clamp focus when rows/cols shrink
+	useEffect(() => {
+		const colCount = data?.columns.length ?? 0;
+		const rowCount = displayRows.length;
+		setFocusedRow((r) => Math.max(0, Math.min(r, rowCount - 1)));
+		setFocusedCol((c) => Math.max(0, Math.min(c, colCount - 1)));
+	}, [displayRows.length, data?.columns.length]);
+
+	// Keep focused cell scrolled into view
+	useEffect(() => {
+		focusedCellRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+	}, [focusedRow, focusedCol]);
+
+	// Keyboard navigation. Uses capture phase + stopPropagation so the
+	// modal swallows keys before any parent (e.g. RlExtract's window
+	// listener) can react to them.
+	useEffect(() => {
+		const handler = (e: KeyboardEvent) => {
+			const tag = (e.target as HTMLElement).tagName;
+			const isInputFocused = tag === "INPUT" || tag === "TEXTAREA";
+
+			// Allow inputs to handle their own keys, except Escape to cancel edit
+			if (isInputFocused) {
+				if (e.key === "Escape") {
+					e.preventDefault();
+					e.stopPropagation();
+					(e.target as HTMLElement).blur();
+				}
+				return;
+			}
+
+			const cols = data?.columns.length ?? 0;
+			const rowCount = displayRows.length;
+			let handled = true;
+
+			switch (e.key) {
+				case "ArrowUp":
+					setFocusedRow((r) => Math.max(0, r - 1));
+					break;
+				case "ArrowDown":
+					setFocusedRow((r) => Math.min(rowCount - 1, r + 1));
+					break;
+				case "ArrowLeft":
+					setFocusedCol((c) => Math.max(0, c - 1));
+					break;
+				case "ArrowRight":
+					setFocusedCol((c) => Math.min(cols - 1, c + 1));
+					break;
+				case "Home":
+					if (e.ctrlKey || e.metaKey) setFocusedRow(0);
+					setFocusedCol(0);
+					break;
+				case "End":
+					if (e.ctrlKey || e.metaKey) setFocusedRow(rowCount - 1);
+					setFocusedCol(cols - 1);
+					break;
+				case "PageUp":
+					if (page > 1) fetchPage(page - 1);
+					break;
+				case "PageDown":
+					if (page < totalPages) fetchPage(page + 1);
+					break;
+				case "e":
+				case "E":
+					if (!editing) {
+						setEditing(true);
+					} else {
+						setTimeout(() => {
+							const input = focusedCellRef.current?.querySelector("input");
+							input?.focus();
+							input?.select();
+						}, 0);
+					}
+					break;
+				case "Enter":
+					if (editing) {
+						setTimeout(() => {
+							const input = focusedCellRef.current?.querySelector("input");
+							input?.focus();
+							input?.select();
+						}, 0);
+					} else {
+						handled = false;
+					}
+					break;
+				case "x":
+				case "X":
+				case "Escape":
+					if (editing) {
+						setEditing(false);
+						setEditedRows(data?.rows.map((r) => ({ ...r })) ?? []);
+						setDirty(false);
+					} else {
+						onClose();
+					}
+					break;
+				default:
+					handled = false;
+			}
+
+			if (handled) {
+				e.preventDefault();
+				e.stopPropagation();
+			}
+		};
+		document.addEventListener("keydown", handler, true);
+		return () => document.removeEventListener("keydown", handler, true);
+	}, [data, displayRows.length, page, totalPages, editing, onClose]);
 
 	// Render into a portal at document.body so no ancestor's overflow,
 	// transform, or stacking context can clip or hide the modal.
@@ -1433,42 +1551,80 @@ function TablePreviewModal({
 								</tr>
 							</thead>
 							<tbody>
-								{displayRows.map((row, ri) => (
-									<tr key={ri}>
-										<td
+								{displayRows.map((row, ri) => {
+									const isFocusedRow = ri === focusedRow;
+									return (
+										<tr
+											key={ri}
 											style={{
-												fontFamily: "var(--lg-mono)",
-												fontSize: 9,
-												color: "var(--lg-ink-mute)",
+												background: isFocusedRow ? "rgba(255, 191, 71, 0.08)" : undefined,
 											}}
 										>
-											{(page - 1) * 100 + ri + 1}
-										</td>
-										{data.columns.map((col) =>
-											editing ? (
-												<td key={col} style={{ padding: 0 }}>
-													<input
-														className="input"
-														style={{
-															fontSize: 11,
-															padding: "4px 6px",
-															width: "100%",
-															border: "none",
-															borderBottom: "1px solid var(--lg-border)",
-															background: "transparent",
+											<td
+												style={{
+													fontFamily: "var(--lg-mono)",
+													fontSize: 9,
+													color: isFocusedRow ? "var(--lg-amber)" : "var(--lg-ink-mute)",
+													fontWeight: isFocusedRow ? 700 : undefined,
+												}}
+											>
+												{(page - 1) * 100 + ri + 1}
+											</td>
+											{data.columns.map((col, ci) => {
+												const isFocusedCell = isFocusedRow && ci === focusedCol;
+												const cellRef = isFocusedCell ? focusedCellRef : undefined;
+												const focusStyle = isFocusedCell
+													? {
+															outline: "2px solid var(--lg-amber)",
+															outlineOffset: -2,
+															background: "rgba(255, 191, 71, 0.15)",
+														}
+													: undefined;
+												return editing ? (
+													<td
+														key={col}
+														ref={cellRef}
+														style={{ padding: 0, ...focusStyle }}
+														onClick={() => {
+															setFocusedRow(ri);
+															setFocusedCol(ci);
 														}}
-														value={row[col] != null ? String(row[col]) : ""}
-														onChange={(e) => updateCell(ri, col, e.target.value)}
-													/>
-												</td>
-											) : (
-												<td key={col}>
-													{row[col] != null ? String(row[col]) : "—"}
-												</td>
-											),
-										)}
-									</tr>
-								))}
+													>
+														<input
+															className="input"
+															style={{
+																fontSize: 11,
+																padding: "4px 6px",
+																width: "100%",
+																border: "none",
+																borderBottom: "1px solid var(--lg-border)",
+																background: "transparent",
+															}}
+															value={row[col] != null ? String(row[col]) : ""}
+															onChange={(e) => updateCell(ri, col, e.target.value)}
+															onFocus={() => {
+																setFocusedRow(ri);
+																setFocusedCol(ci);
+															}}
+														/>
+													</td>
+												) : (
+													<td
+														key={col}
+														ref={cellRef}
+														style={focusStyle}
+														onClick={() => {
+															setFocusedRow(ri);
+															setFocusedCol(ci);
+														}}
+													>
+														{row[col] != null ? String(row[col]) : "—"}
+													</td>
+												);
+											})}
+										</tr>
+									);
+								})}
 							</tbody>
 						</table>
 					) : (
@@ -1492,15 +1648,23 @@ function TablePreviewModal({
 						background: "var(--lg-bg-2)",
 					}}
 				>
-					<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-mute)" }}>
-						PAGE {page} / {totalPages}
-						{data && (
-							<>
-								{" · "}SHOWING {(page - 1) * 100 + 1}–
-								{Math.min(page * 100, data.total_rows)} OF{" "}
-								{data.total_rows.toLocaleString()}
-							</>
-						)}
+					<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-mute)", display: "flex", flexDirection: "column", gap: 2 }}>
+						<div>
+							PAGE {page} / {totalPages}
+							{data && (
+								<>
+									{" · "}SHOWING {(page - 1) * 100 + 1}–
+									{Math.min(page * 100, data.total_rows)} OF{" "}
+									{data.total_rows.toLocaleString()}
+								</>
+							)}
+						</div>
+						<div style={{ fontSize: 9, color: "var(--lg-ink-faint)" }}>
+							<span style={{ color: "var(--lg-amber)" }}>↑↓←→</span> NAV ·{" "}
+							<span style={{ color: "var(--lg-amber)" }}>E</span> EDIT ·{" "}
+							<span style={{ color: "var(--lg-amber)" }}>X</span>/<span style={{ color: "var(--lg-amber)" }}>ESC</span> CLOSE ·{" "}
+							<span style={{ color: "var(--lg-amber)" }}>PGUP/PGDN</span> PAGE
+						</div>
 					</div>
 					<div style={{ display: "flex", gap: 6 }}>
 						<button
@@ -2489,14 +2653,7 @@ function TransformModal({
 	const [params, setParams] = useState<Record<string, unknown>>(
 		() => ({ ...(initial?.params ?? {}) }),
 	);
-
-	useEffect(() => {
-		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") onCancel();
-		};
-		document.addEventListener("keydown", onKey);
-		return () => document.removeEventListener("keydown", onKey);
-	}, [onCancel]);
+	const bodyRef = useRef<HTMLDivElement | null>(null);
 
 	// When the user picks a different op, drop params that don't apply
 	// (avoids accidentally sending stale params from another op).
@@ -2512,6 +2669,72 @@ function TransformModal({
 	};
 
 	const opMeta = TRANSFORM_OPS.find((o) => o.id === op);
+
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent) => {
+			const target = e.target as HTMLElement;
+			const tag = target.tagName;
+			const isInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+
+			if (e.key === "Escape") {
+				e.preventDefault();
+				e.stopPropagation();
+				if (isInput) {
+					target.blur();
+				} else {
+					onCancel();
+				}
+				return;
+			}
+
+			// When typing into a field, let it handle its own keys
+			if (isInput) return;
+
+			const currentIdx = TRANSFORM_OPS.findIndex((o) => o.id === op);
+			let handled = true;
+
+			switch (e.key) {
+				case "ArrowUp":
+					if (currentIdx > 0) setOpAndResetParams(TRANSFORM_OPS[currentIdx - 1].id);
+					break;
+				case "ArrowDown":
+					if (currentIdx < TRANSFORM_OPS.length - 1)
+						setOpAndResetParams(TRANSFORM_OPS[currentIdx + 1].id);
+					break;
+				case "Enter":
+					onSave(op, params);
+					break;
+				case "x":
+				case "X":
+					onCancel();
+					break;
+				case "e":
+				case "E": {
+					const firstField =
+						bodyRef.current?.querySelectorAll<HTMLElement>(
+							"input, textarea, select",
+						)[1] ?? // skip the op selector itself (index 0)
+						bodyRef.current?.querySelector<HTMLElement>(
+							"input, textarea, select",
+						);
+					firstField?.focus();
+					if (firstField instanceof HTMLInputElement) firstField.select();
+					break;
+				}
+				default:
+					handled = false;
+			}
+
+			if (handled) {
+				e.preventDefault();
+				e.stopPropagation();
+			}
+		};
+		// Capture phase + stopPropagation prevents the parent (e.g.
+		// RlTransform's window listener) from also handling these keys.
+		document.addEventListener("keydown", onKey, true);
+		return () => document.removeEventListener("keydown", onKey, true);
+	}, [op, params, onCancel, onSave]);
 
 	return createPortal(
 		<div
@@ -2572,6 +2795,7 @@ function TransformModal({
 
 				{/* Body */}
 				<div
+					ref={bodyRef}
 					style={{
 						padding: "16px 14px",
 						overflowY: "auto",
@@ -2588,9 +2812,14 @@ function TransformModal({
 								color: "var(--lg-ink-mute)",
 								letterSpacing: "0.1em",
 								marginBottom: 4,
+								display: "flex",
+								justifyContent: "space-between",
 							}}
 						>
-							TRANSFORM
+							<span>TRANSFORM</span>
+							<span style={{ color: "var(--lg-ink-faint)" }}>
+								{TRANSFORM_OPS.findIndex((o) => o.id === op) + 1}/{TRANSFORM_OPS.length}
+							</span>
 						</div>
 						<select
 							className="input"
@@ -2699,27 +2928,39 @@ function TransformModal({
 				<div
 					style={{
 						display: "flex",
-						justifyContent: "flex-end",
+						justifyContent: "space-between",
+						alignItems: "center",
 						gap: 8,
 						padding: "10px 14px",
 						borderTop: "1px solid var(--lg-border)",
 						background: "var(--lg-bg-2)",
 					}}
 				>
-					<button
-						className="btn btn-ghost"
-						style={{ padding: "6px 14px", fontSize: 10 }}
-						onClick={onCancel}
+					<div
+						className="mono"
+						style={{ fontSize: 9, color: "var(--lg-ink-faint)" }}
 					>
-						CANCEL
-					</button>
-					<button
-						className="btn btn-primary"
-						style={{ padding: "6px 14px", fontSize: 10 }}
-						onClick={() => onSave(op, params)}
-					>
-						{initial ? "UPDATE" : "ADD"}
-					</button>
+						<span style={{ color: "var(--lg-amber)" }}>↑↓</span> NAV ·{" "}
+						<span style={{ color: "var(--lg-amber)" }}>E</span> EDIT ·{" "}
+						<span style={{ color: "var(--lg-amber)" }}>↵</span> {initial ? "UPDATE" : "ADD"} ·{" "}
+						<span style={{ color: "var(--lg-amber)" }}>X</span>/<span style={{ color: "var(--lg-amber)" }}>ESC</span> CLOSE
+					</div>
+					<div style={{ display: "flex", gap: 8 }}>
+						<button
+							className="btn btn-ghost"
+							style={{ padding: "6px 14px", fontSize: 10 }}
+							onClick={onCancel}
+						>
+							CANCEL
+						</button>
+						<button
+							className="btn btn-primary"
+							style={{ padding: "6px 14px", fontSize: 10 }}
+							onClick={() => onSave(op, params)}
+						>
+							{initial ? "UPDATE" : "ADD"}
+						</button>
+					</div>
 				</div>
 			</div>
 		</div>,
@@ -2744,6 +2985,22 @@ function TransformsCardList({
 	const [editingIdx, setEditingIdx] = useState<number | null>(null);
 	const editingTransform =
 		editingIdx !== null ? transforms[editingIdx] : undefined;
+
+	// Shortcut: press T to open the Add Transform modal directly
+	useEffect(() => {
+		const handler = (e: KeyboardEvent) => {
+			const target = e.target as HTMLElement;
+			const tag = target.tagName;
+			if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+			if (adding || editingIdx !== null) return;
+			if (e.key === "t" || e.key === "T") {
+				e.preventDefault();
+				setAdding(true);
+			}
+		};
+		window.addEventListener("keydown", handler);
+		return () => window.removeEventListener("keydown", handler);
+	}, [adding, editingIdx]);
 
 	return (
 		<div
@@ -2775,8 +3032,9 @@ function TransformsCardList({
 					className="btn btn-ghost"
 					style={{ padding: "3px 8px", fontSize: 9 }}
 					onClick={() => setAdding(true)}
+					title="Press T"
 				>
-					+ ADD
+					+ ADD <span style={{ color: "var(--lg-amber)", marginLeft: 4 }}>[T]</span>
 				</button>
 			</div>
 
