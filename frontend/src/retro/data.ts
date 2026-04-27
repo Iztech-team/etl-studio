@@ -37,14 +37,6 @@ export type ResumedSession = {
 	loadResult: Record<string, unknown> | null;
 };
 
-export type Template = {
-	id: string;
-	name: string;
-	fields: number | "dynamic";
-	used: number;
-	desc: string;
-};
-
 export type HistoryStatus = "running" | "done" | "error";
 
 export type HistoryRow = {
@@ -57,5 +49,4 @@ export type HistoryRow = {
 	note: string;
 };
 
-export const RL_TEMPLATES: Template[] = [];
 export const RL_HISTORY: HistoryRow[] = [];

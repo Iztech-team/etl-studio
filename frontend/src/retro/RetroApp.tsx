@@ -4,16 +4,14 @@ import { AuthProvider, LoginScreen, useAuth } from "./Auth";
 import { RL_STAGES, type Project, type ResumedSession, type StageId } from "./data";
 import { RlDock } from "./Topbar";
 import { RlProjects } from "./Projects";
-import { RlTemplates } from "./Templates";
 import { RlHistory } from "./History";
 import { RlPipeline } from "./Pipeline";
 import { RlPromptModal } from "./PromptModal";
 
-type PageId = "projects" | "templates" | "history";
+type PageId = "projects" | "history";
 
 type Route =
 	| { view: "projects" }
-	| { view: "templates" }
 	| { view: "history" }
 	| { view: "pipeline"; project: Project | null; resumed: ResumedSession | null };
 
@@ -37,7 +35,6 @@ const PHASE_TO_STAGE: Record<string, number> = {
 // localStorage's quota. The mount effect re-fetches them on reload.
 type PersistedRoute =
 	| { view: "projects" }
-	| { view: "templates" }
 	| { view: "history" }
 	| { view: "pipeline"; projectId: string | null };
 
@@ -81,7 +78,7 @@ function loadRoute(): Route {
 					resumed: null,
 				};
 			}
-			if (parsed?.view === "templates" || parsed?.view === "history" || parsed?.view === "projects") {
+			if (parsed?.view === "history" || parsed?.view === "projects") {
 				return { view: parsed.view };
 			}
 		}
@@ -570,7 +567,6 @@ function Shell() {
 					{route.view === "projects" && (
 						<RlProjects onOpen={open} onNew={openNew} />
 					)}
-					{route.view === "templates" && <RlTemplates />}
 					{route.view === "history" && <RlHistory />}
 					{route.view === "pipeline" &&
 						(hydrating ? (

@@ -17,7 +17,6 @@ export interface ResumeResponse {
   preview: Record<string, Record<string, unknown>[]>
   inferred_schema: Record<string, Record<string, ColumnSchema>>
   stats: Record<string, { row_count: number }>
-  ddl_schema: Record<string, Record<string, ColumnSchema>>
   config: Record<string, unknown> | null
   transform: Record<string, unknown> | null
   load_result: Record<string, unknown> | null

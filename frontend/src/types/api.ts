@@ -16,7 +16,6 @@ export interface UploadResponse {
   preview: Record<string, Record<string, unknown>[]>
   inferred_schema: Record<string, Record<string, ColumnSchema>>
   stats: Record<string, { row_count: number }>
-  ddl_schema?: Record<string, Record<string, ColumnSchema>>
 }
 
 export interface ColumnConfig {
@@ -138,7 +137,6 @@ export interface PreExtractResponse {
   preview: Record<string, Record<string, unknown>[]>
   inferred_schema: Record<string, Record<string, ColumnSchema>>
   stats: Record<string, { row_count: number }>
-  ddl_schema?: Record<string, Record<string, ColumnSchema>>
 }
 
 export interface TableDataResponse {
@@ -149,32 +147,6 @@ export interface TableDataResponse {
 export interface EditDataResponse {
   ok: boolean
   stats: Record<string, { row_count: number }>
-}
-
-export interface DDLUploadResponse {
-  ok: boolean
-  ddl_schema: Record<string, Record<string, ColumnSchema>>
-  matching_tables: string[]
-}
-
-export interface ApplyDDLTableResult {
-  table: string
-  applied: boolean
-  errors: string[]
-}
-
-export interface ApplyDDLResponse {
-  ok: boolean
-  results: ApplyDDLTableResult[]
-}
-
-export interface DDLTemplate {
-  id: string
-  project_id: string
-  name: string
-  ddl_content: string
-  created_at: string
-  created_by?: string
 }
 
 export interface TableSchema {
@@ -211,7 +183,5 @@ export interface SchemaEditState {
   renamedColumns: Map<string, Map<string, string>>
   reorderedColumns: Map<string, string[]>
   nullableOverrides: Map<string, Set<string>>
-  ddlApplied: boolean
-  ddlSource: string | null
   modified: boolean
 }
