@@ -115,18 +115,20 @@ function useActiveTransform(): ActiveTransformInfo | null {
 export function RlTopbar({
 	title,
 	sub,
+	center,
 	right,
 }: {
 	title: string;
 	sub?: string;
+	center?: ReactNode;
 	right?: ReactNode;
 }) {
 	return (
 		<div className="rl-topbar">
 			<div className="rl-topbar-title">
 				<div
-					className="pixel"
-					style={{ fontSize: 18, color: "var(--lg-amber)" }}
+					className="pixel glow-magenta"
+					style={{ fontSize: 18, color: "var(--lg-magenta)" }}
 				>
 					{title}
 				</div>
@@ -135,7 +137,7 @@ export function RlTopbar({
 						className="mono"
 						style={{
 							fontSize: 11,
-							color: "var(--lg-ink-mute)",
+							color: "var(--lg-cyan)",
 							marginTop: 6,
 							textTransform: "uppercase",
 							letterSpacing: "0.1em",
@@ -145,7 +147,9 @@ export function RlTopbar({
 					</div>
 				)}
 			</div>
-			<div style={{ flex: 1 }} />
+			<div style={{ flex: 1, display: "flex", justifyContent: "center" }}>
+				{center}
+			</div>
 			{right}
 			<UserButton />
 		</div>
@@ -465,7 +469,7 @@ export function RlDock({
 		label: string;
 		I: (p: { size?: number }) => JSX.Element;
 	}[] = [
-		{ id: "projects", label: "PROJECTS", I: IFolder },
+		{ id: "projects", label: "DUNGEONS", I: IFolder },
 	];
 	const inPipe = pipelineStage != null;
 	const activeIdx = RL_STAGES.findIndex((s) => s.id === pipelineStage);

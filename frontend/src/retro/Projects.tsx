@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { RL_STAGES, type Project } from "./data";
+import { RL_STAGES, phaseEarnedXp, type Project } from "./data";
 import { useAuth } from "./Auth";
 import { IArrow, ICheck, IDisk, IDot, IDownload, IPlus, IStar, IX } from "./icons";
 import { RlPromptModal } from "./PromptModal";
 import { RlTopbar } from "./Topbar";
+import { XPBar } from "./XPBar";
 
 const PHASE_TO_STAGE: Record<string, number> = {
 	upload: 1,
@@ -124,15 +125,17 @@ export function RlProjects({
 	const drafts = projects.filter((p) => projectStatus(p) === "draft").length;
 	const totalRows = dashStats?.total_rows_migrated ?? 0;
 	const quality = dashStats?.avg_quality_score ?? 0;
+	const totalXp = projects.reduce((acc, p) => acc + phaseEarnedXp(p.phase), 0);
 
 	return (
 		<div className="rl-page">
 			<RlTopbar
-				title="PROJECTS"
-				sub="ONE LEGACY DATABASE PER PROJECT · ONE PIPELINE EACH"
+				title="▼ DUNGEON HUB"
+				sub="ONE LEGACY DATABASE PER DUNGEON · ONE PIPELINE EACH"
+				center={<XPBar value={totalXp} />}
 				right={
 					<button className="btn btn-primary" onClick={onNew}>
-						<IPlus size={10} /> NEW PROJECT
+						<IPlus size={10} /> NEW DUNGEON
 					</button>
 				}
 			/>
@@ -144,7 +147,7 @@ export function RlProjects({
 						{String(running).padStart(2, "0")}
 					</div>
 					<div className="rl-stat-sub">
-						{done} DONE · {drafts} DRAFT · {projects.length} TOTAL
+						+{done} CLEARED · {drafts} DRAFT · {projects.length} TOTAL
 					</div>
 				</div>
 				<div className="panel rl-stat">
@@ -176,9 +179,9 @@ export function RlProjects({
 							marginTop: 4,
 						}}
 					>
-						UPLOAD FILE
+						START A NEW
 						<br />
-						TO CREATE
+						DUNGEON
 					</div>
 					<div style={{ marginTop: 10 }}>
 						<IPlus size={14} />
@@ -188,7 +191,7 @@ export function RlProjects({
 
 			<div className="rl-section-head">
 				<div className="pixel glow-cyan" style={{ fontSize: 10, color: "var(--lg-cyan)" }}>
-					★ YOUR PROJECTS ★
+					★ ACTIVE DUNGEONS ★
 				</div>
 				<div className="rl-filters">
 					{(["all", "running", "done", "draft"] as Filter[]).map((f) => (
@@ -217,7 +220,7 @@ export function RlProjects({
 			) : filtered.length === 0 ? (
 				<div className="panel" style={{ padding: 40, textAlign: "center" }}>
 					<div className="pixel" style={{ fontSize: 11, color: "var(--lg-ink-mute)" }}>
-						{projects.length === 0 ? "NO PROJECTS — CLICK NEW TO CREATE" : "NO PROJECTS MATCH FILTER"}
+						{projects.length === 0 ? "NO DUNGEONS — START A NEW ONE" : "NO DUNGEONS MATCH FILTER"}
 					</div>
 				</div>
 			) : (

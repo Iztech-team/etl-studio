@@ -14,6 +14,7 @@ import { RL_STAGES, type Project, type ResumedSession, type StageId } from "./da
 import { IArrow, ICheck, IDisk, IUpload, IX } from "./icons";
 import { RlTopbar } from "./Topbar";
 import { RlPromptModal } from "./PromptModal";
+import { RlAchievement } from "./XPBar";
 
 // ---------- types ----------
 
@@ -386,6 +387,17 @@ function RlStepper({
 						>
 							{s.sub}
 						</div>
+					</div>
+					<div
+						style={{
+							marginLeft: "auto",
+							fontFamily: "var(--lg-pixel)",
+							fontSize: 8,
+							color: i < idx ? "var(--lg-lime)" : "var(--lg-ink-mute)",
+							letterSpacing: "0.1em",
+						}}
+					>
+						+{s.xp}XP
 					</div>
 				</div>
 			))}
@@ -2788,8 +2800,17 @@ export function RlPipeline({
 	setStage: (s: StageId) => void;
 	onBack: () => void;
 }) {
+	const [achievement, setAchievement] = useState<string | null>(null);
+	const showAchievement = (msg: string) => {
+		setAchievement(msg);
+		window.setTimeout(() => setAchievement(null), 2200);
+	};
+
 	const next = () => {
 		const i = RL_STAGES.findIndex((s) => s.id === stage);
+		if (i < 0) return;
+		const cleared = RL_STAGES[i];
+		showAchievement(`+${cleared.xp} XP · ${cleared.label} CLEARED`);
 		if (i < RL_STAGES.length - 1) setStage(RL_STAGES[i + 1].id);
 	};
 	const stageMeta = RL_STAGES.find((s) => s.id === stage);
@@ -2805,7 +2826,7 @@ export function RlPipeline({
 					}
 					right={
 						<button className="btn btn-ghost" onClick={onBack}>
-							← PROJECTS
+							← DUNGEONS
 						</button>
 					}
 				/>
@@ -2819,8 +2840,8 @@ export function RlPipeline({
 						margin: "16px 0 4px",
 					}}
 				>
-					[ STAGE {RL_STAGES.findIndex((s) => s.id === stage) + 1}/6 ·{" "}
-					{stageMeta?.label} · {stageMeta?.sub.toUpperCase()} ]
+					[ STAGE {RL_STAGES.findIndex((s) => s.id === stage) + 1}/{RL_STAGES.length}{" "}
+					· {stageMeta?.label} · {stageMeta?.sub.toUpperCase()} ]
 				</div>
 				<div className="rl-stage" key={stage}>
 					{stage === "upload" && <RlUpload onNext={next} />}
@@ -2828,6 +2849,7 @@ export function RlPipeline({
 					{stage === "transform" && <RlTransform onNext={next} />}
 					{stage === "export" && <RlExport onDone={onBack} />}
 				</div>
+				{achievement && <RlAchievement message={achievement} />}
 			</div>
 		</PipelineProvider>
 	);
