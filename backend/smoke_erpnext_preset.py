@@ -23,8 +23,8 @@ except Exception:
 # Make backend modules importable regardless of cwd
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from core.transformer import Transformer
-from core.loader import _toposort_self_ref
+from core.transform.transformer import Transformer
+from core.load.loader import _toposort_self_ref
 from utils import reconcile as rec
 from persistence.presets import get_preset
 

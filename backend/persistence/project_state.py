@@ -3,7 +3,7 @@ import os
 import shutil
 from pathlib import Path
 
-from core.extractor import Extractor
+from core.extract.extractor import Extractor
 from utils.audit import AuditTrail
 from utils import extract_cache
 

@@ -6,9 +6,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from core.extractor import Extractor
-from core.loader import Loader
-from core.transformer import Transformer
+from core.extract.extractor import Extractor
+from core.load.loader import Loader
+from core.transform.transformer import Transformer
 from persistence.db import (
     _get_conn,
     backfill_pipeline_runs,
@@ -747,7 +747,7 @@ async def _run_extraction(session_id: str, password: str | None) -> None:
     """Background worker: drives the iter, writes events to state."""
     from datetime import datetime as _dt
 
-    from core.db_extractor import extract_db_to_csvs_iter
+    from core.extract.db_extractor import extract_db_to_csvs_iter
 
     state = (await extraction_store.get(session_id))
     s = (await session_store.require(session_id))
@@ -985,7 +985,7 @@ async def upload_files(
             db_file_info = file_info
 
     if db_file_info:
-        from core.db_extractor import extract_db_to_csvs
+        from core.extract.db_extractor import extract_db_to_csvs
 
         db_type = _detect_db_type(db_file_info["name"])
         if db_type is None:

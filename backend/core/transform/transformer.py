@@ -8,7 +8,7 @@ from utils.encoding import (
     strip_directional_marks,
 )
 from utils.audit import AuditTrail
-from core.column_transforms import apply_transforms
+from core.transform.column_transforms import apply_transforms
 
 _CONCAT_PLACEHOLDER_RE = re.compile(r"\{([^{}]+)\}")
 

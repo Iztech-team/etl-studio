@@ -93,7 +93,7 @@ def _iter_firebird_to_csvs(db_path: str, output_dir: str, password: Optional[str
     as it lands. Strips the heavy 'columns'/'data' fields from
     'table_done' events before forwarding so they stay JSON-light.
     """
-    from core.ib_isql_extract import extract_ib_tables_iter
+    from core.extract.ib_isql_extract import extract_ib_tables_iter
 
     csv_files: List[str] = []
     for event_type, payload in extract_ib_tables_iter(db_path, password=password):
@@ -155,7 +155,7 @@ def _extract_firebird(db_path: str, password: Optional[str] = None) -> List[tupl
     need fbclient.dll, which isn't available on most hosts and fails on
     IB 2009's wire protocol. See core/ib_isql_extract.py for details.
     """
-    from core.ib_isql_extract import extract_ib_tables
+    from core.extract.ib_isql_extract import extract_ib_tables
 
     return extract_ib_tables(db_path, password=password)
 
