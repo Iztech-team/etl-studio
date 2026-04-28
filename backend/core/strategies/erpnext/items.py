@@ -96,7 +96,7 @@ def _emit_item(
         "brand": clean_str(row.get("MANUFACTURER")),
         "barcodes": barcodes,
         "uoms": _uom_conversions(row),
-        "supplier_items": _supplier_items(suppliers.get(catid, [])),
+        "supplier_items": _supplier_items(ctx, suppliers.get(catid, [])),
         "item_defaults": _item_defaults(ctx, default_warehouse),
         "legacy_catid": catid,
     })
@@ -192,12 +192,22 @@ def _uom_conversions(row: dict) -> list[dict]:
     return rows
 
 
-def _supplier_items(supplier_rows: Iterable[dict]) -> list[dict]:
+def _supplier_items(ctx: Context, supplier_rows: Iterable[dict]) -> list[dict]:
+    """Build Item.supplier_items child rows.
+
+    Drops references that point to non-supplier accounts. Legacy data
+    has ~1,200 CATSUPPLIERT rows where the SUPPLIER value is a CUSTT
+    customer ID (82 customers who also act as item suppliers for some
+    products) — those references would fail Frappe's link validation.
+    """
+    valid = ctx.supplier_account_ids
     seen: set[str] = set()
     rows: list[dict] = []
     for r in supplier_rows or []:
         sid = clean_str(r.get("SUPPLIER"))
-        if not sid or sid in seen:
+        if not sid or sid in seen or sid not in valid:
+            if sid and sid not in valid:
+                ctx.result.bump("supplier_items_skipped_non_supplier")
             continue
         seen.add(sid)
         rows.append({"supplier": supplier_id(sid), "supplier_part_no": ""})
