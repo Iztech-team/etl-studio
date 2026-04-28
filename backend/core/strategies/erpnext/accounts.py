@@ -95,6 +95,7 @@ def _emit_account(
         return
     is_root = account_id in ROOT_TYPE_BY_ID
     payload = {
+        "name": ctx.with_abbr(name),
         "account_name": name,
         "company": ctx.config.company_name,
         "parent_account": _parent_account_name(ctx, row, is_root),

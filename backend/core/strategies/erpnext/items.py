@@ -68,6 +68,7 @@ def _emit_item(
     barcodes, aliases = _collect_barcodes(catid, row.get("BARCODE"), item_syns)
 
     ctx.result.emit("Item", {
+        "name": item_id(catid),
         "item_code": item_id(catid),
         "item_name": pick(row, "CATNAME", "CATNAMEE", "CATNAMEH"),
         "description": _build_description(row, descriptions, aliases),
@@ -226,12 +227,14 @@ def _emit_item_price(ctx: Context, row: dict) -> None:
     if not catid:
         ctx.result.bump("item_prices_skipped_no_catid")
         return
+    legacy_priceid = clean_str(row.get("PRICEID"))
     ctx.result.emit("Item Price", {
+        "name": f"PRC-LEG-{legacy_priceid}-{catid}",
         "item_code": item_id(catid),
         "price_list": price_list_name(ctx, row.get("PRICEID")),
         "price_list_rate": rate,
         "currency": currency_iso(row.get("SALECUR")),
         "valid_from": parse_date(row.get("CHANGEDATE")),
-        "legacy_priceid": clean_str(row.get("PRICEID")),
+        "legacy_priceid": legacy_priceid,
     })
     ctx.result.bump("item_prices_emitted")

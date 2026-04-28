@@ -67,13 +67,14 @@ def _emit_uom(ctx: Context, name: str, seen: set[str]) -> None:
     if not name or name in seen:
         return
     seen.add(name)
-    ctx.result.emit("UOM", {"uom_name": name, "enabled": 1})
+    ctx.result.emit("UOM", {"name": name, "uom_name": name, "enabled": 1})
 
 
 # -- Item Group ---------------------------------------------------------------
 
 def emit_item_group(ctx: Context) -> None:
     ctx.result.emit("Item Group", {
+        "name": ITEM_GROUP_NAME,
         "item_group_name": ITEM_GROUP_NAME,
         "parent_item_group": ROOT_ITEM_GROUP,
         "is_group": 0,
@@ -93,6 +94,7 @@ def _emit_warehouse(ctx: Context, row: dict) -> None:
     if not name:
         return
     ctx.result.emit("Warehouse", {
+        "name": ctx.with_abbr(name),
         "warehouse_name": name,
         "company": ctx.config.company_name,
         "parent_warehouse": ROOT_WAREHOUSE,
@@ -132,6 +134,7 @@ def _emit_price_list(ctx: Context, row: dict, seen: set[str]) -> None:
         return
     seen.add(name)
     ctx.result.emit("Price List", {
+        "name": name,
         "price_list_name": name,
         "currency": ctx.config.default_currency,
         "selling": 1,
@@ -163,7 +166,7 @@ def emit_brands(ctx: Context) -> None:
         if not name or name in seen:
             continue
         seen.add(name)
-        ctx.result.emit("Brand", {"brand": name})
+        ctx.result.emit("Brand", {"name": name, "brand": name})
     ctx.result.bump("brands_emitted", len(seen))
 
 
@@ -177,6 +180,7 @@ def emit_banks(ctx: Context) -> None:
             continue
         seen.add(name)
         ctx.result.emit("Bank", {
+            "name": name,
             "bank_name": name,
             "legacy_bankid": clean_str(row.get("BANKID")),
         })
@@ -201,6 +205,7 @@ def _emit_bank_account(ctx: Context, row: dict) -> None:
     account_no = clean_str(row.get("ACCOUNTNO"))
     label = f"{bank_name} - {account_no}" if account_no else bank_name
     ctx.result.emit("Bank Account", {
+        "name": label,
         "account_name": label,
         "bank": bank_name,
         "is_company_account": 1,
