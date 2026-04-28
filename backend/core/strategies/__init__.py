@@ -30,6 +30,9 @@ def _describe(cls: type[TransformStrategy]) -> dict[str, Any]:
         "label": cls.label,
         "description": cls.description,
         "config_schema": cls.config_schema,
+        "tier": getattr(cls, "tier", ""),
+        "kind": getattr(cls, "kind", "GENERIC"),
+        "stats": getattr(cls, "stats", {}),
     }
 
 

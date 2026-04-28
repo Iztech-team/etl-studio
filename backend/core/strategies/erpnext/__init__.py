@@ -27,51 +27,48 @@ class ErpnextStrategy(TransformStrategy):
     """
 
     name = "erpnext"
-    label = "ERPnext (Al Arabi)"
+    label = "ERPnext"
     description = (
-        "Transform Al Arabi legacy ERP data into ERPnext v16 Frappe Data Import CSVs. "
-        "Targets a fresh ERPnext company; emits masters, items with barcodes, parties, "
-        "chart of accounts, invoices (with returns), payments, journals, opening stock, "
-        "and employees."
+        "Standard ERPnext v16 doctype layout. Items, barcodes, customers, "
+        "suppliers, accounts, invoices (with returns), payments, journals, "
+        "opening stock, employees."
     )
+    # Card-level metadata for the picker (tier / kind / stats).
+    tier = "S"
+    kind = "OFFICIAL"
+    stats = {
+        "target_doctypes": 17,    # how many ERPnext doctypes we emit
+        "target_fields": 190,     # approx total fields across emitted shapes
+        "source_tables": 30,      # legacy tables we consume
+        "fit_score": 94,          # mapping confidence %
+    }
+    # Only fields the operator must decide remain in `config_schema`. Country
+    # and default_currency live as defaults inside Config.from_dict so the
+    # admin can override via API/file but the UI stays compact.
     config_schema: dict[str, Any] = {
         "company_name": {
             "type": "string",
             "required": True,
             "label": "Company Name",
-            "help": "Must already exist in ERPnext as a fresh company.",
+            "help": "Must exist in ERPnext (or will be created with this name).",
         },
         "company_abbr": {
             "type": "string",
             "required": True,
-            "label": "Company Abbreviation",
-            "help": "Used in autonamed warehouses/accounts (e.g. 'Stores - ALA').",
-        },
-        "country": {
-            "type": "string",
-            "required": True,
-            "default": "Palestinian Territory",
-            "label": "Country",
-        },
-        "default_currency": {
-            "type": "string",
-            "default": "ILS",
-            "label": "Default Currency",
+            "label": "Abbreviation",
+            "help": "Used in autonamed accounts/warehouses (e.g. 'Cash - ALA').",
         },
         "opening_date": {
             "type": "date",
             "required": True,
             "label": "Opening Date",
-            "help": "Cutover date for opening balances and stock (e.g. 2026-01-01).",
+            "help": "Cutover date for opening balances and stock.",
         },
         "summarize_walkin_sales": {
             "type": "boolean",
             "default": True,
             "label": "Summarize walk-in sales",
-            "help": (
-                "Group anonymous walk-in sales into one Sales Invoice per "
-                "(date × terminal). Named-customer sales remain per-invoice."
-            ),
+            "help": "One Sales Invoice per (date × terminal) for anonymous sales.",
         },
     }
 

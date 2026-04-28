@@ -50,6 +50,9 @@ message.txt
 # Theme reference (kept locally, not version controlled)
 new_theme/
 
+# Legacy source data (kept locally, not version controlled)
+data/
+
 # Stray output dir bug from build_erpnext_preset.py running from backend/
 backend/backend/
 

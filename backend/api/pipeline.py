@@ -59,16 +59,24 @@ def _strategy_result(
 ) -> Dict[str, Any]:
     strategy = get_strategy(strategy_name)
     out: StrategyResult = strategy.transform(legacy, config)
-    if not out.output_tables:
+    real_tables = {k: v for k, v in out.output_tables.items() if not k.startswith("__")}
+    if not real_tables:
         return _passthrough_result(legacy)
-    total = sum(len(rows) for rows in out.output_tables.values())
+    total = sum(len(rows) for rows in real_tables.values())
+    audit_rows = out.output_tables.get("__audit_report__") or []
+    checklist_rows = out.output_tables.get("__migration_setup_checklist__") or []
     return _result_shape(
-        tables=out.output_tables,
+        tables=real_tables,
         total_rows=total,
         warnings=[w.get("message", "") for w in out.warnings],
         note=f"strategy={strategy_name}",
         stats=out.stats,
         errors=out.errors,
+        strategy_name=strategy_name,
+        strategy_label=getattr(strategy, "label", strategy_name),
+        audit_report=audit_rows[0] if audit_rows else None,
+        setup_checklist_md=(checklist_rows[0] or {}).get("content")
+                           if checklist_rows else None,
     )
 
 
@@ -79,6 +87,10 @@ def _result_shape(
     note: str,
     stats: Optional[Dict[str, int]] = None,
     errors: Optional[List[dict]] = None,
+    strategy_name: Optional[str] = None,
+    strategy_label: Optional[str] = None,
+    audit_report: Optional[Dict[str, Any]] = None,
+    setup_checklist_md: Optional[str] = None,
 ) -> Dict[str, Any]:
     return {
         "ok": True,
@@ -94,8 +106,13 @@ def _result_shape(
         "exceptions": {},
         "preview": {t: (rows or [])[:5] for t, rows in tables.items()},
         "strategy_note": note,
+        "strategy_name": strategy_name,
+        "strategy_label": strategy_label,
         "strategy_stats": stats or {},
         "strategy_errors": errors or [],
+        "output_doctypes": {t: len(rows) for t, rows in tables.items()},
+        "audit_report": audit_report,
+        "setup_checklist_md": setup_checklist_md,
     }
 
 
@@ -146,13 +163,20 @@ async def transform(session_id: str):
 
 
 def _response_payload(result: Dict[str, Any]) -> Dict[str, Any]:
-    """Strip strategy-internal keys so it fits TransformResponse.
+    """Trim session-only keys from the public response.
 
-    `strategy_note` / `strategy_stats` / `strategy_errors` are stored on
-    the session for /load + /stats but aren't part of the public response
-    schema (yet).
+    The session keeps `tables` (heavy) and `strategy_errors` (internal).
+    The wire response carries summaries and the audit/checklist artifacts.
     """
-    return {k: v for k, v in result.items() if not k.startswith("strategy_")}
+    keep = {
+        "ok", "tables_transformed", "total_rows",
+        "encoding_conversions", "type_conversions", "reference_mappings",
+        "null_normalizations", "dedup_removed",
+        "warnings", "preview",
+        "strategy_name", "strategy_label", "strategy_stats",
+        "output_doctypes", "audit_report", "setup_checklist_md",
+    }
+    return {k: v for k, v in result.items() if k in keep}
 
 
 @router.post("/load/{session_id}", response_model=LoadResponse)

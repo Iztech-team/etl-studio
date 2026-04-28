@@ -6,13 +6,20 @@ class TransformResponse(BaseModel):
     ok: bool
     tables_transformed: int
     total_rows: int
-    encoding_conversions: int
-    type_conversions: int
-    reference_mappings: int
-    null_normalizations: int
+    encoding_conversions: int = 0
+    type_conversions: int = 0
+    reference_mappings: int = 0
+    null_normalizations: int = 0
     dedup_removed: int = 0
-    warnings: List[str]
-    preview: Dict[str, Any]
+    warnings: List[str] = []
+    preview: Dict[str, Any] = {}
+    # Strategy outputs (populated when /api/transform dispatched through a strategy).
+    strategy_name: Optional[str] = None
+    strategy_label: Optional[str] = None
+    strategy_stats: Dict[str, Any] = {}
+    output_doctypes: Dict[str, int] = {}
+    audit_report: Optional[Dict[str, Any]] = None
+    setup_checklist_md: Optional[str] = None
 
 
 class CounterReset(BaseModel):
