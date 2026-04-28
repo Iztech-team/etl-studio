@@ -115,11 +115,14 @@ def _emit_warehouse(ctx: Context, row: dict) -> None:
     name = pick(row, "DESCRIPTION", "DESCRIPTIONE", "DESCRIPTIONH")
     if not name:
         return
+    # parent_warehouse left blank: ERPnext doesn't require a parent for
+    # leaf warehouses, and assuming a global "All Warehouses" root fails
+    # in fresh-company setups where that group hasn't been created yet.
+    # Admin can re-parent post-import via UI if a hierarchy is desired.
     ctx.result.emit("Warehouse", {
         "name": ctx.with_abbr(name),
         "warehouse_name": name,
         "company": ctx.config.company_name,
-        "parent_warehouse": ROOT_WAREHOUSE,
         "is_group": 0,
         "legacy_storeid": clean_str(row.get("STOREID")),
     })
