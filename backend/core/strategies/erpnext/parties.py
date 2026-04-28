@@ -9,13 +9,10 @@ Orphan customers are ACCOUNTIDs that appear in CATESINVDOCT but in
 neither CUSTT nor SUPPLIERT — typically employee or representative
 accounts; we emit them as customers so their invoices have a valid party.
 """
-from typing import Iterable
-
 from core.strategies.erpnext.common import (
     WALKIN_CUSTOMER_ID,
     clean_str,
     customer_id,
-    group_by,
     pick,
     supplier_id,
 )
@@ -34,11 +31,18 @@ SUPPLIER_TYPE_DEFAULT = "Company"
 
 
 def emit_parties(ctx: Context) -> None:
-    contacts = group_by(ctx.table("CONTACTST"), "ACCOUNTID")
+    """Emit Customer / Supplier records.
+
+    On v16 Customer / Supplier, `mobile_no` and `email_id` are Read Only
+    (auto-populated from linked Contact rows on save). Setting them via
+    Data Import is silently dropped, so we don't bother. The 339
+    phone-number CONTACTST entries are lost in this migration — an
+    acceptable trade-off given the sparse population.
+    """
     emit_walkin_customer(ctx)
-    emit_customers(ctx, contacts)
-    emit_suppliers(ctx, contacts)
-    emit_orphan_customers(ctx, contacts)
+    emit_customers(ctx)
+    emit_suppliers(ctx)
+    emit_orphan_customers(ctx)
 
 
 # -- Walk-in ------------------------------------------------------------------
@@ -60,16 +64,12 @@ def emit_walkin_customer(ctx: Context) -> None:
 
 # -- Customer (CUSTT) ---------------------------------------------------------
 
-def emit_customers(ctx: Context, contacts: dict[str, list[dict]]) -> None:
+def emit_customers(ctx: Context) -> None:
     for row in ctx.table("CUSTT"):
-        _emit_customer(ctx, row, contacts)
+        _emit_customer(ctx, row)
 
 
-def _emit_customer(
-    ctx: Context,
-    row: dict,
-    contacts: dict[str, list[dict]],
-) -> None:
+def _emit_customer(ctx: Context, row: dict) -> None:
     custid = clean_str(row.get("CUSTID"))
     account_id = clean_str(row.get("ACCOUNT")) or custid
     if not account_id:
@@ -79,7 +79,6 @@ def _emit_customer(
     if not name:
         ctx.result.warn("Customer", "missing ACCOUNTT.NAME", legacy_custid=custid)
         return
-    phone = _phone_for(contacts.get(account_id, []))
     ctx.result.emit("Customer", {
         "name": customer_id(custid),
         "customer_name": name,
@@ -88,8 +87,6 @@ def _emit_customer(
         "territory": TERRITORY_NAME,
         "default_currency": ctx.config.default_currency,
         "default_price_list": price_list_name(ctx, row.get("PRICEID")),
-        "mobile_no": phone["mobile"],
-        "phone": phone["office"],
         "disabled": 0,
         "legacy_custid": custid,
         "legacy_kind": "regular",
@@ -99,16 +96,12 @@ def _emit_customer(
 
 # -- Supplier (SUPPLIERT) -----------------------------------------------------
 
-def emit_suppliers(ctx: Context, contacts: dict[str, list[dict]]) -> None:
+def emit_suppliers(ctx: Context) -> None:
     for row in ctx.table("SUPPLIERT"):
-        _emit_supplier(ctx, row, contacts)
+        _emit_supplier(ctx, row)
 
 
-def _emit_supplier(
-    ctx: Context,
-    row: dict,
-    contacts: dict[str, list[dict]],
-) -> None:
+def _emit_supplier(ctx: Context, row: dict) -> None:
     suppid = clean_str(row.get("SUPPID"))
     account_id = clean_str(row.get("ACCOUNT")) or suppid
     if not account_id:
@@ -118,7 +111,6 @@ def _emit_supplier(
     if not name:
         ctx.result.warn("Supplier", "missing ACCOUNTT.NAME", legacy_suppid=suppid)
         return
-    phone = _phone_for(contacts.get(account_id, []))
     ctx.result.emit("Supplier", {
         "name": supplier_id(suppid),
         "supplier_name": name,
@@ -126,8 +118,6 @@ def _emit_supplier(
         "supplier_group": SUPPLIER_GROUP_NAME,
         "country": ctx.config.country,
         "default_currency": ctx.config.default_currency,
-        "mobile_no": phone["mobile"],
-        "phone": phone["office"],
         "disabled": 0,
         "legacy_suppid": suppid,
     })
@@ -136,7 +126,7 @@ def _emit_supplier(
 
 # -- Orphans (referenced by invoices, not in CUSTT/SUPPLIERT) -----------------
 
-def emit_orphan_customers(ctx: Context, contacts: dict[str, list[dict]]) -> None:
+def emit_orphan_customers(ctx: Context) -> None:
     """Customers that appear in invoices but not in CUSTT/SUPPLIERT.
 
     Typically employee accounts (CLASS=1) or representative accounts
@@ -144,19 +134,14 @@ def emit_orphan_customers(ctx: Context, contacts: dict[str, list[dict]]) -> None
     Emit them as customers to keep the invoices' party references valid.
     """
     for account_id in _orphan_invoice_account_ids(ctx):
-        _emit_orphan(ctx, account_id, contacts)
+        _emit_orphan(ctx, account_id)
 
 
-def _emit_orphan(
-    ctx: Context,
-    account_id: str,
-    contacts: dict[str, list[dict]],
-) -> None:
+def _emit_orphan(ctx: Context, account_id: str) -> None:
     name = _account_name(ctx, account_id)
     if not name:
         ctx.result.warn("Orphan", "no ACCOUNTT.NAME", account_id=account_id)
         return
-    phone = _phone_for(contacts.get(account_id, []))
     ctx.result.emit("Customer", {
         "name": customer_id(account_id),
         "customer_name": name,
@@ -164,8 +149,6 @@ def _emit_orphan(
         "customer_group": CUSTOMER_GROUP_NAME,
         "territory": TERRITORY_NAME,
         "default_currency": ctx.config.default_currency,
-        "mobile_no": phone["mobile"],
-        "phone": phone["office"],
         "disabled": 0,
         "legacy_custid": account_id,
         "legacy_kind": "orphan",
@@ -196,15 +179,3 @@ def _account_name(ctx: Context, account_id: str) -> str:
     return pick(row, "NAME", "NAMEE", "NAMEH")
 
 
-def _phone_for(contact_rows: Iterable[dict]) -> dict[str, str]:
-    """Pick the first non-empty MOBILE / OFFICEPHONE1 across contact rows."""
-    mobile = ""
-    office = ""
-    for r in contact_rows or []:
-        if not mobile:
-            mobile = clean_str(r.get("MOBILE")) or clean_str(r.get("MOBILE2"))
-        if not office:
-            office = clean_str(r.get("OFFICEPHONE1")) or clean_str(r.get("OFFICEPHONE2"))
-        if mobile and office:
-            break
-    return {"mobile": mobile, "office": office}

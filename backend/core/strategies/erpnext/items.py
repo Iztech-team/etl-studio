@@ -49,8 +49,20 @@ def emit_items(ctx: Context) -> None:
 
 
 def emit_item_prices(ctx: Context) -> None:
+    # Build CATID → stock_uom lookup once so each price row can carry the
+    # correct uom (Item Price.uom is required on v16).
+    item_uom_by_catid = _index_item_uoms(ctx)
     for row in ctx.table("CATPRICET"):
-        _emit_item_price(ctx, row)
+        _emit_item_price(ctx, row, item_uom_by_catid)
+
+
+def _index_item_uoms(ctx: Context) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for r in ctx.table("CATEGORYT"):
+        cid = clean_str(r.get("CATID"))
+        if cid:
+            out[cid] = _stock_uom(r)
+    return out
 
 
 # -- Item ---------------------------------------------------------------------
@@ -218,7 +230,7 @@ def _deleted_catids(ctx: Context) -> set[str]:
 
 # -- Item Price ---------------------------------------------------------------
 
-def _emit_item_price(ctx: Context, row: dict) -> None:
+def _emit_item_price(ctx: Context, row: dict, item_uom_by_catid: dict[str, str]) -> None:
     rate = parse_decimal(row.get("SALEPRICE"))
     if rate <= 0:
         ctx.result.bump("item_prices_skipped_zero")
@@ -234,6 +246,7 @@ def _emit_item_price(ctx: Context, row: dict) -> None:
         "price_list": price_list_name(ctx, row.get("PRICEID")),
         "price_list_rate": rate,
         "currency": currency_iso(row.get("SALECUR")),
+        "uom": item_uom_by_catid.get(catid, ""),
         "valid_from": parse_date(row.get("CHANGEDATE")),
         "legacy_priceid": legacy_priceid,
     })

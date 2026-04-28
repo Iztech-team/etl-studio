@@ -49,7 +49,7 @@ def _emit_employee(ctx: Context, row: dict) -> None:
         "salary_currency": ctx.config.default_currency,
         "ctc": parse_decimal(row.get("SALARY")),
         "attendance_device_id": clean_str(row.get("CARDID")),
-        "notes": clean_str(row.get("NOTE")),
+        "bio": clean_str(row.get("NOTE")),
         "legacy_empid": empid,
         "legacy_acctid": clean_str(row.get("ACCOUNT")),
     }

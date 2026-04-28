@@ -226,15 +226,18 @@ def _emit_bank_account(ctx: Context, row: dict) -> None:
         return
     account_no = clean_str(row.get("ACCOUNTNO"))
     label = f"{bank_name} - {account_no}" if account_no else bank_name
+    # phone_number and address_line_1 don't exist on v16 Bank Account; phones
+    # belong on a separate Contact doctype (skipped — see parties.py).
+    # is_company_account=1 would require a linked GL `account` we can't
+    # always resolve, so leave it at 0 — the admin can flip it manually.
     ctx.result.emit("Bank Account", {
         "name": label,
         "account_name": label,
         "bank": bank_name,
-        "is_company_account": 1,
+        "is_company_account": 0,
         "company": ctx.config.company_name,
+        "bank_account_no": account_no,
         "branch_code": clean_str(row.get("BRANCHNAME")),
-        "phone_number": clean_str(row.get("PHONE")),
-        "address_line_1": clean_str(row.get("ADDRESS")),
         "legacy_bankaccid": clean_str(row.get("BANKACCID")),
     })
     ctx.result.bump("bank_accounts_emitted")

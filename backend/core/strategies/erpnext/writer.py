@@ -124,11 +124,55 @@ def _write_one_doctype(
     records: list[dict],
     output_dir: str,
 ) -> list[str]:
+    if doctype == "Account":
+        return _write_coa_importer_csv(records, output_dir)
     if doctype in SPLITS:
         return _write_split_streams(doctype, records, output_dir)
     prefix = DOCTYPE_PREFIX.get(doctype, "90")
     base = _slug(doctype)
     return _write_chunks(records, output_dir, prefix, base, doctype)
+
+
+# -- Account: special-cased for the Chart of Accounts Importer ---------------
+# The CoA Importer is the supported tool for importing a fresh CoA into a
+# new company. It uses an 8-column template with SHORT names (no abbr
+# suffix) and resolves the hierarchy itself. Trying to push CoA through
+# normal Data Import fails because Frappe validates parent_account links
+# up-front, which our records satisfy only after their own row inserts.
+
+COA_HEADERS = [
+    "Account Name", "Parent Account", "Account Number",
+    "Parent Account Number", "Is Group", "Account Type",
+    "Root Type", "Account Currency",
+]
+
+
+def _write_coa_importer_csv(records: list[dict], output_dir: str) -> list[str]:
+    path = os.path.join(output_dir, "10_account.csv")
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(COA_HEADERS)
+        for r in records:
+            writer.writerow([
+                r.get("account_name", ""),
+                _coa_parent_short_name(r),
+                "",  # Account Number — legacy doesn't carry this
+                "",  # Parent Account Number — same
+                1 if r.get("is_group") else 0,
+                r.get("account_type", "") or "",
+                r.get("root_type", "") or "",
+                r.get("account_currency", "") or "",
+            ])
+    return [os.path.basename(path)]
+
+
+def _coa_parent_short_name(record: dict) -> str:
+    """Account.parent_account in our records is the autonamed form
+    'X - {abbr}'; the CoA Importer wants the short name 'X' instead."""
+    parent = record.get("parent_account") or ""
+    if " - " in parent:
+        return parent.rsplit(" - ", 1)[0]
+    return parent
 
 
 def _write_split_streams(
