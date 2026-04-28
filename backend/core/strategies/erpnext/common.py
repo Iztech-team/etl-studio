@@ -18,78 +18,78 @@ CURRENCY_BY_LEGACY_ID: dict[str, str] = {
 
 DEFAULT_CURRENCY = "ILS"
 
-# ERPnext ships with these built-in UOMs by default. We map every legacy
-# unit string to one of these — nothing else — so the strategy never
-# needs to emit a UOM CSV. Items / invoice lines simply reference the
-# pre-existing built-ins.
+# Subset of ERPnext v16's 239 built-in UOMs that we actually map onto.
+# (Verified from frappe/erpnext version-16 setup_wizard/data/uom_data.json.)
 ERPNEXT_BUILTIN_UOMS: set[str] = {
-    "Box", "Gram", "Hour", "Kg", "Litre", "Meter",
-    "Minute", "Nos", "Pair", "Pound", "Set", "Unit",
+    "Box", "Centimeter", "Cubic Centimeter", "Cubic Meter", "Cup",
+    "Gram", "Hour", "Kg", "Litre", "Meter", "Minute", "Nos",
+    "Ounce", "Pair", "Pound", "Set", "Square Centimeter",
+    "Square Meter", "Tonne", "Unit",
 }
 
-# Force-map from legacy units (Arabic free-text + UNITT English) to one
-# of the 12 ERPnext built-ins. Loses some semantic precision (Carton vs
-# Box vs Can all become 'Box') in exchange for zero UOM-setup work in
-# ERPnext after migration. Anything unmapped falls back to DEFAULT_UOM.
+# Map every legacy unit (Arabic free-text + UNITT English) to a v16
+# built-in UOM. v16 ships 239 UOMs but most shape-specific ones (Can,
+# Carton, Bottle, Packet, Bag, Jar, Piece, etc.) are NOT among them, so
+# we collapse those to the closest built-in. Anything unmapped falls
+# back to DEFAULT_UOM ('Nos').
 UOM_CANONICAL: dict[str, str] = {
-    # ---- Direct built-in matches ----
+    # ---- v16 built-in matches (no emit needed) ----
     "Unit": "Unit", "وحدة": "Unit",
     "Kg": "Kg", "كيلو": "Kg", "كغم": "Kg",
     "Gram": "Gram", "Gr": "Gram", "غرام": "Gram",
     "Box": "Box", "صندوق": "Box",
     "Litre": "Litre", "Liter": "Litre", "لتر": "Litre",
     "Meter": "Meter", "متر": "Meter",
-    "Pound": "Pound", "رطل": "Pound",
+    "Pound": "Pound", "رطل": "Pound", "Rotl": "Pound",
     "Pair": "Pair", "اجوزة": "Pair", "اجوزيات": "Pair",
     "Set": "Set", "طقم": "Set",
     "Nos": "Nos",
     "Hour": "Hour", "Minute": "Minute",
-    # ---- Container-shaped → Box ----
-    "Carton": "Box", "كرتون": "Box", "كرتونة": "Box", "كرتونه": "Box", "كتونه": "Box",
-    "Can": "Box", "علبة": "Box", "علبه": "Box", "علب": "Box",
-    "Tin": "Box", "تنكة": "Box", "تنكه": "Box",
-    "Crate": "Box", "كروز": "Box",
-    "Pack": "Box", "Packet": "Box",
-    "بكيت": "Box", "بكييت": "Box", "بيكت": "Box", "وبكيت": "Box", "عبوة": "Box",
-    "Bag": "Box", "كيس": "Box", "أكياس": "Box", "شوال": "Box", "Sack": "Box",
-    "Jar": "Box", "مطربان": "Box",
-    # ---- Discrete count → Nos ----
-    "Piece": "Nos", "Pieces": "Nos", "قطعة": "Nos", "حبة": "Nos", "حبه": "Nos",
-    "Bowl": "Nos", "جاط": "Nos",
-    "Plate": "Nos", "صحن": "Nos",
-    "Cup": "Nos", "كوب": "Nos", "كاسة": "Nos",
-    "Mug": "Nos", "كوز": "Nos",
-    "Pitcher": "Nos", "ابريق": "Nos",
-    "Vessel": "Nos", "أنية": "Nos", "انية": "Nos",
-    "Bottle": "Nos", "قنينة": "Nos", "قنية": "Nos", "قنيه": "Nos", "قنيةى": "Nos",
-    "Pail": "Nos", "سطل": "Nos",
-    "Roll": "Nos", "رول": "Nos", "لفة": "Nos",
-    "Slice": "Nos", "شرحة": "Nos",
-    "Mould": "Nos", "قالب": "Nos",
-    "Brush": "Nos", "فرشاية": "Nos",
-    "Device": "Nos", "جهاز": "Nos",
-    "Sprinkler": "Nos", "مطرة": "Nos",
-    "Greenhouse": "Nos", "صوبة": "Nos",
-    "Hanato": "Nos", "هاناتو": "Nos",
-    # ---- Group-of-things → Set ----
-    "Bunch": "Set", "ربطة": "Set", "ربطه": "Set",
-    "Bundle": "Set", "رزمة": "Set", "حزمة": "Set",
-    "Dozen": "Set", "دزينة": "Set", "دزينه": "Set",
-    "Quartet": "Set", "اربعات": "Set",
-    # ---- Volume containers → Litre ----
-    "Jerrycan": "Litre", "جركل": "Litre",
-    "Gallon": "Litre", "جلن": "Litre",
-    "Cubic Meter": "Litre", "M3": "Litre", "م3": "Litre",
-    "Cubic Centimeter": "Litre", "Cm3": "Litre", "سم3": "Litre",
-    # ---- Length / area → Meter ----
-    "Square Meter": "Meter", "M2": "Meter", "م2": "Meter",
-    "Square Centimeter": "Meter", "Cm2": "Meter", "سم2": "Meter",
-    "Centimeter": "Meter", "CM": "Meter", "سم": "Meter",
-    "Cable": "Meter", "كابل": "Meter",
-    # ---- Weight without a built-in fit ----
-    "Ton": "Kg",
-    "Rotl": "Pound",
-    "Ouqiya": "Pound", "وقية": "Pound",
+    "Cup": "Cup", "كوب": "Cup", "كاسة": "Cup",
+    "Tonne": "Tonne", "Ton": "Tonne", "طن": "Tonne",
+    "Ounce": "Ounce", "Ouqiya": "Ounce", "وقية": "Ounce",
+    "Square Meter": "Square Meter", "M2": "Square Meter", "م2": "Square Meter",
+    "Square Centimeter": "Square Centimeter", "Cm2": "Square Centimeter", "سم2": "Square Centimeter",
+    "Cubic Meter": "Cubic Meter", "M3": "Cubic Meter", "م3": "Cubic Meter",
+    "Cubic Centimeter": "Cubic Centimeter", "Cm3": "Cubic Centimeter", "سم3": "Cubic Centimeter",
+    "Centimeter": "Centimeter", "CM": "Centimeter", "سم": "Centimeter",
+    # ---- Custom UOMs (emitted in 01_uom.csv before items import) ----
+    # Container shapes
+    "Carton": "Carton", "كرتون": "Carton", "كرتونة": "Carton", "كرتونه": "Carton", "كتونه": "Carton",
+    "Can": "Can", "علبة": "Can", "علبه": "Can", "علب": "Can",
+    "Tin": "Tin", "تنكة": "Tin", "تنكه": "Tin",
+    "Crate": "Crate", "كروز": "Crate",
+    "Pack": "Pack", "Packet": "Pack",
+    "بكيت": "Pack", "بكييت": "Pack", "بيكت": "Pack", "وبكيت": "Pack", "عبوة": "Pack",
+    "Bag": "Bag", "كيس": "Bag", "أكياس": "Bag", "شوال": "Bag", "Sack": "Bag",
+    "Jar": "Jar", "مطربان": "Jar",
+    # Volume containers
+    "Bottle": "Bottle", "قنينة": "Bottle", "قنية": "Bottle", "قنيه": "Bottle", "قنيةى": "Bottle",
+    "Jerrycan": "Jerrycan", "جركل": "Jerrycan",
+    "Gallon": "Gallon", "جلن": "Gallon",
+    "Pail": "Pail", "سطل": "Pail",
+    # Discrete items
+    "Piece": "Piece", "Pieces": "Piece", "قطعة": "Piece", "حبة": "Piece", "حبه": "Piece",
+    "Bowl": "Bowl", "جاط": "Bowl",
+    "Plate": "Plate", "صحن": "Plate",
+    "Mug": "Mug", "كوز": "Mug",
+    "Pitcher": "Pitcher", "ابريق": "Pitcher",
+    "Vessel": "Vessel", "أنية": "Vessel", "انية": "Vessel",
+    "Roll": "Roll", "رول": "Roll", "لفة": "Roll",
+    "Slice": "Slice", "شرحة": "Slice",
+    "Mould": "Mould", "قالب": "Mould",
+    "Brush": "Brush", "فرشاية": "Brush",
+    "Device": "Device", "جهاز": "Device",
+    "Sprinkler": "Sprinkler", "مطرة": "Sprinkler",
+    "Greenhouse": "Greenhouse", "صوبة": "Greenhouse",
+    "Hanato": "Hanato", "هاناتو": "Hanato",
+    # Groups
+    "Bunch": "Bunch", "ربطة": "Bunch", "ربطه": "Bunch",
+    "Bundle": "Bundle", "رزمة": "Bundle", "حزمة": "Bundle",
+    "Dozen": "Dozen", "دزينة": "Dozen", "دزينه": "Dozen",
+    "Quartet": "Quartet", "اربعات": "Quartet",
+    # Cable (length-shaped, custom)
+    "Cable": "Cable", "كابل": "Cable",
 }
 
 DEFAULT_UOM = "Nos"
