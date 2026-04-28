@@ -17,114 +17,82 @@ CURRENCY_BY_LEGACY_ID: dict[str, str] = {
 }
 
 DEFAULT_CURRENCY = "ILS"
-# ERPnext ships with these built-in UOMs by default — never emit them as
-# new records (Frappe rejects duplicates) but treat them as valid targets
-# for cross-doctype references like Item.stock_uom.
+
+# ERPnext ships with these built-in UOMs by default. We map every legacy
+# unit string to one of these — nothing else — so the strategy never
+# needs to emit a UOM CSV. Items / invoice lines simply reference the
+# pre-existing built-ins.
 ERPNEXT_BUILTIN_UOMS: set[str] = {
     "Box", "Gram", "Hour", "Kg", "Litre", "Meter",
     "Minute", "Nos", "Pair", "Pound", "Set", "Unit",
 }
 
-# Canonical mapping from legacy unit strings (Arabic free-text or UNITT
-# English) → the UOM name we'll use everywhere downstream. Lets us
-# de-duplicate against ERPnext built-ins and present a single English
-# UOM instead of an Arabic shadow.
+# Force-map from legacy units (Arabic free-text + UNITT English) to one
+# of the 12 ERPnext built-ins. Loses some semantic precision (Carton vs
+# Box vs Can all become 'Box') in exchange for zero UOM-setup work in
+# ERPnext after migration. Anything unmapped falls back to DEFAULT_UOM.
 UOM_CANONICAL: dict[str, str] = {
-    # ---- Arabic legacy units (UNITT.UNITNAME + free-text item.UNIT) ----
-    "وحدة": "Unit",
-    "كيلو": "Kg",
-    "غرام": "Gram",
-    "طن": "Ton",
-    "وقية": "Ouqiya",
-    "شوال": "Sack",
-    "كرتونة": "Carton",
-    "كرتون": "Carton",
-    "كتونه": "Carton",
-    "كرتونه": "Carton",
-    "كيس": "Bag",
-    "أكياس": "Bag",
-    "كغم": "Kg",
-    "علبه": "Can",
-    "ربطه": "Bunch",
-    "قنينة": "Bottle",
-    "قنية": "Bottle",
-    "قنيه": "Bottle",
-    "قنيةى": "Bottle",
-    "كوز": "Mug",
-    "سطل": "Pail",
-    "مطرة": "Sprinkler",
-    "صوبة": "Greenhouse",
-    "لفة": "Roll",
-    "فرشاية": "Brush",
-    "جاط": "Bowl",
-    "شرحة": "Slice",
-    "وبكيت": "Packet",
-    "هاناتو": "Hanato",
-    "صندوق": "Box",
-    "لتر": "Litre",
-    "م2": "Square Meter",
-    "م3": "Cubic Meter",
-    "كوب": "Cup",
-    "متر": "Meter",
-    "سم": "Centimeter",
-    "سم2": "Square Centimeter",
-    "سم3": "Cubic Centimeter",
-    "رطل": "Pound",
-    "جهاز": "Device",
-    "علبة": "Can",
-    "قطعة": "Piece",
-    "حبة": "Piece",
-    "حبه": "Piece",
-    "بكيت": "Packet",
-    "بكييت": "Packet",
-    "بيكت": "Packet",
-    "كروز": "Crate",
-    "تنكة": "Tin",
-    "تنكه": "Tin",
-    "دزينة": "Dozen",
-    "دزينه": "Dozen",
-    "رزمة": "Bundle",
-    "حزمة": "Bundle",
-    "ربطة": "Bunch",
-    "عبوة": "Pack",
-    "صحن": "Plate",
-    "مطربان": "Jar",
-    "طقم": "Set",
-    "ابريق": "Pitcher",
-    "اجوزة": "Pair",
-    "اجوزيات": "Pair",
-    "كاسة": "Cup",
-    "علب": "Can",
-    "جركل": "Jerrycan",
-    "جلن": "Gallon",
-    "أنية": "Vessel",
-    "انية": "Vessel",
-    "رول": "Roll",
-    "قالب": "Mould",
-    "كابل": "Cable",
-    "اربعات": "Quartet",
-    # ---- English UNITT.UNITNAMEE values ----
-    "Unit": "Unit",
-    "Kg": "Kg",
-    "Gr": "Gram",
-    "Gram": "Gram",
-    "Ton": "Ton",
-    "Carton": "Carton",
-    "Box": "Box",
-    "Liter": "Litre",
-    "Litre": "Litre",
-    "M2": "Square Meter",
-    "M3": "Cubic Meter",
-    "Meter": "Meter",
-    "CM": "Centimeter",
-    "Rotl": "Rotl",
-    "Can": "Can",
-    "Cm2": "Square Centimeter",
-    "Cm3": "Cubic Centimeter",
-    "Piece": "Piece",
+    # ---- Direct built-in matches ----
+    "Unit": "Unit", "وحدة": "Unit",
+    "Kg": "Kg", "كيلو": "Kg", "كغم": "Kg",
+    "Gram": "Gram", "Gr": "Gram", "غرام": "Gram",
+    "Box": "Box", "صندوق": "Box",
+    "Litre": "Litre", "Liter": "Litre", "لتر": "Litre",
+    "Meter": "Meter", "متر": "Meter",
+    "Pound": "Pound", "رطل": "Pound",
+    "Pair": "Pair", "اجوزة": "Pair", "اجوزيات": "Pair",
+    "Set": "Set", "طقم": "Set",
+    "Nos": "Nos",
+    "Hour": "Hour", "Minute": "Minute",
+    # ---- Container-shaped → Box ----
+    "Carton": "Box", "كرتون": "Box", "كرتونة": "Box", "كرتونه": "Box", "كتونه": "Box",
+    "Can": "Box", "علبة": "Box", "علبه": "Box", "علب": "Box",
+    "Tin": "Box", "تنكة": "Box", "تنكه": "Box",
+    "Crate": "Box", "كروز": "Box",
+    "Pack": "Box", "Packet": "Box",
+    "بكيت": "Box", "بكييت": "Box", "بيكت": "Box", "وبكيت": "Box", "عبوة": "Box",
+    "Bag": "Box", "كيس": "Box", "أكياس": "Box", "شوال": "Box", "Sack": "Box",
+    "Jar": "Box", "مطربان": "Box",
+    # ---- Discrete count → Nos ----
+    "Piece": "Nos", "Pieces": "Nos", "قطعة": "Nos", "حبة": "Nos", "حبه": "Nos",
+    "Bowl": "Nos", "جاط": "Nos",
+    "Plate": "Nos", "صحن": "Nos",
+    "Cup": "Nos", "كوب": "Nos", "كاسة": "Nos",
+    "Mug": "Nos", "كوز": "Nos",
+    "Pitcher": "Nos", "ابريق": "Nos",
+    "Vessel": "Nos", "أنية": "Nos", "انية": "Nos",
+    "Bottle": "Nos", "قنينة": "Nos", "قنية": "Nos", "قنيه": "Nos", "قنيةى": "Nos",
+    "Pail": "Nos", "سطل": "Nos",
+    "Roll": "Nos", "رول": "Nos", "لفة": "Nos",
+    "Slice": "Nos", "شرحة": "Nos",
+    "Mould": "Nos", "قالب": "Nos",
+    "Brush": "Nos", "فرشاية": "Nos",
+    "Device": "Nos", "جهاز": "Nos",
+    "Sprinkler": "Nos", "مطرة": "Nos",
+    "Greenhouse": "Nos", "صوبة": "Nos",
+    "Hanato": "Nos", "هاناتو": "Nos",
+    # ---- Group-of-things → Set ----
+    "Bunch": "Set", "ربطة": "Set", "ربطه": "Set",
+    "Bundle": "Set", "رزمة": "Set", "حزمة": "Set",
+    "Dozen": "Set", "دزينة": "Set", "دزينه": "Set",
+    "Quartet": "Set", "اربعات": "Set",
+    # ---- Volume containers → Litre ----
+    "Jerrycan": "Litre", "جركل": "Litre",
+    "Gallon": "Litre", "جلن": "Litre",
+    "Cubic Meter": "Litre", "M3": "Litre", "م3": "Litre",
+    "Cubic Centimeter": "Litre", "Cm3": "Litre", "سم3": "Litre",
+    # ---- Length / area → Meter ----
+    "Square Meter": "Meter", "M2": "Meter", "م2": "Meter",
+    "Square Centimeter": "Meter", "Cm2": "Meter", "سم2": "Meter",
+    "Centimeter": "Meter", "CM": "Meter", "سم": "Meter",
+    "Cable": "Meter", "كابل": "Meter",
+    # ---- Weight without a built-in fit ----
+    "Ton": "Kg",
+    "Rotl": "Pound",
+    "Ouqiya": "Pound", "وقية": "Pound",
 }
 
-DEFAULT_UOM = "Unit"
+DEFAULT_UOM = "Nos"
 
 
 # -- text / value coercion ----------------------------------------------------
@@ -193,17 +161,18 @@ def currency_iso(curid: Any) -> str:
 
 
 def normalize_uom(text: Any) -> str:
-    """Free-text legacy UNIT → canonical ERPnext UOM name.
-
-    Maps Arabic / English aliases to the single canonical form so we
-    never produce two UOMs for the same physical unit (e.g. 'علبة' and
-    'Can' both resolve to 'Can'). Unmapped strings pass through verbatim
-    so unusual legacy units still survive.
+    """Force-map legacy UNIT (Arabic free-text or English) to one of
+    ERPnext's 12 built-in UOMs. Unmapped or empty inputs fall back to
+    DEFAULT_UOM ('Nos') so every Item.stock_uom resolves to something
+    Frappe already knows about — no UOM CSV emit required.
     """
     s = clean_str(text)
     if not s:
         return DEFAULT_UOM
-    return UOM_CANONICAL.get(s, s)
+    canonical = UOM_CANONICAL.get(s)
+    if canonical:
+        return canonical
+    return DEFAULT_UOM
 
 
 # -- naming -------------------------------------------------------------------

@@ -26,7 +26,8 @@ CHUNK_SIZE = 5_000
 # Topological dependency order. Earlier-prefixed files must be imported
 # before later-prefixed ones so cross-doctype references resolve.
 DOCTYPE_PREFIX: dict[str, str] = {
-    "UOM": "01",
+    # 01 reserved (was UOM — strategy now references built-in UOMs only,
+    # so no UOM CSV is produced and ERPnext needs no UOM setup).
     "Warehouse": "02",
     "Price List": "03",
     "Item Group": "04",
