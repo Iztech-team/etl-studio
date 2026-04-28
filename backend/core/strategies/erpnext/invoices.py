@@ -219,6 +219,7 @@ def _finalize_line(cell: dict) -> dict:
         "rate": rate,
         "uom": cell["uom"],
         "warehouse": cell["warehouse"],
+        "allow_zero_valuation_rate": 1,
     }
 
 
@@ -318,6 +319,7 @@ def _sales_item_row(ctx: Context, line: dict) -> dict | None:
         "warehouse": _warehouse_for_line(ctx, line),
         "income_account": account_full_name(ctx, line.get("SALEACCID")),
         "discount_amount": parse_decimal(line.get("CATDISCOUNT")),
+        "allow_zero_valuation_rate": 1,
     }
 
 
@@ -396,6 +398,7 @@ def _purchase_items(ctx: Context, line_rows: Iterable[dict]) -> list[dict]:
             "uom": normalize_uom(line.get("CATUNIT")),
             "warehouse": _warehouse_for_line(ctx, line),
             "expense_account": account_full_name(ctx, line.get("PURCHACCID")),
+            "allow_zero_valuation_rate": 1,
         })
     return rows
 
@@ -460,6 +463,7 @@ def _return_sales_items(ctx: Context, line_rows: Iterable[dict]) -> list[dict]:
             "uom": normalize_uom(line.get("CATUNIT")),
             "warehouse": _warehouse_for_line(ctx, line),
             "income_account": account_full_name(ctx, line.get("SALERETACCID")),
+            "allow_zero_valuation_rate": 1,
         })
     return rows
 
@@ -522,6 +526,7 @@ def _return_purchase_items(ctx: Context, line_rows: Iterable[dict]) -> list[dict
             "uom": normalize_uom(line.get("CATUNIT")),
             "warehouse": _warehouse_for_line(ctx, line),
             "expense_account": account_full_name(ctx, line.get("PURCHRETACCID")),
+            "allow_zero_valuation_rate": 1,
         })
     return rows
 
