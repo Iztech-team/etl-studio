@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { RL_STAGES, phaseEarnedXp, type Project } from "./data";
 import { useAuth } from "./Auth";
 import { IArrow, ICheck, IDisk, IDot, IDownload, IPlus, IStar, IX } from "./icons";
+import { useKeyboardGrid } from "./keyboard";
 import { RlPromptModal } from "./PromptModal";
 import { RlTopbar } from "./Topbar";
 import { XPBar } from "./XPBar";
@@ -120,6 +121,12 @@ export function RlProjects({
 	};
 
 	const filtered = filter === "all" ? projects : projects.filter((p) => projectStatus(p) === filter);
+	const grid = useKeyboardGrid({
+		count: filtered.length,
+		columns: 3,
+		onActivate: (i) => filtered[i] && onOpen(filtered[i]),
+		enabled: !renameTarget && !deleteTarget,
+	});
 	const running = projects.filter((p) => projectStatus(p) === "running").length;
 	const done = projects.filter((p) => projectStatus(p) === "done").length;
 	const drafts = projects.filter((p) => projectStatus(p) === "draft").length;
@@ -225,13 +232,14 @@ export function RlProjects({
 				</div>
 			) : (
 				<div className="rl-proj-grid">
-					{filtered.map((p) => (
+					{filtered.map((p, i) => (
 						<RlProjectCard
 							key={p.id}
 							p={p}
 							onOpen={onOpen}
 							onRename={(e, id) => { e.stopPropagation(); setRenameTarget(id); }}
 							onDelete={(e, id) => { e.stopPropagation(); setDeleteTarget(id); }}
+							kbProps={grid.getItemProps(i)}
 						/>
 					))}
 				</div>
@@ -273,11 +281,13 @@ function RlProjectCard({
 	onOpen,
 	onRename,
 	onDelete,
+	kbProps,
 }: {
 	p: Project;
 	onOpen: (p: Project) => void;
 	onRename: (e: React.MouseEvent, id: string) => void;
 	onDelete: (e: React.MouseEvent, id: string) => void;
+	kbProps?: { className: string; onMouseEnter: () => void };
 }) {
 	const stageIdx = phaseStageIndex(p.phase);
 	const progress = Math.round((stageIdx / 4) * 100);
@@ -303,7 +313,11 @@ function RlProjectCard({
 	};
 
 	return (
-		<div className="rl-proj corners" onClick={() => onOpen(p)}>
+		<div
+			className={`rl-proj corners ${kbProps?.className ?? ""}`}
+			onClick={() => onOpen(p)}
+			onMouseEnter={kbProps?.onMouseEnter}
+		>
 			<div className="corner-tl" />
 			<div className="corner-tr" />
 			<div className="corner-bl" />

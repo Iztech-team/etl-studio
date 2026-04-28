@@ -995,6 +995,20 @@ dialog.rl-col-dialog::backdrop {
   letter-spacing: 0.1em;
 }
 
+/* Keyboard focus marker — applied by useKeyboardGrid via getItemProps.
+   Border + magenta glow so the user can see what arrow / hjkl / number
+   keys will activate. Pair with cursor:pointer on the underlying item. */
+.kb-focus {
+  outline: 2px solid var(--lg-magenta);
+  outline-offset: -1px;
+  box-shadow: 0 0 14px rgba(176,102,255,0.55), 4px 4px 0 var(--lg-magenta-d);
+  position: relative;
+  z-index: 1;
+}
+/* Don't double up the corners on cards that already have one — the
+   magenta outline is enough. */
+.rl-proj.kb-focus { transform: translateY(-2px); }
+
 /* Achievement toast */
 .rl-achievement {
   position: fixed;

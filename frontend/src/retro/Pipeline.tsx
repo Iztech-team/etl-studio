@@ -15,6 +15,7 @@ import { IArrow, ICheck, IDisk, IUpload, IX } from "./icons";
 import { RlTopbar } from "./Topbar";
 import { RlPromptModal } from "./PromptModal";
 import { RlAchievement } from "./XPBar";
+import { useGlobalKeys, useKeyboardGrid } from "./keyboard";
 
 // ---------- types ----------
 
@@ -1801,13 +1802,16 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 
 			switch (e.key.toLowerCase()) {
 				case "arrowup":
+				case "k":
 					e.preventDefault();
 					setFocusIdx((i) => Math.max(0, i - 1));
 					break;
 				case "arrowdown":
+				case "j":
 					e.preventDefault();
 					setFocusIdx((i) => Math.min(filtered.length - 1, i + 1));
 					break;
+				case "enter":
 				case "d":
 				case " ":
 					if (filtered.length > 0 && focusIdx < filtered.length) {
@@ -2537,6 +2541,15 @@ function RlExport({ onDone }: { onDone: () => void }) {
 		{ id: "csv", label: "CSV", sub: "One file per table" },
 		{ id: "sql", label: "SQL", sub: "CREATE + INSERT statements" },
 	];
+	const fmtGrid = useKeyboardGrid({
+		count: FORMATS.length,
+		columns: 1,
+		onActivate: (i) => {
+			if (loadResult) setLoadResult(null);
+			setFmt(FORMATS[i].id);
+		},
+		initial: Math.max(0, FORMATS.findIndex((f) => f.id === fmt)),
+	});
 
 	const runLoad = async () => {
 		if (!uploadResult?.sessionId) return;
@@ -2579,14 +2592,17 @@ function RlExport({ onDone }: { onDone: () => void }) {
 			<div className="panel">
 				<div className="panel-head">FORMAT</div>
 				<div className="panel-body" style={{ padding: 0 }}>
-					{FORMATS.map((f) => (
+					{FORMATS.map((f, i) => {
+						const k = fmtGrid.getItemProps(i);
+						return (
 						<div
 							key={f.id}
 							onClick={() => {
 								if (loadResult) setLoadResult(null);
 								setFmt(f.id);
 							}}
-							className={`rl-fmt-row ${fmt === f.id ? "active" : ""}`}
+							onMouseEnter={k.onMouseEnter}
+							className={`rl-fmt-row ${fmt === f.id ? "active" : ""} ${k.className}`}
 						>
 							<div
 								className="pixel"
@@ -2609,7 +2625,8 @@ function RlExport({ onDone }: { onDone: () => void }) {
 								{f.sub}
 							</div>
 						</div>
-					))}
+						);
+					})}
 				</div>
 			</div>
 
@@ -2814,6 +2831,19 @@ export function RlPipeline({
 		if (i < RL_STAGES.length - 1) setStage(RL_STAGES[i + 1].id);
 	};
 	const stageMeta = RL_STAGES.find((s) => s.id === stage);
+
+	useGlobalKeys({
+		onBack: onBack,
+		onTab: (dir) => {
+			const i = RL_STAGES.findIndex((s) => s.id === stage);
+			const target = Math.max(0, Math.min(RL_STAGES.length - 1, i + dir));
+			if (target !== i) setStage(RL_STAGES[target].id);
+		},
+		onStageNumber: (n) => {
+			if (n >= 1 && n <= RL_STAGES.length) setStage(RL_STAGES[n - 1].id);
+		},
+		stageCount: RL_STAGES.length,
+	});
 	return (
 		<PipelineProvider projectId={project?.id ?? null} resumed={resumed}>
 			<div className="rl-page">
