@@ -2,6 +2,7 @@ from typing import Any
 
 from core.strategies.base import StrategyResult, TransformStrategy
 from core.strategies.erpnext.accounts import emit_accounts
+from core.strategies.erpnext.audit import emit_audit
 from core.strategies.erpnext.context import Context
 from core.strategies.erpnext.invoices import emit_invoices
 from core.strategies.erpnext.items import emit_item_prices, emit_items
@@ -92,8 +93,7 @@ class ErpnextStrategy(TransformStrategy):
         emit_journals(ctx)
         emit_stock_opening(ctx)
         emit_employees(ctx)
-        # Domain modules wire in over the next slices:
-        #   audit
+        emit_audit(ctx)
         return result
 
     def _record_intake(self, ctx: Context) -> None:
