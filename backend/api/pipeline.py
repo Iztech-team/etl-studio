@@ -197,6 +197,7 @@ async def load(session_id: str, body: LoadRequest):
         else os.path.join(OUTPUT_DIR, session_id)
     )
     os.makedirs(out_dir, exist_ok=True)
+    _clean_output_dir(out_dir)
 
     excluded = _excluded_set(s)
     fk_edges: List[tuple] = [
@@ -224,6 +225,26 @@ async def load(session_id: str, body: LoadRequest):
         if audit_trail:
             _flush_audit_events(project_id, audit_trail, run["id"])
     return LoadResponse(**result)
+
+
+def _clean_output_dir(out_dir: str) -> None:
+    """Remove any files left from a previous load run.
+
+    Each /api/load call produces a fresh, self-contained set of files;
+    leaving stragglers from a prior format (json/csv/sql/frappe) would
+    leak into the download zip. We only remove files at the top level —
+    subdirs like `transform_partial/` live under `project_dir`, not
+    `outputs/`, so they are never touched here.
+    """
+    if not os.path.isdir(out_dir):
+        return
+    for entry in os.listdir(out_dir):
+        path = os.path.join(out_dir, entry)
+        if os.path.isfile(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
 
 def _run_frappe_writer(session: Dict[str, Any], out_dir: str) -> Dict[str, Any]:
