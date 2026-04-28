@@ -22,7 +22,7 @@ from core.strategies.erpnext.common import (
 class Config:
     company_name: str
     company_abbr: str
-    country: str = "Palestinian Territory"
+    country: str = "Palestinian Territory, Occupied"
     default_currency: str = DEFAULT_CURRENCY
     opening_date: str | None = None
     summarize_walkin_sales: bool = True
@@ -33,7 +33,7 @@ class Config:
         return cls(
             company_name=clean_str(raw.get("company_name")) or "Al Arabi",
             company_abbr=clean_str(raw.get("company_abbr")) or "ALA",
-            country=clean_str(raw.get("country")) or "Palestinian Territory",
+            country=clean_str(raw.get("country")) or "Palestinian Territory, Occupied",
             default_currency=clean_str(raw.get("default_currency")) or DEFAULT_CURRENCY,
             opening_date=clean_str(raw.get("opening_date")) or None,
             summarize_walkin_sales=bool(raw.get("summarize_walkin_sales", True)),
