@@ -7,6 +7,7 @@ from core.strategies.erpnext.invoices import emit_invoices
 from core.strategies.erpnext.items import emit_item_prices, emit_items
 from core.strategies.erpnext.masters import emit_masters
 from core.strategies.erpnext.parties import emit_parties
+from core.strategies.erpnext.payments import emit_payments
 
 
 class ErpnextStrategy(TransformStrategy):
@@ -84,8 +85,9 @@ class ErpnextStrategy(TransformStrategy):
         emit_parties(ctx)
         emit_accounts(ctx)
         emit_invoices(ctx)
+        emit_payments(ctx)
         # Domain modules wire in over the next slices:
-        #   payments → journals → stock → employees → audit
+        #   journals → stock → employees → audit
         return result
 
     def _record_intake(self, ctx: Context) -> None:
