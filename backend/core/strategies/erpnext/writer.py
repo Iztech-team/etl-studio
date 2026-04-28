@@ -32,8 +32,8 @@ DOCTYPE_PREFIX: dict[str, str] = {
     "Item Group": "04",
     "Brand": "05",
     "Bank": "06",
-    "Bank Account": "07",
     "Account": "10",
+    "Bank Account": "11",  # references Account; must follow Account (10)
     "Item": "20",
     "Item Price": "21",
     "Customer": "30",

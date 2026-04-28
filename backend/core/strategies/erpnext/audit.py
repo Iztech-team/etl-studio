@@ -219,11 +219,13 @@ Use Frappe Data Import (UI) for masters; `bench --site … import-csv
 04_item_group.csv                   → Item Group
 05_brand.csv                        → Brand
 06_bank.csv                         → Bank
-07_bank_account.csv                 → Bank Account
-10_account.csv                      → USE 'Chart of Accounts Importer'
-                                      (Accounts > Chart of Accounts Importer),
-                                      NOT regular Data Import — tree doctypes
-                                      need the dedicated importer.
+10_account.csv                      → Account (root_type/report_type
+                                      propagated to every row, so Frappe
+                                      Data Import can build the tree
+                                      without strict ordering.)
+11_bank_account.csv                 → Bank Account (references the GL
+                                      Account from 10_, hence imported
+                                      after.)
 20_item.csv (chunked)               → Item (with barcodes child)
 21_item_price.csv (chunked)         → Item Price
 30_customer.csv                     → Customer (incl. walk-in, orphans)
