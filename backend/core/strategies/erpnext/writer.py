@@ -35,19 +35,23 @@ CHUNK_SIZE = 5_000
 # Topological dependency order. Earlier-prefixed files must be imported
 # before later-prefixed ones so cross-doctype references resolve.
 DOCTYPE_PREFIX: dict[str, str] = {
-    "UOM": "01",  # custom UOMs only — v16 built-ins (Box, Kg, Litre, ...) skipped
+    # Independent masters (no link dependencies on other emitted doctypes)
+    "UOM": "01",          # custom UOMs only — v16 built-ins skipped
     "Warehouse": "02",
     "Price List": "03",
     "Item Group": "04",
     "Brand": "05",
     "Bank": "06",
+    # Tree doctypes (Account uses CoA Importer, not Data Import)
     "Account": "10",
-    "Bank Account": "11",  # references Account; must follow Account (10)
-    "Item": "20",
-    "Item Price": "21",
-    "Customer": "30",
-    "Supplier": "31",
-    "Employee": "40",
+    "Bank Account": "11", # depends on Account + Bank
+    # Parties (must precede Item — Item.supplier_items references Supplier)
+    "Customer": "20",
+    "Supplier": "21",
+    "Employee": "22",
+    # Items (depend on Supplier, Item Group, UOM, Warehouse, Price List)
+    "Item": "30",
+    "Item Price": "31",
     # 50 reserved for opening journal entries (split out at write time)
     "Stock Reconciliation": "51",
     # 60 reserved for non-return Sales Invoices

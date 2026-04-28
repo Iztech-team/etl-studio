@@ -231,11 +231,12 @@ Use Frappe Data Import (UI) for masters; `bench --site … import-csv
 11_bank_account.csv                 → Bank Account (references the GL
                                       Account from 10_, hence imported
                                       after.)
-20_item.csv (chunked)               → Item (with barcodes child)
-21_item_price.csv (chunked)         → Item Price
-30_customer.csv                     → Customer (incl. walk-in, orphans)
-31_supplier.csv                     → Supplier
-40_employee.csv                     → Employee
+20_customer.csv                     → Customer (incl. walk-in, orphans)
+21_supplier.csv                     → Supplier
+22_employee.csv                     → Employee
+30_item.csv (chunked)               → Item (with barcodes child;
+                                      depends on Supplier from 21_)
+31_item_price.csv (chunked)         → Item Price
 50_opening_journal.csv              → Journal Entry (is_opening=Yes)
 51_stock_reconciliation.csv         → Stock Reconciliation (Opening)
 60_sales_invoice_NN.csv (chunked)   → Sales Invoice (incl. returns)
