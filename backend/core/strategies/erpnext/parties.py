@@ -1,0 +1,210 @@
+"""Customer + Supplier + walk-in + orphan-from-invoices.
+
+CONTACTST is essentially empty in our data (0% emails / names, 7% mobile,
+3% office phone) so the Contact and Address doctypes aren't used. The few
+populated phones are denormalized straight onto Customer / Supplier.
+
+Walk-in customer absorbs the 130K+ anonymous invoices (ACCOUNTID=0).
+Orphan customers are ACCOUNTIDs that appear in CATESINVDOCT but in
+neither CUSTT nor SUPPLIERT — typically employee or representative
+accounts; we emit them as customers so their invoices have a valid party.
+"""
+from typing import Iterable
+
+from core.strategies.erpnext.common import (
+    WALKIN_CUSTOMER_ID,
+    clean_str,
+    customer_id,
+    group_by,
+    pick,
+    supplier_id,
+)
+from core.strategies.erpnext.context import Context
+from core.strategies.erpnext.masters import (
+    CUSTOMER_GROUP_NAME,
+    SUPPLIER_GROUP_NAME,
+    TERRITORY_NAME,
+    price_list_name,
+)
+
+WALKIN_DISPLAY_NAME = "زبون نقدي"
+
+CUSTOMER_TYPE_DEFAULT = "Company"
+SUPPLIER_TYPE_DEFAULT = "Company"
+
+
+def emit_parties(ctx: Context) -> None:
+    contacts = group_by(ctx.table("CONTACTST"), "ACCOUNTID")
+    emit_walkin_customer(ctx)
+    emit_customers(ctx, contacts)
+    emit_suppliers(ctx, contacts)
+    emit_orphan_customers(ctx, contacts)
+
+
+# -- Walk-in ------------------------------------------------------------------
+
+def emit_walkin_customer(ctx: Context) -> None:
+    ctx.result.emit("Customer", {
+        "name": WALKIN_CUSTOMER_ID,
+        "customer_name": WALKIN_DISPLAY_NAME,
+        "customer_type": CUSTOMER_TYPE_DEFAULT,
+        "customer_group": CUSTOMER_GROUP_NAME,
+        "territory": TERRITORY_NAME,
+        "default_currency": ctx.config.default_currency,
+        "disabled": 0,
+        "legacy_custid": "0",
+        "legacy_kind": "walkin",
+    })
+    ctx.result.bump("walkin_customers_emitted")
+
+
+# -- Customer (CUSTT) ---------------------------------------------------------
+
+def emit_customers(ctx: Context, contacts: dict[str, list[dict]]) -> None:
+    for row in ctx.table("CUSTT"):
+        _emit_customer(ctx, row, contacts)
+
+
+def _emit_customer(
+    ctx: Context,
+    row: dict,
+    contacts: dict[str, list[dict]],
+) -> None:
+    custid = clean_str(row.get("CUSTID"))
+    account_id = clean_str(row.get("ACCOUNT")) or custid
+    if not account_id:
+        ctx.result.bump("customers_skipped_no_account")
+        return
+    name = _account_name(ctx, account_id)
+    if not name:
+        ctx.result.warn("Customer", "missing ACCOUNTT.NAME", legacy_custid=custid)
+        return
+    phone = _phone_for(contacts.get(account_id, []))
+    ctx.result.emit("Customer", {
+        "name": customer_id(custid),
+        "customer_name": name,
+        "customer_type": CUSTOMER_TYPE_DEFAULT,
+        "customer_group": CUSTOMER_GROUP_NAME,
+        "territory": TERRITORY_NAME,
+        "default_currency": ctx.config.default_currency,
+        "default_price_list": price_list_name(ctx, row.get("PRICEID")),
+        "mobile_no": phone["mobile"],
+        "phone": phone["office"],
+        "disabled": 0,
+        "legacy_custid": custid,
+        "legacy_kind": "regular",
+    })
+    ctx.result.bump("customers_emitted")
+
+
+# -- Supplier (SUPPLIERT) -----------------------------------------------------
+
+def emit_suppliers(ctx: Context, contacts: dict[str, list[dict]]) -> None:
+    for row in ctx.table("SUPPLIERT"):
+        _emit_supplier(ctx, row, contacts)
+
+
+def _emit_supplier(
+    ctx: Context,
+    row: dict,
+    contacts: dict[str, list[dict]],
+) -> None:
+    suppid = clean_str(row.get("SUPPID"))
+    account_id = clean_str(row.get("ACCOUNT")) or suppid
+    if not account_id:
+        ctx.result.bump("suppliers_skipped_no_account")
+        return
+    name = _account_name(ctx, account_id)
+    if not name:
+        ctx.result.warn("Supplier", "missing ACCOUNTT.NAME", legacy_suppid=suppid)
+        return
+    phone = _phone_for(contacts.get(account_id, []))
+    ctx.result.emit("Supplier", {
+        "name": supplier_id(suppid),
+        "supplier_name": name,
+        "supplier_type": SUPPLIER_TYPE_DEFAULT,
+        "supplier_group": SUPPLIER_GROUP_NAME,
+        "country": ctx.config.country,
+        "default_currency": ctx.config.default_currency,
+        "mobile_no": phone["mobile"],
+        "phone": phone["office"],
+        "disabled": 0,
+        "legacy_suppid": suppid,
+    })
+    ctx.result.bump("suppliers_emitted")
+
+
+# -- Orphans (referenced by invoices, not in CUSTT/SUPPLIERT) -----------------
+
+def emit_orphan_customers(ctx: Context, contacts: dict[str, list[dict]]) -> None:
+    """Customers that appear in invoices but not in CUSTT/SUPPLIERT.
+
+    Typically employee accounts (CLASS=1) or representative accounts
+    (CLASS=9) that the legacy system happily accepts as invoice parties.
+    Emit them as customers to keep the invoices' party references valid.
+    """
+    for account_id in _orphan_invoice_account_ids(ctx):
+        _emit_orphan(ctx, account_id, contacts)
+
+
+def _emit_orphan(
+    ctx: Context,
+    account_id: str,
+    contacts: dict[str, list[dict]],
+) -> None:
+    name = _account_name(ctx, account_id)
+    if not name:
+        ctx.result.warn("Orphan", "no ACCOUNTT.NAME", account_id=account_id)
+        return
+    phone = _phone_for(contacts.get(account_id, []))
+    ctx.result.emit("Customer", {
+        "name": customer_id(account_id),
+        "customer_name": name,
+        "customer_type": CUSTOMER_TYPE_DEFAULT,
+        "customer_group": CUSTOMER_GROUP_NAME,
+        "territory": TERRITORY_NAME,
+        "default_currency": ctx.config.default_currency,
+        "mobile_no": phone["mobile"],
+        "phone": phone["office"],
+        "disabled": 0,
+        "legacy_custid": account_id,
+        "legacy_kind": "orphan",
+    })
+    ctx.result.bump("orphan_customers_emitted")
+
+
+def _orphan_invoice_account_ids(ctx: Context) -> list[str]:
+    customers = ctx.customer_account_ids
+    suppliers = ctx.supplier_account_ids
+    seen: set[str] = set()
+    for row in ctx.table("CATESINVDOCT"):
+        aid = clean_str(row.get("ACCOUNTID"))
+        if not aid or aid == "0":
+            continue
+        if aid in customers or aid in suppliers or aid in seen:
+            continue
+        seen.add(aid)
+    return sorted(seen)
+
+
+# -- Helpers ------------------------------------------------------------------
+
+def _account_name(ctx: Context, account_id: str) -> str:
+    row = ctx.accounts_by_id.get(account_id)
+    if not row:
+        return ""
+    return pick(row, "NAME", "NAMEE", "NAMEH")
+
+
+def _phone_for(contact_rows: Iterable[dict]) -> dict[str, str]:
+    """Pick the first non-empty MOBILE / OFFICEPHONE1 across contact rows."""
+    mobile = ""
+    office = ""
+    for r in contact_rows or []:
+        if not mobile:
+            mobile = clean_str(r.get("MOBILE")) or clean_str(r.get("MOBILE2"))
+        if not office:
+            office = clean_str(r.get("OFFICEPHONE1")) or clean_str(r.get("OFFICEPHONE2"))
+        if mobile and office:
+            break
+    return {"mobile": mobile, "office": office}
