@@ -23,6 +23,33 @@ from typing import Any, Iterable
 
 CHUNK_SIZE = 5_000
 
+
+# Child-table fieldname → child doctype label, looked up per parent
+# doctype. The Frappe Data Import format `<field> (<Child Doctype Label>)`
+# is the most reliable cross-doctype way to address child columns —
+# `(Child - <X>)` works for some child tables but not others (Item's
+# Barcode child gets rejected with that suffix in v16). Sticking with
+# the explicit child-doctype-label format avoids the inconsistency.
+CHILD_TABLE_LABEL: dict[tuple[str, str], str] = {
+    ("Item", "barcodes"): "Item Barcode",
+    ("Item", "uoms"): "UOM Conversion Detail",
+    ("Item", "supplier_items"): "Item Supplier",
+    ("Item", "item_defaults"): "Item Default",
+    ("Sales Invoice", "items"): "Sales Invoice Item",
+    ("Sales Invoice", "payments"): "Sales Invoice Payment",
+    ("Sales Invoice", "taxes"): "Sales Taxes and Charges",
+    ("Purchase Invoice", "items"): "Purchase Invoice Item",
+    ("Purchase Invoice", "taxes"): "Purchase Taxes and Charges",
+    ("Journal Entry", "accounts"): "Journal Entry Account",
+    ("Stock Reconciliation", "items"): "Stock Reconciliation Item",
+    ("Payment Entry", "references"): "Payment Entry Reference",
+}
+
+
+def _child_suffix(parent_doctype: str, child_field: str) -> str:
+    label = CHILD_TABLE_LABEL.get((parent_doctype, child_field))
+    return label or child_field
+
 # Topological dependency order. Earlier-prefixed files must be imported
 # before later-prefixed ones so cross-doctype references resolve.
 DOCTYPE_PREFIX: dict[str, str] = {
@@ -221,12 +248,12 @@ def _chunk(items: list[dict], size: int) -> Iterable[list[dict]]:
 
 def _write_csv(path: str, records: list[dict], doctype: str) -> None:
     parent_fields, child_tables = _collect_columns(records)
-    headers = _headers(parent_fields, child_tables)
+    headers = _headers(parent_fields, child_tables, doctype)
     with open(path, "w", encoding="utf-8", newline="") as fh:
         writer = csv.writer(fh)
         writer.writerow(headers)
         for record in records:
-            for row in _record_rows(record, parent_fields, child_tables):
+            for row in _record_rows(record, parent_fields, child_tables, doctype):
                 writer.writerow(_row_values(row, headers))
 
 
@@ -269,6 +296,7 @@ def _collect_child_columns(
 def _headers(
     parent_fields: list[str],
     child_tables: dict[str, list[str]],
+    parent_doctype: str,
 ) -> list[str]:
     out: list[str] = []
     if "name" in parent_fields:
@@ -278,7 +306,8 @@ def _headers(
         out.append("ID")
         out.extend(parent_fields)
     for child_field, columns in child_tables.items():
-        out.extend(f"{col} (Child - {child_field})" for col in columns)
+        suffix = _child_suffix(parent_doctype, child_field)
+        out.extend(f"{col} ({suffix})" for col in columns)
     return out
 
 
@@ -286,6 +315,7 @@ def _record_rows(
     record: dict,
     parent_fields: list[str],
     child_tables: dict[str, list[str]],
+    parent_doctype: str,
 ) -> Iterable[dict[str, Any]]:
     """Yield the CSV rows for a single parent record.
 
@@ -300,14 +330,14 @@ def _record_rows(
     for child_field, columns in child_tables.items():
         children = _child_rows(record.get(child_field))
         if children:
-            _fill_child_columns(first, child_field, columns, children[0])
+            _fill_child_columns(first, child_field, columns, children[0], parent_doctype)
     yield first
 
     for child_field, columns in child_tables.items():
         children = _child_rows(record.get(child_field))
         for child in children[1:]:
             row: dict[str, Any] = {}
-            _fill_child_columns(row, child_field, columns, child)
+            _fill_child_columns(row, child_field, columns, child, parent_doctype)
             yield row
 
 
@@ -322,9 +352,11 @@ def _fill_child_columns(
     child_field: str,
     columns: list[str],
     child: dict,
+    parent_doctype: str,
 ) -> None:
+    suffix = _child_suffix(parent_doctype, child_field)
     for col in columns:
-        row[f"{col} (Child - {child_field})"] = child.get(col, "")
+        row[f"{col} ({suffix})"] = child.get(col, "")
 
 
 def _row_values(row: dict, headers: list[str]) -> list[Any]:
