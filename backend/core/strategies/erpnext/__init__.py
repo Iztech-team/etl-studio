@@ -1,6 +1,7 @@
 from typing import Any
 
 from core.strategies.base import StrategyResult, TransformStrategy
+from core.strategies.erpnext.context import Context
 
 
 class ErpnextStrategy(TransformStrategy):
@@ -70,8 +71,18 @@ class ErpnextStrategy(TransformStrategy):
         config: dict[str, Any],
     ) -> StrategyResult:
         result = StrategyResult()
+        ctx = Context.build(tables, config, result)
+        self._record_intake(ctx)
         # Domain modules wire in over the next slices:
         #   masters → items → parties → accounts → invoices → payments
         #   → journals → stock → employees → audit
-        result.bump("legacy_tables_seen", len(tables))
         return result
+
+    def _record_intake(self, ctx: Context) -> None:
+        ctx.result.bump("legacy_tables_seen", len(ctx.legacy))
+        ctx.result.bump("legacy_accounts", len(ctx.accounts_by_id))
+        ctx.result.bump("legacy_units", len(ctx.units_by_id))
+        ctx.result.bump("legacy_currencies", len(ctx.currencies_by_id))
+        ctx.result.bump("legacy_stores", len(ctx.stores_by_id))
+        ctx.result.bump("legacy_customer_accounts", len(ctx.customer_account_ids))
+        ctx.result.bump("legacy_supplier_accounts", len(ctx.supplier_account_ids))
