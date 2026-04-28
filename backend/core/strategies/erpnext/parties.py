@@ -199,16 +199,23 @@ def _phone_for(contact_rows: list[dict]) -> dict[str, str]:
 
 
 def _orphan_invoice_account_ids(ctx: Context) -> list[str]:
+    """ACCOUNTIDs that appear as a sales-invoice or sales-return party
+    but aren't in CUSTT. We still emit them as Customer records so
+    Sales Invoice's `customer` link resolves — this includes accounts
+    that are ALSO in SUPPLIERT (some suppliers act as customers in
+    legacy data). Customer and Supplier are separate doctypes in v16,
+    so a 'CUST-621010' record alongside 'SUPP-621010' doesn't conflict.
+    """
     customers = ctx.customer_account_ids
-    suppliers = ctx.supplier_account_ids
     seen: set[str] = set()
-    for row in ctx.table("CATESINVDOCT"):
-        aid = clean_str(row.get("ACCOUNTID"))
-        if not aid or aid == "0":
-            continue
-        if aid in customers or aid in suppliers or aid in seen:
-            continue
-        seen.add(aid)
+    for source in ("CATESINVDOCT", "CATESRETINVDOCT"):
+        for row in ctx.table(source):
+            aid = clean_str(row.get("ACCOUNTID"))
+            if not aid or aid == "0":
+                continue
+            if aid in customers or aid in seen:
+                continue
+            seen.add(aid)
     return sorted(seen)
 
 

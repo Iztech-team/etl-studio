@@ -80,6 +80,45 @@ def emit_accounts(ctx: Context) -> None:
     root_for = _root_id_for_each(ctx)
     for row in rows:
         _emit_account(ctx, row, parent_ids, root_for)
+    _emit_party_leaf_accounts(ctx)
+
+
+def _emit_party_leaf_accounts(ctx: Context) -> None:
+    """Emit synthetic 'Debtors' and 'Creditors' leaf accounts.
+
+    ERPnext requires a Receivable-type account for Sales Invoice.debit_to
+    and a Payable-type account for Purchase Invoice.credit_to. Our CoA
+    emit filters out per-customer (CLASS=2) and per-supplier (CLASS=3)
+    leaf accounts because ERPnext tracks party balances by party_type +
+    party rather than per-customer GL accounts. That leaves us with no
+    Receivable / Payable leaves under الذمم / المطلوبات.
+
+    Adding these two synthetic accounts gives Sales Invoice / Purchase
+    Invoice a valid debit_to / credit_to target.
+    """
+    ctx.result.emit("Account", {
+        "name": ctx.with_abbr("Debtors"),
+        "account_name": "Debtors",
+        "company": ctx.config.company_name,
+        "parent_account": ctx.with_abbr("الذمم"),
+        "is_group": 0,
+        "account_currency": ctx.config.default_currency,
+        "root_type": "Asset",
+        "report_type": "Balance Sheet",
+        "account_type": "Receivable",
+    })
+    ctx.result.emit("Account", {
+        "name": ctx.with_abbr("Creditors"),
+        "account_name": "Creditors",
+        "company": ctx.config.company_name,
+        "parent_account": ctx.with_abbr("المطلوبات"),
+        "is_group": 0,
+        "account_currency": ctx.config.default_currency,
+        "root_type": "Liability",
+        "report_type": "Balance Sheet",
+        "account_type": "Payable",
+    })
+    ctx.result.bump("party_leaf_accounts_emitted", 2)
 
 
 def _root_id_for_each(ctx: Context) -> dict[str, str]:
