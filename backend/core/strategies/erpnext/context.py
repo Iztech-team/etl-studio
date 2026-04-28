@@ -26,6 +26,7 @@ class Config:
     default_currency: str = DEFAULT_CURRENCY
     opening_date: str | None = None
     summarize_walkin_sales: bool = True
+    include_legacy_fields: bool = True
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "Config":
@@ -36,6 +37,7 @@ class Config:
             default_currency=clean_str(raw.get("default_currency")) or DEFAULT_CURRENCY,
             opening_date=clean_str(raw.get("opening_date")) or None,
             summarize_walkin_sales=bool(raw.get("summarize_walkin_sales", True)),
+            include_legacy_fields=bool(raw.get("include_legacy_fields", True)),
         )
 
 

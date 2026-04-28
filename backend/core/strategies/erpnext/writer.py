@@ -73,21 +73,48 @@ def write_frappe_csvs(
     output_dir: str,
     audit_report: dict | None = None,
     checklist_md: str | None = None,
+    include_legacy_fields: bool = True,
 ) -> list[str]:
     """Write all doctype CSVs in dependency order.
 
-    Returns the list of filenames produced (relative to output_dir),
-    so the caller can hand the user a manifest to download.
+    `include_legacy_fields=False` strips every `legacy_*` parent and child
+    column from the output so the admin doesn't have to register custom
+    fields in ERPnext before importing. The trade-off is loss of
+    traceback (e.g. mapping a Customer back to its legacy CUSTID).
+
+    Returns the list of filenames produced (relative to output_dir).
     """
     os.makedirs(output_dir, exist_ok=True)
     written: list[str] = []
     for doctype, records in output_tables.items():
         if doctype.startswith("__") or not records:
             continue
-        written.extend(_write_one_doctype(doctype, records, output_dir))
+        cleaned = _strip_legacy(records) if not include_legacy_fields else records
+        written.extend(_write_one_doctype(doctype, cleaned, output_dir))
     written.extend(_write_audit_artifacts(output_dir, audit_report, checklist_md))
     written.sort()
     return written
+
+
+def _strip_legacy(records: list[dict]) -> list[dict]:
+    """Remove `legacy_*` keys from each record (and its child rows).
+
+    Mutation-free: returns new dicts so the in-memory strategy result
+    stays intact for the audit report and re-runs.
+    """
+    return [_strip_one(r) for r in records]
+
+
+def _strip_one(record: dict) -> dict:
+    out: dict = {}
+    for key, value in record.items():
+        if isinstance(key, str) and key.startswith("legacy_"):
+            continue
+        if isinstance(value, list):
+            out[key] = [_strip_one(c) if isinstance(c, dict) else c for c in value]
+        else:
+            out[key] = value
+    return out
 
 
 # -- per-doctype dispatch -----------------------------------------------------

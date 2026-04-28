@@ -12,13 +12,13 @@ Critical preservation requirements (per planning doc):
 from typing import Iterable
 
 from core.strategies.erpnext.common import (
-    DEFAULT_UOM,
     clean_str,
     currency_iso,
     group_by,
     index_by,
     is_truthy,
     item_id,
+    normalize_uom,
     parse_date,
     parse_decimal,
     pick,
@@ -98,7 +98,7 @@ def _is_active(row: dict) -> bool:
 
 
 def _stock_uom(row: dict) -> str:
-    return clean_str(row.get("UNIT")) or DEFAULT_UOM
+    return normalize_uom(row.get("UNIT"))
 
 
 def _build_description(
@@ -173,7 +173,7 @@ def _uom_conversions(row: dict) -> list[dict]:
     rows: list[dict] = []
     stock = _stock_uom(row)
     rows.append({"uom": stock, "conversion_factor": 1.0})
-    wholesale = clean_str(row.get("WMUNIT"))
+    wholesale = normalize_uom(row.get("WMUNIT"))
     factor = parse_decimal(row.get("WMUNITQTY"), default=1.0)
     if wholesale and wholesale != stock and factor > 0:
         rows.append({"uom": wholesale, "conversion_factor": factor})

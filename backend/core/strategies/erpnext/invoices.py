@@ -12,11 +12,11 @@ from typing import Iterable
 
 from core.strategies.erpnext.accounts import account_full_name
 from core.strategies.erpnext.common import (
-    DEFAULT_UOM,
     WALKIN_CUSTOMER_ID,
     clean_str,
     customer_id,
     group_by,
+    normalize_uom,
     parse_date,
     parse_decimal,
     parse_time,
@@ -195,7 +195,7 @@ def _accumulate_line(bucket: dict, ctx: Context, line: dict) -> None:
     catid = clean_str(line.get("CATID"))
     if not catid:
         return
-    uom = clean_str(line.get("CATUNIT")) or DEFAULT_UOM
+    uom = normalize_uom(line.get("CATUNIT"))
     qty = parse_decimal(line.get("CATQTY"))
     rate = parse_decimal(line.get("CATPRICEWOV"))
     key = (catid, uom)
@@ -314,7 +314,7 @@ def _sales_item_row(ctx: Context, line: dict) -> dict | None:
         "item_code": f"ALA-{catid}",
         "qty": qty,
         "rate": parse_decimal(line.get("CATPRICEWOV")),
-        "uom": clean_str(line.get("CATUNIT")) or DEFAULT_UOM,
+        "uom": normalize_uom(line.get("CATUNIT")),
         "warehouse": _warehouse_for_line(ctx, line),
         "income_account": account_full_name(ctx, line.get("SALEACCID")),
         "discount_amount": parse_decimal(line.get("CATDISCOUNT")),
@@ -393,7 +393,7 @@ def _purchase_items(ctx: Context, line_rows: Iterable[dict]) -> list[dict]:
             "item_code": f"ALA-{catid}",
             "qty": qty,
             "rate": parse_decimal(line.get("CATPRICEWOV")),
-            "uom": clean_str(line.get("CATUNIT")) or DEFAULT_UOM,
+            "uom": normalize_uom(line.get("CATUNIT")),
             "warehouse": _warehouse_for_line(ctx, line),
             "expense_account": account_full_name(ctx, line.get("PURCHACCID")),
         })
@@ -457,7 +457,7 @@ def _return_sales_items(ctx: Context, line_rows: Iterable[dict]) -> list[dict]:
             "item_code": f"ALA-{catid}",
             "qty": qty,
             "rate": parse_decimal(line.get("CATPRICEWOV")),
-            "uom": clean_str(line.get("CATUNIT")) or DEFAULT_UOM,
+            "uom": normalize_uom(line.get("CATUNIT")),
             "warehouse": _warehouse_for_line(ctx, line),
             "income_account": account_full_name(ctx, line.get("SALERETACCID")),
         })
@@ -519,7 +519,7 @@ def _return_purchase_items(ctx: Context, line_rows: Iterable[dict]) -> list[dict
             "item_code": f"ALA-{catid}",
             "qty": qty,
             "rate": parse_decimal(line.get("CATPRICEWOV")),
-            "uom": clean_str(line.get("CATUNIT")) or DEFAULT_UOM,
+            "uom": normalize_uom(line.get("CATUNIT")),
             "warehouse": _warehouse_for_line(ctx, line),
             "expense_account": account_full_name(ctx, line.get("PURCHRETACCID")),
         })

@@ -253,16 +253,20 @@ def _run_frappe_writer(session: Dict[str, Any], out_dir: str) -> Dict[str, Any]:
     Reads the strategy's output_tables (already shaped per ERPnext doctype
     with nested children) plus the audit report + checklist artifacts the
     strategy emitted, and produces dependency-ordered, chunked CSV files
-    that ERPnext's Data Import UI can consume directly.
+    that ERPnext's Data Import UI can consume directly. Honors the
+    session's strategy_config.include_legacy_fields toggle.
     """
     transformed = session.get("transformed") or {}
     tables = transformed.get("tables") or {}
     audit_report = transformed.get("audit_report")
     checklist_md = transformed.get("setup_checklist_md")
+    config = session.get("strategy_config") or {}
+    include_legacy = bool(config.get("include_legacy_fields", True))
     files = write_frappe_csvs(
         tables, out_dir,
         audit_report=audit_report,
         checklist_md=checklist_md,
+        include_legacy_fields=include_legacy,
     )
     rows_written = {dt: len(rows) for dt, rows in tables.items()
                     if not dt.startswith("__") and rows}

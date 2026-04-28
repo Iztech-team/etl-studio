@@ -7,7 +7,9 @@ helper handles one doctype, no cross-talk.
 """
 from core.strategies.erpnext.common import (
     DEFAULT_UOM,
+    ERPNEXT_BUILTIN_UOMS,
     clean_str,
+    normalize_uom,
     pick,
 )
 from core.strategies.erpnext.context import Context
@@ -47,24 +49,38 @@ def emit_masters(ctx: Context) -> None:
 # -- UOM ----------------------------------------------------------------------
 
 def emit_uoms(ctx: Context) -> None:
-    """Emit one UOM per distinct legacy unit string.
+    """Emit one UOM per distinct legacy unit string, canonicalized.
 
-    Sources (in order): UNITT (canonical), CATEGORYT.UNIT/DEFAULTUNIT/WMUNIT
-    (free-text per item). Fallback "وحدة" is always emitted so items with
-    empty UNIT columns can resolve.
+    Each legacy unit (Arabic free-text or UNITT.UNITNAME / UNITNAMEE) is
+    funneled through `normalize_uom`. Names that already exist as ERPnext
+    built-ins (Box, Kg, Litre, Meter, Unit, …) are NOT re-emitted, so we
+    don't duplicate the Frappe defaults with Arabic shadows.
     """
     seen: set[str] = set()
+    skipped_builtin: set[str] = set()
     for row in ctx.table("UNITT"):
-        _emit_uom(ctx, pick(row, "UNITNAME", "UNITNAMEE"), seen)
+        for field in ("UNITNAME", "UNITNAMEE"):
+            _emit_uom(ctx, clean_str(row.get(field)), seen, skipped_builtin)
     for row in ctx.table("CATEGORYT"):
-        for field_name in ("UNIT", "DEFAULTUNIT", "WMUNIT"):
-            _emit_uom(ctx, clean_str(row.get(field_name)), seen)
-    _emit_uom(ctx, DEFAULT_UOM, seen)
+        for field in ("UNIT", "DEFAULTUNIT", "WMUNIT"):
+            _emit_uom(ctx, clean_str(row.get(field)), seen, skipped_builtin)
     ctx.result.bump("uoms_emitted", len(seen))
+    ctx.result.bump("uoms_skipped_builtin", len(skipped_builtin))
 
 
-def _emit_uom(ctx: Context, name: str, seen: set[str]) -> None:
-    if not name or name in seen:
+def _emit_uom(
+    ctx: Context,
+    raw: str,
+    seen: set[str],
+    skipped_builtin: set[str],
+) -> None:
+    name = normalize_uom(raw)
+    if not name:
+        return
+    if name in ERPNEXT_BUILTIN_UOMS:
+        skipped_builtin.add(name)
+        return
+    if name in seen:
         return
     seen.add(name)
     ctx.result.emit("UOM", {"name": name, "uom_name": name, "enabled": 1})

@@ -70,6 +70,16 @@ class ErpnextStrategy(TransformStrategy):
             "label": "Summarize walk-in sales",
             "help": "One Sales Invoice per (date × terminal) for anonymous sales.",
         },
+        "include_legacy_fields": {
+            "type": "boolean",
+            "default": True,
+            "label": "Include legacy_* fields",
+            "help": (
+                "Adds legacy_custid, cheque_owner_name, etc. as custom fields. "
+                "Required if you want post-migration traceback. Disable to skip "
+                "the Customize Form setup step."
+            ),
+        },
     }
 
     def transform(
