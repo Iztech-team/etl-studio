@@ -85,6 +85,9 @@ def _emit_customer(
         ctx.result.warn("Customer", "missing ACCOUNTT.NAME", legacy_custid=custid)
         return
     phone = _phone_for(contacts.get(account_id, []))
+    # v16 Customer has only `mobile_no` (Read Only, auto-populated from
+    # linked Contact). No `phone` field — the template column is a
+    # generator artifact but doesn't map. Office phone is dropped.
     ctx.result.emit("Customer", {
         "name": customer_id(custid),
         "customer_name": name,
@@ -93,8 +96,7 @@ def _emit_customer(
         "territory": TERRITORY_NAME,
         "default_currency": ctx.config.default_currency,
         "default_price_list": price_list_name(ctx, row.get("PRICEID")),
-        "mobile_no": phone["mobile"],
-        "phone": phone["office"],
+        "mobile_no": phone["mobile"] or phone["office"],
         "disabled": 0,
         "legacy_custid": custid,
         "legacy_kind": "regular",
@@ -124,6 +126,7 @@ def _emit_supplier(
         ctx.result.warn("Supplier", "missing ACCOUNTT.NAME", legacy_suppid=suppid)
         return
     phone = _phone_for(contacts.get(account_id, []))
+    # v16 Supplier mirrors Customer — only mobile_no exists, no phone.
     ctx.result.emit("Supplier", {
         "name": supplier_id(suppid),
         "supplier_name": name,
@@ -131,8 +134,7 @@ def _emit_supplier(
         "supplier_group": SUPPLIER_GROUP_NAME,
         "country": ctx.config.country,
         "default_currency": ctx.config.default_currency,
-        "mobile_no": phone["mobile"],
-        "phone": phone["office"],
+        "mobile_no": phone["mobile"] or phone["office"],
         "disabled": 0,
         "legacy_suppid": suppid,
     })
@@ -169,8 +171,7 @@ def _emit_orphan(
         "customer_group": CUSTOMER_GROUP_NAME,
         "territory": TERRITORY_NAME,
         "default_currency": ctx.config.default_currency,
-        "mobile_no": phone["mobile"],
-        "phone": phone["office"],
+        "mobile_no": phone["mobile"] or phone["office"],
         "disabled": 0,
         "legacy_custid": account_id,
         "legacy_kind": "orphan",
