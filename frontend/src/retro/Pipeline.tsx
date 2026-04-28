@@ -2836,7 +2836,11 @@ export function RlPipeline({
 		onBack: onBack,
 		onTab: (dir) => {
 			const i = RL_STAGES.findIndex((s) => s.id === stage);
-			const target = Math.max(0, Math.min(RL_STAGES.length - 1, i + dir));
+			if (i < 0) return;
+			// Wrap around: Tab on the last stage cycles to the first; Shift+Tab
+			// on the first cycles to the last.
+			const len = RL_STAGES.length;
+			const target = (i + dir + len) % len;
 			if (target !== i) setStage(RL_STAGES[target].id);
 		},
 		onStageNumber: (n) => {
