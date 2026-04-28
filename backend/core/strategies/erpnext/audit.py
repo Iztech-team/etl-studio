@@ -219,10 +219,15 @@ Use Frappe Data Import (UI) for masters; `bench --site … import-csv
 04_item_group.csv                   → Item Group
 05_brand.csv                        → Brand
 06_bank.csv                         → Bank
-10_account.csv                      → Account (root_type/report_type
-                                      propagated to every row, so Frappe
-                                      Data Import can build the tree
-                                      without strict ordering.)
+10_account.csv                      → USE 'Chart of Accounts Importer'
+                                      (Accounting → Chart of Accounts
+                                      Importer), NOT regular Data Import.
+                                      Tree doctype validation fails on
+                                      Data Import because parent_account
+                                      links are checked against the DB
+                                      up-front; the dedicated importer
+                                      handles the hierarchy in one pass.
+                                      File is the 8-column CoA template.
 11_bank_account.csv                 → Bank Account (references the GL
                                       Account from 10_, hence imported
                                       after.)

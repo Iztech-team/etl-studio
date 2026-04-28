@@ -124,11 +124,59 @@ def _write_one_doctype(
     records: list[dict],
     output_dir: str,
 ) -> list[str]:
+    if doctype == "Account":
+        return _write_coa_importer_csv(records, output_dir)
     if doctype in SPLITS:
         return _write_split_streams(doctype, records, output_dir)
     prefix = DOCTYPE_PREFIX.get(doctype, "90")
     base = _slug(doctype)
     return _write_chunks(records, output_dir, prefix, base, doctype)
+
+
+# -- Account: Chart of Accounts Importer template -----------------------------
+# Tree doctypes can't be imported via regular Data Import — Frappe validates
+# every parent_account link against the DB up-front, so on pass 1 nothing
+# exists yet and every reference fails. ERPnext ships a dedicated tool for
+# CoA hierarchies (Accounting → Chart of Accounts Importer) which processes
+# rows top-down and resolves the tree in one pass.
+#
+# That tool expects a fixed 8-column template with short names (no abbr
+# suffix) — Parent Account references the parent's short name; Frappe
+# applies the abbr automatically when it creates each Frappe record.
+
+COA_HEADERS = [
+    "Account Name", "Parent Account", "Account Number",
+    "Parent Account Number", "Is Group", "Account Type",
+    "Root Type", "Account Currency",
+]
+
+
+def _write_coa_importer_csv(records: list[dict], output_dir: str) -> list[str]:
+    path = os.path.join(output_dir, "10_account.csv")
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh, quoting=csv.QUOTE_ALL)
+        writer.writerow(COA_HEADERS)
+        for r in records:
+            writer.writerow([
+                r.get("account_name", ""),
+                _coa_parent_short_name(r),
+                "",  # Account Number — legacy doesn't carry this
+                "",  # Parent Account Number — same
+                1 if r.get("is_group") else 0,
+                r.get("account_type", "") or "",
+                r.get("root_type", "") or "",
+                r.get("account_currency", "") or "",
+            ])
+    return [os.path.basename(path)]
+
+
+def _coa_parent_short_name(record: dict) -> str:
+    """Account.parent_account in our records is the autonamed form
+    'X - {abbr}'; the CoA Importer wants the short name 'X'."""
+    parent = record.get("parent_account") or ""
+    if " - " in parent:
+        return parent.rsplit(" - ", 1)[0]
+    return parent
 
 
 def _write_split_streams(
