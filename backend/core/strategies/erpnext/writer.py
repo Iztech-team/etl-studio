@@ -24,31 +24,13 @@ from typing import Any, Iterable
 CHUNK_SIZE = 5_000
 
 
-# Child-table fieldname → child doctype label, looked up per parent
-# doctype. The Frappe Data Import format `<field> (<Child Doctype Label>)`
-# is the most reliable cross-doctype way to address child columns —
-# `(Child - <X>)` works for some child tables but not others (Item's
-# Barcode child gets rejected with that suffix in v16). Sticking with
-# the explicit child-doctype-label format avoids the inconsistency.
-CHILD_TABLE_LABEL: dict[tuple[str, str], str] = {
-    ("Item", "barcodes"): "Item Barcode",
-    ("Item", "uoms"): "UOM Conversion Detail",
-    ("Item", "supplier_items"): "Item Supplier",
-    ("Item", "item_defaults"): "Item Default",
-    ("Sales Invoice", "items"): "Sales Invoice Item",
-    ("Sales Invoice", "payments"): "Sales Invoice Payment",
-    ("Sales Invoice", "taxes"): "Sales Taxes and Charges",
-    ("Purchase Invoice", "items"): "Purchase Invoice Item",
-    ("Purchase Invoice", "taxes"): "Purchase Taxes and Charges",
-    ("Journal Entry", "accounts"): "Journal Entry Account",
-    ("Stock Reconciliation", "items"): "Stock Reconciliation Item",
-    ("Payment Entry", "references"): "Payment Entry Reference",
-}
-
-
-def _child_suffix(parent_doctype: str, child_field: str) -> str:
-    label = CHILD_TABLE_LABEL.get((parent_doctype, child_field))
-    return label or child_field
+# Frappe Data Import accepts two formats for child columns:
+#   1. `<table_fieldname>.<child_field_fieldname>`  (e.g. `barcodes.barcode`)
+#   2. `<child_field_label> (<table_field_label>)`  (e.g. `Barcode (Barcodes)`)
+# Verified against frappe/frappe v16 importer.py
+# (build_fields_dict_for_column_matching). We use format 1 — unambiguous,
+# no label lookup required, and matches whatever the parent's actual
+# child-table fieldname is on this v16 install.
 
 # Topological dependency order. Earlier-prefixed files must be imported
 # before later-prefixed ones so cross-doctype references resolve.
@@ -306,8 +288,7 @@ def _headers(
         out.append("ID")
         out.extend(parent_fields)
     for child_field, columns in child_tables.items():
-        suffix = _child_suffix(parent_doctype, child_field)
-        out.extend(f"{col} ({suffix})" for col in columns)
+        out.extend(f"{child_field}.{col}" for col in columns)
     return out
 
 
@@ -354,9 +335,8 @@ def _fill_child_columns(
     child: dict,
     parent_doctype: str,
 ) -> None:
-    suffix = _child_suffix(parent_doctype, child_field)
     for col in columns:
-        row[f"{col} ({suffix})"] = child.get(col, "")
+        row[f"{child_field}.{col}"] = child.get(col, "")
 
 
 def _row_values(row: dict, headers: list[str]) -> list[Any]:
