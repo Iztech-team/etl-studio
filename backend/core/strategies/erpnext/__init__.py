@@ -8,6 +8,7 @@ from core.strategies.erpnext.items import emit_item_prices, emit_items
 from core.strategies.erpnext.journals import emit_journals
 from core.strategies.erpnext.masters import emit_masters
 from core.strategies.erpnext.parties import emit_parties
+from core.strategies.erpnext.employees import emit_employees
 from core.strategies.erpnext.payments import emit_payments
 from core.strategies.erpnext.stock_moves import emit_stock_opening
 
@@ -90,8 +91,9 @@ class ErpnextStrategy(TransformStrategy):
         emit_payments(ctx)
         emit_journals(ctx)
         emit_stock_opening(ctx)
+        emit_employees(ctx)
         # Domain modules wire in over the next slices:
-        #   employees → audit
+        #   audit
         return result
 
     def _record_intake(self, ctx: Context) -> None:
