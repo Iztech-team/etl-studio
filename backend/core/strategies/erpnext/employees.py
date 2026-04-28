@@ -35,6 +35,7 @@ def _emit_employee(ctx: Context, row: dict) -> None:
         ctx.result.warn("Employee", "missing ACCOUNTT.NAME", legacy_empid=empid)
         return
     is_working = is_truthy(row.get("ISWORKING"))
+    join_date = _join_date(ctx, row)
     payload = {
         "name": employee_id(empid),
         "employee_number": empid,
@@ -43,8 +44,8 @@ def _emit_employee(ctx: Context, row: dict) -> None:
         "company": ctx.config.company_name,
         "gender": _gender(row),
         "date_of_birth": parse_date(row.get("BIRTH")) or DEFAULT_DOB,
-        "date_of_joining": _join_date(ctx, row),
-        "relieving_date": _relieving_date(row, is_working),
+        "date_of_joining": join_date,
+        "relieving_date": _relieving_date(row, is_working, join_date, ctx),
         "status": "Active" if is_working else "Left",
         "salary_currency": ctx.config.default_currency,
         "ctc": parse_decimal(row.get("SALARY")),
@@ -80,7 +81,21 @@ def _join_date(ctx: Context, row: dict) -> str:
     )
 
 
-def _relieving_date(row: dict, is_working: bool) -> str:
+def _relieving_date(
+    row: dict,
+    is_working: bool,
+    join_date: str,
+    ctx: Context,
+) -> str:
+    """v16 requires a relieving_date whenever status is 'Left'. Use the
+    legacy EMPENDDATE if it's a real date, otherwise fall back to the
+    opening date so the field is populated and import succeeds — admin
+    can correct individual records post-migration if needed.
+    """
     if is_working:
         return ""
-    return parse_date(row.get("EMPENDDATE")) or ""
+    return (
+        parse_date(row.get("EMPENDDATE"))
+        or ctx.config.opening_date
+        or join_date
+    )
