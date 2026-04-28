@@ -106,6 +106,118 @@ export function useKeyboardGrid({
 	return { focused, setFocused, getItemProps };
 }
 
+type LayoutItem = { id: string; onActivate?: () => void };
+type LayoutRow = LayoutItem[];
+type LayoutOptions = {
+	enabled?: boolean;
+	// Initial focus position {row, col}. Defaults to {0, 0}.
+	initial?: { row: number; col: number };
+};
+
+/**
+ * Keyboard navigation across a non-uniform grid where rows may have
+ * different column counts (e.g. one CTA, then a row of filter chips,
+ * then a 3-col card grid). Arrow up/down jump between rows preserving
+ * column index (clamped to the new row's width); arrow left/right move
+ * within a row and roll over into the prev/next row at the boundaries.
+ */
+export function useKeyboardLayout(rows: LayoutRow[], opts: LayoutOptions = {}) {
+	const { enabled = true, initial = { row: 0, col: 0 } } = opts;
+	const [pos, setPos] = useState(initial);
+
+	// Clamp position when the layout shape changes.
+	useEffect(() => {
+		if (rows.length === 0) return;
+		const r = Math.min(Math.max(0, pos.row), rows.length - 1);
+		const rowLen = rows[r]?.length ?? 0;
+		if (rowLen === 0) return;
+		const c = Math.min(Math.max(0, pos.col), rowLen - 1);
+		if (r !== pos.row || c !== pos.col) setPos({ row: r, col: c });
+	}, [rows, pos.row, pos.col]);
+
+	useEffect(() => {
+		if (!enabled || rows.length === 0) return;
+		const onKey = (e: KeyboardEvent) => {
+			if (isTypingTarget(e.target)) return;
+			let { row, col } = pos;
+			const rowLen = (r: number) => rows[r]?.length ?? 0;
+
+			switch (e.key) {
+				case "ArrowLeft":
+				case "h":
+					if (col > 0) {
+						col -= 1;
+					} else if (row > 0) {
+						row -= 1;
+						col = Math.max(0, rowLen(row) - 1);
+					} else return;
+					break;
+				case "ArrowRight":
+				case "l":
+					if (col < rowLen(row) - 1) {
+						col += 1;
+					} else if (row < rows.length - 1) {
+						row += 1;
+						col = 0;
+					} else return;
+					break;
+				case "ArrowUp":
+				case "k":
+					if (row > 0) {
+						row -= 1;
+						col = Math.min(col, Math.max(0, rowLen(row) - 1));
+					} else return;
+					break;
+				case "ArrowDown":
+				case "j":
+					if (row < rows.length - 1) {
+						row += 1;
+						col = Math.min(col, Math.max(0, rowLen(row) - 1));
+					} else return;
+					break;
+				case "Enter":
+				case " ": {
+					const t = e.target as HTMLElement | null;
+					if (t && (t.tagName === "BUTTON" || t.tagName === "A")) return;
+					const item = rows[row]?.[col];
+					if (item?.onActivate) {
+						e.preventDefault();
+						item.onActivate();
+					}
+					return;
+				}
+				default:
+					return;
+			}
+			e.preventDefault();
+			setPos({ row, col });
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [enabled, rows, pos]);
+
+	const focusedId = rows[pos.row]?.[pos.col]?.id ?? null;
+	const getItemProps = useCallback(
+		(id: string) => {
+			// Find this item's coords so the hook can re-sync on hover.
+			let r = -1;
+			let c = -1;
+			for (let i = 0; i < rows.length && r < 0; i++) {
+				for (let j = 0; j < rows[i].length; j++) {
+					if (rows[i][j].id === id) { r = i; c = j; break; }
+				}
+			}
+			return {
+				className: focusedId === id ? "kb-focus" : "",
+				onMouseEnter: r >= 0 ? () => setPos({ row: r, col: c }) : undefined,
+			};
+		},
+		[focusedId, rows],
+	);
+
+	return { focusedId, setPos, getItemProps };
+}
+
 type GlobalKeysOptions = {
 	enabled?: boolean;
 	// ESC handler — closes modals, navigates back, etc.

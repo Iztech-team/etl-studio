@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { RL_STAGES, phaseEarnedXp, type Project } from "./data";
 import { useAuth } from "./Auth";
 import { IArrow, ICheck, IDisk, IDot, IDownload, IPlus, IStar, IX } from "./icons";
-import { useKeyboardGrid } from "./keyboard";
+import { useKeyboardLayout } from "./keyboard";
 import { RlPromptModal } from "./PromptModal";
 import { RlTopbar } from "./Topbar";
 import { XPBar } from "./XPBar";
@@ -121,11 +121,30 @@ export function RlProjects({
 	};
 
 	const filtered = filter === "all" ? projects : projects.filter((p) => projectStatus(p) === filter);
-	const grid = useKeyboardGrid({
-		count: filtered.length,
-		columns: 3,
-		onActivate: (i) => filtered[i] && onOpen(filtered[i]),
+
+	// Build the keyboard layout for the page:
+	//   row 0: [START_NEW_DUNGEON CTA]
+	//   row 1: [filter_all, filter_running, filter_done, filter_draft]
+	//   row 2..n: dungeon cards (3 per row)
+	const FILTERS: Filter[] = ["all", "running", "done", "draft"];
+	const layoutRows = useMemo(() => {
+		const rows: { id: string; onActivate?: () => void }[][] = [];
+		rows.push([{ id: "cta:new", onActivate: onNew }]);
+		rows.push(FILTERS.map((f) => ({ id: `filter:${f}`, onActivate: () => setFilter(f) })));
+		for (let i = 0; i < filtered.length; i += 3) {
+			rows.push(
+				filtered.slice(i, i + 3).map((p) => ({
+					id: `card:${p.id}`,
+					onActivate: () => onOpen(p),
+				})),
+			);
+		}
+		return rows;
+	}, [filtered, onNew, onOpen]);
+	const layout = useKeyboardLayout(layoutRows, {
 		enabled: !renameTarget && !deleteTarget,
+		// Land on the first dungeon card if there are any, else on the CTA.
+		initial: filtered.length > 0 ? { row: 2, col: 0 } : { row: 0, col: 0 },
 	});
 	const running = projects.filter((p) => projectStatus(p) === "running").length;
 	const done = projects.filter((p) => projectStatus(p) === "done").length;
@@ -176,24 +195,33 @@ export function RlProjects({
 					</div>
 					<div className="rl-stat-sub">AVG SCORE</div>
 				</div>
-				<div className="panel rl-stat rl-stat-cta" onClick={onNew}>
-					<div className="rl-stat-label pixel">NEW</div>
-					<div
-						style={{
-							fontFamily: "var(--lg-pixel-tall)",
-							fontSize: 28,
-							lineHeight: 1.1,
-							marginTop: 4,
-						}}
-					>
-						START A NEW
-						<br />
-						DUNGEON
-					</div>
-					<div style={{ marginTop: 10 }}>
-						<IPlus size={14} />
-					</div>
-				</div>
+				{(() => {
+					const k = layout.getItemProps("cta:new");
+					return (
+						<div
+							className={`panel rl-stat rl-stat-cta ${k.className}`}
+							onClick={onNew}
+							onMouseEnter={k.onMouseEnter}
+						>
+							<div className="rl-stat-label pixel">NEW</div>
+							<div
+								style={{
+									fontFamily: "var(--lg-pixel-tall)",
+									fontSize: 28,
+									lineHeight: 1.1,
+									marginTop: 4,
+								}}
+							>
+								START A NEW
+								<br />
+								DUNGEON
+							</div>
+							<div style={{ marginTop: 10 }}>
+								<IPlus size={14} />
+							</div>
+						</div>
+					);
+				})()}
 			</div>
 
 			<div className="rl-section-head">
@@ -201,16 +229,20 @@ export function RlProjects({
 					★ ACTIVE DUNGEONS ★
 				</div>
 				<div className="rl-filters">
-					{(["all", "running", "done", "draft"] as Filter[]).map((f) => (
-						<button
-							key={f}
-							className={`btn ${filter === f ? "btn-primary" : "btn-ghost"}`}
-							style={{ padding: "4px 10px", fontSize: 9 }}
-							onClick={() => setFilter(f)}
-						>
-							{f.toUpperCase()}
-						</button>
-					))}
+					{FILTERS.map((f) => {
+						const k = layout.getItemProps(`filter:${f}`);
+						return (
+							<button
+								key={f}
+								className={`btn ${filter === f ? "btn-primary" : "btn-ghost"} ${k.className}`}
+								style={{ padding: "4px 10px", fontSize: 9 }}
+								onClick={() => setFilter(f)}
+								onMouseEnter={k.onMouseEnter}
+							>
+								{f.toUpperCase()}
+							</button>
+						);
+					})}
 				</div>
 			</div>
 
@@ -232,14 +264,14 @@ export function RlProjects({
 				</div>
 			) : (
 				<div className="rl-proj-grid">
-					{filtered.map((p, i) => (
+					{filtered.map((p) => (
 						<RlProjectCard
 							key={p.id}
 							p={p}
 							onOpen={onOpen}
 							onRename={(e, id) => { e.stopPropagation(); setRenameTarget(id); }}
 							onDelete={(e, id) => { e.stopPropagation(); setDeleteTarget(id); }}
-							kbProps={grid.getItemProps(i)}
+							kbProps={layout.getItemProps(`card:${p.id}`)}
 						/>
 					))}
 				</div>
@@ -287,7 +319,7 @@ function RlProjectCard({
 	onOpen: (p: Project) => void;
 	onRename: (e: React.MouseEvent, id: string) => void;
 	onDelete: (e: React.MouseEvent, id: string) => void;
-	kbProps?: { className: string; onMouseEnter: () => void };
+	kbProps?: { className: string; onMouseEnter?: () => void };
 }) {
 	const stageIdx = phaseStageIndex(p.phase);
 	const progress = Math.round((stageIdx / 4) * 100);
