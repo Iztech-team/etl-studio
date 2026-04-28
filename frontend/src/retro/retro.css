@@ -995,9 +995,10 @@ dialog.rl-col-dialog::backdrop {
   letter-spacing: 0.1em;
 }
 
-/* Keyboard focus marker — applied by useKeyboardGrid via getItemProps.
-   Border + magenta glow so the user can see what arrow / hjkl / number
-   keys will activate. Pair with cursor:pointer on the underlying item. */
+/* Keyboard focus marker — applied by useKeyboardLayout / useKeyboardGrid
+   via getItemProps. Default look is a purple outline + glow for cards;
+   per-element overrides below mirror each element's mouse :hover so the
+   keyboard focus and mouse hover feel identical. */
 .kb-focus {
   outline: 2px solid var(--lg-magenta);
   outline-offset: -1px;
@@ -1005,9 +1006,28 @@ dialog.rl-col-dialog::backdrop {
   position: relative;
   z-index: 1;
 }
-/* Don't double up the corners on cards that already have one — the
-   magenta outline is enough. */
 .rl-proj.kb-focus { transform: translateY(-2px); }
+
+/* Buttons + CTA — drop the outline/shadow ring and just reuse :hover.
+   The colour swap alone is enough signal for these small targets. */
+.btn.kb-focus,
+.rl-stat-cta.kb-focus {
+  outline: none;
+  box-shadow: none;
+}
+.btn.kb-focus { background: var(--lg-bg-3); }
+.btn.btn-primary.kb-focus { background: #d49aff; }
+.btn.btn-ghost.kb-focus {
+  color: var(--lg-ink);
+  border-color: var(--lg-ink-mute);
+  background: transparent;
+}
+.rl-stat-cta.kb-focus { background: #d49aff; }
+/* Restore the CTA's original drop-shadow so the panel doesn't visually
+   collapse into the page when keyboard-focused. */
+.rl-stat-cta.kb-focus {
+  box-shadow: 3px 3px 0 var(--lg-magenta-d), 0 0 18px rgba(176,102,255,0.5);
+}
 
 /* Achievement toast */
 .rl-achievement {
