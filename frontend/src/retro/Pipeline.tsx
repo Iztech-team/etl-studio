@@ -3215,7 +3215,8 @@ function requiredMissing(
 
 function RlExport({ onDone }: { onDone: () => void }) {
 	const { projectId, uploadResult, transformResult, loadResult, setLoadResult } = usePipelineCtx();
-	const [fmt, setFmt] = useState("json");
+	const usedStrategy = !!transformResult?.strategy_name;
+	const [fmt, setFmt] = useState(usedStrategy ? "frappe" : "json");
 	const [running, setRunning] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -3226,11 +3227,18 @@ function RlExport({ onDone }: { onDone: () => void }) {
 	const visibleTables = (uploadResult?.tables ?? []).filter((t) => !excluded.has(t.name));
 	const totalRows = transformResult?.total_rows ?? visibleTables.reduce((a, t) => a + t.rowCount, 0) ?? 0;
 
-	const FORMATS = [
-		{ id: "json", label: "JSON", sub: "One object per row" },
-		{ id: "csv", label: "CSV", sub: "One file per table" },
-		{ id: "sql", label: "SQL", sub: "CREATE + INSERT statements" },
-	];
+	const FORMATS = usedStrategy
+		? [
+			{ id: "frappe", label: "FRAPPE CSV", sub: "ERPnext Data Import (chunked, ordered)" },
+			{ id: "json",   label: "JSON",       sub: "One object per row" },
+			{ id: "csv",    label: "CSV",        sub: "One file per table" },
+			{ id: "sql",    label: "SQL",        sub: "CREATE + INSERT statements" },
+		]
+		: [
+			{ id: "json", label: "JSON", sub: "One object per row" },
+			{ id: "csv",  label: "CSV",  sub: "One file per table" },
+			{ id: "sql",  label: "SQL",  sub: "CREATE + INSERT statements" },
+		];
 	const fmtGrid = useKeyboardGrid({
 		count: FORMATS.length,
 		columns: 1,

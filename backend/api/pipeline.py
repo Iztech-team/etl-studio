@@ -10,6 +10,7 @@ from core.strategies import (
     default_strategy_name,
     get_strategy,
 )
+from core.strategies.erpnext.writer import write_frappe_csvs
 from helpers import (
     _auto_save,
     _excluded_set,
@@ -203,8 +204,11 @@ async def load(session_id: str, body: LoadRequest):
         if edge[0] not in excluded and edge[1] not in excluded
     ]
 
-    loader = Loader(s["transformed"], body.dict(), out_dir, fk_edges=fk_edges)
-    result = loader.run()
+    if body.output_format == "frappe":
+        result = _run_frappe_writer(s, out_dir)
+    else:
+        loader = Loader(s["transformed"], body.dict(), out_dir, fk_edges=fk_edges)
+        result = loader.run()
     s["load_result"] = result
     await _auto_save(session_id, "load")
     if run and project_id:
@@ -220,6 +224,36 @@ async def load(session_id: str, body: LoadRequest):
         if audit_trail:
             _flush_audit_events(project_id, audit_trail, run["id"])
     return LoadResponse(**result)
+
+
+def _run_frappe_writer(session: Dict[str, Any], out_dir: str) -> Dict[str, Any]:
+    """Format strategy output as Frappe Data Import CSVs.
+
+    Reads the strategy's output_tables (already shaped per ERPnext doctype
+    with nested children) plus the audit report + checklist artifacts the
+    strategy emitted, and produces dependency-ordered, chunked CSV files
+    that ERPnext's Data Import UI can consume directly.
+    """
+    transformed = session.get("transformed") or {}
+    tables = transformed.get("tables") or {}
+    audit_report = transformed.get("audit_report")
+    checklist_md = transformed.get("setup_checklist_md")
+    files = write_frappe_csvs(
+        tables, out_dir,
+        audit_report=audit_report,
+        checklist_md=checklist_md,
+    )
+    rows_written = {dt: len(rows) for dt, rows in tables.items()
+                    if not dt.startswith("__") and rows}
+    return {
+        "ok": True,
+        "output_files": files,
+        "rows_written": rows_written,
+        "staging_used": False,
+        "transaction_wrapped": False,
+        "errors": [],
+        "exceptions_written": [],
+    }
 
 
 @router.get("/stats/{session_id}", response_model=StatsResponse)
