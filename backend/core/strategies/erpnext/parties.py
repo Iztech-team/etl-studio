@@ -14,6 +14,7 @@ from core.strategies.erpnext.common import (
     clean_str,
     customer_id,
     group_by,
+    normalize_phone,
     pick,
     supplier_id,
 )
@@ -180,14 +181,18 @@ def _emit_orphan(
 
 
 def _phone_for(contact_rows: list[dict]) -> dict[str, str]:
-    """Pick the first non-empty MOBILE / OFFICEPHONE1 across contact rows."""
+    """Pick the first non-empty MOBILE / OFFICEPHONE1 across contact rows.
+
+    Each value runs through normalize_phone to strip embedded names /
+    notes (legacy data sometimes has '0597640262شادي' as one field).
+    """
     mobile = ""
     office = ""
     for r in contact_rows or []:
         if not mobile:
-            mobile = clean_str(r.get("MOBILE")) or clean_str(r.get("MOBILE2"))
+            mobile = normalize_phone(r.get("MOBILE")) or normalize_phone(r.get("MOBILE2"))
         if not office:
-            office = clean_str(r.get("OFFICEPHONE1")) or clean_str(r.get("OFFICEPHONE2"))
+            office = normalize_phone(r.get("OFFICEPHONE1")) or normalize_phone(r.get("OFFICEPHONE2"))
         if mobile and office:
             break
     return {"mobile": mobile, "office": office}

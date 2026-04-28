@@ -4,6 +4,7 @@ No I/O, no state. Each function is a small, named operation that the
 domain modules compose. Anything stateful (lookups, config, result
 accumulator) lives on Context (see context.py).
 """
+import re
 from typing import Any, Iterable
 
 # Sentinel "no value" date that legacy uses for null timestamps.
@@ -110,6 +111,26 @@ def pick(row: dict, *fields: str) -> str:
         if v:
             return v
     return ""
+
+
+_PHONE_RUN = re.compile(r"\+?[0-9][0-9 \-]*")
+
+
+def normalize_phone(value: Any) -> str:
+    """Extract the digit-only phone number from possibly-dirty input.
+
+    Legacy CONTACTST sometimes embeds Arabic names or notes inside the
+    phone field (e.g. '0597640262شادي'). We grab the first contiguous
+    run of digits (with optional '+' prefix and embedded dashes/spaces)
+    and strip everything else.
+    """
+    s = clean_str(value)
+    if not s:
+        return ""
+    match = _PHONE_RUN.search(s)
+    if not match:
+        return ""
+    return "".join(c for c in match.group(0) if c.isdigit() or c == "+")
 
 
 def is_truthy(value: Any) -> bool:
