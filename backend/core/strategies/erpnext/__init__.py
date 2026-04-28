@@ -2,6 +2,7 @@ from typing import Any
 
 from core.strategies.base import StrategyResult, TransformStrategy
 from core.strategies.erpnext.context import Context
+from core.strategies.erpnext.items import emit_item_prices, emit_items
 from core.strategies.erpnext.masters import emit_masters
 
 
@@ -75,8 +76,10 @@ class ErpnextStrategy(TransformStrategy):
         ctx = Context.build(tables, config, result)
         self._record_intake(ctx)
         emit_masters(ctx)
+        emit_items(ctx)
+        emit_item_prices(ctx)
         # Domain modules wire in over the next slices:
-        #   items → parties → accounts → invoices → payments
+        #   parties → accounts → invoices → payments
         #   → journals → stock → employees → audit
         return result
 
