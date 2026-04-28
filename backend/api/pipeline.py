@@ -1,10 +1,15 @@
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 
 from api.tables import _ensure_rows_loaded
 from core.load.loader import Loader
+from core.strategies import (
+    StrategyResult,
+    default_strategy_name,
+    get_strategy,
+)
 from helpers import (
     _auto_save,
     _excluded_set,
@@ -26,31 +31,84 @@ from state import session_store
 router = APIRouter()
 
 
-def _passthrough_transform(s: Dict[str, Any]) -> Dict[str, Any]:
-    """Stub transform — copy raw tables to transformed verbatim.
-
-    The previous Transformer pipeline (encoding fix / null normalize / FK
-    resolution / type coercion / column transforms) was deleted ahead of a
-    redesign. Until the new transformation lands, the load step reads the
-    source rows unchanged so the rest of the pipeline keeps working.
-    """
+def _legacy_tables(s: Dict[str, Any]) -> Dict[str, List[dict]]:
     raw = _visible_raw(s)
-    tables = raw.get("tables", {}) or {}
-    total = sum(len(rows or []) for rows in tables.values())
+    return raw.get("tables", {}) or {}
+
+
+def _passthrough_result(legacy: Dict[str, List[dict]]) -> Dict[str, Any]:
+    """Identity transform — used while the strategy is still being wired.
+
+    Each domain slice incrementally adds doctypes to the strategy's output;
+    until those cover all source data, falling back here keeps `/api/load`
+    and `/api/stats` operational.
+    """
+    total = sum(len(rows or []) for rows in legacy.values())
+    return _result_shape(
+        tables=legacy,
+        total_rows=total,
+        warnings=[],
+        note="passthrough",
+    )
+
+
+def _strategy_result(
+    legacy: Dict[str, List[dict]],
+    strategy_name: str,
+    config: Dict[str, Any],
+) -> Dict[str, Any]:
+    strategy = get_strategy(strategy_name)
+    out: StrategyResult = strategy.transform(legacy, config)
+    if not out.output_tables:
+        return _passthrough_result(legacy)
+    total = sum(len(rows) for rows in out.output_tables.values())
+    return _result_shape(
+        tables=out.output_tables,
+        total_rows=total,
+        warnings=[w.get("message", "") for w in out.warnings],
+        note=f"strategy={strategy_name}",
+        stats=out.stats,
+        errors=out.errors,
+    )
+
+
+def _result_shape(
+    tables: Dict[str, List[dict]],
+    total_rows: int,
+    warnings: List[str],
+    note: str,
+    stats: Optional[Dict[str, int]] = None,
+    errors: Optional[List[dict]] = None,
+) -> Dict[str, Any]:
     return {
         "ok": True,
         "tables": tables,
         "tables_transformed": len(tables),
-        "total_rows": total,
+        "total_rows": total_rows,
         "encoding_conversions": 0,
         "type_conversions": 0,
         "reference_mappings": 0,
         "null_normalizations": 0,
         "dedup_removed": 0,
-        "warnings": [],
+        "warnings": warnings,
         "exceptions": {},
         "preview": {t: (rows or [])[:5] for t, rows in tables.items()},
+        "strategy_note": note,
+        "strategy_stats": stats or {},
+        "strategy_errors": errors or [],
     }
+
+
+def _resolve_strategy(s: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+    name = s.get("strategy_name") or default_strategy_name()
+    config = s.get("strategy_config") or {}
+    return name, config
+
+
+def _run_transform(s: Dict[str, Any]) -> Dict[str, Any]:
+    legacy = _legacy_tables(s)
+    name, config = _resolve_strategy(s)
+    return _strategy_result(legacy, name, config)
 
 
 async def _ensure_transformed(session_id: str) -> None:
@@ -58,7 +116,7 @@ async def _ensure_transformed(session_id: str) -> None:
     if "transformed" in s and s["transformed"]:
         return
     _ensure_rows_loaded(s)
-    s["transformed"] = _passthrough_transform(s)
+    s["transformed"] = _run_transform(s)
 
 
 @router.get("/transform/{session_id}", response_model=TransformResponse)
@@ -71,15 +129,30 @@ async def transform(session_id: str):
     audit_trail = s.get("audit_trail")
 
     _ensure_rows_loaded(s)
-    result = _passthrough_transform(s)
+    result = _run_transform(s)
     s["transformed"] = result
     s["fk_edges"] = []
     await _auto_save(session_id, "transform")
     if run and project_id:
-        finish_pipeline_run(run["id"], "done", result["total_rows"], "passthrough")
+        finish_pipeline_run(
+            run["id"],
+            "done",
+            result["total_rows"],
+            result.get("strategy_note", ""),
+        )
         if audit_trail:
             _flush_audit_events(project_id, audit_trail, run["id"])
-    return TransformResponse(**result)
+    return TransformResponse(**_response_payload(result))
+
+
+def _response_payload(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Strip strategy-internal keys so it fits TransformResponse.
+
+    `strategy_note` / `strategy_stats` / `strategy_errors` are stored on
+    the session for /load + /stats but aren't part of the public response
+    schema (yet).
+    """
+    return {k: v for k, v in result.items() if not k.startswith("strategy_")}
 
 
 @router.post("/load/{session_id}", response_model=LoadResponse)
