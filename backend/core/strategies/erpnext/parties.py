@@ -13,6 +13,7 @@ from core.strategies.erpnext.common import (
     WALKIN_CUSTOMER_ID,
     clean_str,
     customer_id,
+    group_by,
     pick,
     supplier_id,
 )
@@ -33,16 +34,16 @@ SUPPLIER_TYPE_DEFAULT = "Company"
 def emit_parties(ctx: Context) -> None:
     """Emit Customer / Supplier records.
 
-    On v16 Customer / Supplier, `mobile_no` and `email_id` are Read Only
-    (auto-populated from linked Contact rows on save). Setting them via
-    Data Import is silently dropped, so we don't bother. The 339
-    phone-number CONTACTST entries are lost in this migration — an
-    acceptable trade-off given the sparse population.
+    The user's exported Data Import templates include Mobile No and
+    Phone columns on both Customer and Supplier — those fields are
+    writable on import (the Read-Only flag in the doctype JSON only
+    governs the form UI). Phones are denormalized from CONTACTST.
     """
+    contacts = group_by(ctx.table("CONTACTST"), "ACCOUNTID")
     emit_walkin_customer(ctx)
-    emit_customers(ctx)
-    emit_suppliers(ctx)
-    emit_orphan_customers(ctx)
+    emit_customers(ctx, contacts)
+    emit_suppliers(ctx, contacts)
+    emit_orphan_customers(ctx, contacts)
 
 
 # -- Walk-in ------------------------------------------------------------------
@@ -64,12 +65,16 @@ def emit_walkin_customer(ctx: Context) -> None:
 
 # -- Customer (CUSTT) ---------------------------------------------------------
 
-def emit_customers(ctx: Context) -> None:
+def emit_customers(ctx: Context, contacts: dict[str, list[dict]]) -> None:
     for row in ctx.table("CUSTT"):
-        _emit_customer(ctx, row)
+        _emit_customer(ctx, row, contacts)
 
 
-def _emit_customer(ctx: Context, row: dict) -> None:
+def _emit_customer(
+    ctx: Context,
+    row: dict,
+    contacts: dict[str, list[dict]],
+) -> None:
     custid = clean_str(row.get("CUSTID"))
     account_id = clean_str(row.get("ACCOUNT")) or custid
     if not account_id:
@@ -79,6 +84,7 @@ def _emit_customer(ctx: Context, row: dict) -> None:
     if not name:
         ctx.result.warn("Customer", "missing ACCOUNTT.NAME", legacy_custid=custid)
         return
+    phone = _phone_for(contacts.get(account_id, []))
     ctx.result.emit("Customer", {
         "name": customer_id(custid),
         "customer_name": name,
@@ -87,6 +93,8 @@ def _emit_customer(ctx: Context, row: dict) -> None:
         "territory": TERRITORY_NAME,
         "default_currency": ctx.config.default_currency,
         "default_price_list": price_list_name(ctx, row.get("PRICEID")),
+        "mobile_no": phone["mobile"],
+        "phone": phone["office"],
         "disabled": 0,
         "legacy_custid": custid,
         "legacy_kind": "regular",
@@ -96,12 +104,16 @@ def _emit_customer(ctx: Context, row: dict) -> None:
 
 # -- Supplier (SUPPLIERT) -----------------------------------------------------
 
-def emit_suppliers(ctx: Context) -> None:
+def emit_suppliers(ctx: Context, contacts: dict[str, list[dict]]) -> None:
     for row in ctx.table("SUPPLIERT"):
-        _emit_supplier(ctx, row)
+        _emit_supplier(ctx, row, contacts)
 
 
-def _emit_supplier(ctx: Context, row: dict) -> None:
+def _emit_supplier(
+    ctx: Context,
+    row: dict,
+    contacts: dict[str, list[dict]],
+) -> None:
     suppid = clean_str(row.get("SUPPID"))
     account_id = clean_str(row.get("ACCOUNT")) or suppid
     if not account_id:
@@ -111,6 +123,7 @@ def _emit_supplier(ctx: Context, row: dict) -> None:
     if not name:
         ctx.result.warn("Supplier", "missing ACCOUNTT.NAME", legacy_suppid=suppid)
         return
+    phone = _phone_for(contacts.get(account_id, []))
     ctx.result.emit("Supplier", {
         "name": supplier_id(suppid),
         "supplier_name": name,
@@ -118,6 +131,8 @@ def _emit_supplier(ctx: Context, row: dict) -> None:
         "supplier_group": SUPPLIER_GROUP_NAME,
         "country": ctx.config.country,
         "default_currency": ctx.config.default_currency,
+        "mobile_no": phone["mobile"],
+        "phone": phone["office"],
         "disabled": 0,
         "legacy_suppid": suppid,
     })
@@ -126,7 +141,7 @@ def _emit_supplier(ctx: Context, row: dict) -> None:
 
 # -- Orphans (referenced by invoices, not in CUSTT/SUPPLIERT) -----------------
 
-def emit_orphan_customers(ctx: Context) -> None:
+def emit_orphan_customers(ctx: Context, contacts: dict[str, list[dict]]) -> None:
     """Customers that appear in invoices but not in CUSTT/SUPPLIERT.
 
     Typically employee accounts (CLASS=1) or representative accounts
@@ -134,14 +149,19 @@ def emit_orphan_customers(ctx: Context) -> None:
     Emit them as customers to keep the invoices' party references valid.
     """
     for account_id in _orphan_invoice_account_ids(ctx):
-        _emit_orphan(ctx, account_id)
+        _emit_orphan(ctx, account_id, contacts)
 
 
-def _emit_orphan(ctx: Context, account_id: str) -> None:
+def _emit_orphan(
+    ctx: Context,
+    account_id: str,
+    contacts: dict[str, list[dict]],
+) -> None:
     name = _account_name(ctx, account_id)
     if not name:
         ctx.result.warn("Orphan", "no ACCOUNTT.NAME", account_id=account_id)
         return
+    phone = _phone_for(contacts.get(account_id, []))
     ctx.result.emit("Customer", {
         "name": customer_id(account_id),
         "customer_name": name,
@@ -149,11 +169,27 @@ def _emit_orphan(ctx: Context, account_id: str) -> None:
         "customer_group": CUSTOMER_GROUP_NAME,
         "territory": TERRITORY_NAME,
         "default_currency": ctx.config.default_currency,
+        "mobile_no": phone["mobile"],
+        "phone": phone["office"],
         "disabled": 0,
         "legacy_custid": account_id,
         "legacy_kind": "orphan",
     })
     ctx.result.bump("orphan_customers_emitted")
+
+
+def _phone_for(contact_rows: list[dict]) -> dict[str, str]:
+    """Pick the first non-empty MOBILE / OFFICEPHONE1 across contact rows."""
+    mobile = ""
+    office = ""
+    for r in contact_rows or []:
+        if not mobile:
+            mobile = clean_str(r.get("MOBILE")) or clean_str(r.get("MOBILE2"))
+        if not office:
+            office = clean_str(r.get("OFFICEPHONE1")) or clean_str(r.get("OFFICEPHONE2"))
+        if mobile and office:
+            break
+    return {"mobile": mobile, "office": office}
 
 
 def _orphan_invoice_account_ids(ctx: Context) -> list[str]:

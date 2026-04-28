@@ -102,6 +102,7 @@ def _emit_journal(
         ctx.result.bump(f"{stat_key}_skipped_no_accounts")
         return
     posting_date = posting_override or parse_date(header.get("DOCDATE"))
+    parent_cheque = _parent_cheque_fields(details)
     payload = {
         "name": f"{name_prefix}-{docserial}",
         "voucher_type": voucher_type,
@@ -116,10 +117,25 @@ def _emit_journal(
         "total_credit": _sum_column(accounts, "credit_in_account_currency"),
         "legacy_docno": clean_str(header.get("DOCNO")),
         "legacy_docserial": docserial,
+        **parent_cheque,
         **(extra_fields or {}),
     }
     ctx.result.emit("Journal Entry", payload)
     ctx.result.bump(f"{stat_key}_emitted")
+
+
+def _parent_cheque_fields(details: list[dict]) -> dict:
+    """v16 Journal Entry has cheque_no + cheque_date at the parent level
+    (per the user's exported template). Pick the first detail row that
+    references a cheque and surface those two fields on the parent."""
+    for r in details or []:
+        cheque_no = clean_str(r.get("CHEQUE_CHEQUENO"))
+        if cheque_no:
+            return {
+                "cheque_no": cheque_no,
+                "cheque_date": parse_date(r.get("CHEQUE_CDATE")) or "",
+            }
+    return {}
 
 
 def _journal_accounts(ctx: Context, details: Iterable[dict]) -> list[dict]:
@@ -154,17 +170,18 @@ def _journal_account_row(ctx: Context, detail: dict) -> dict | None:
 
 
 def _attach_cheque_fields(ctx: Context, detail: dict, row: dict) -> None:
+    """cheque_no / cheque_date now go on the JE parent (see template).
+    On the accounts child we still attach the rich extras that have no
+    native v16 home — owner_name, bank, branch, clearing date, bounce
+    flag, plus the bidirectional link back to legacy CHEQUEID. These
+    are custom-field-registration territory; toggleable via
+    `include_legacy_fields=False` if the admin doesn't want them."""
     chequeid = clean_str(detail.get("CHEQUEID"))
     cheque_no = clean_str(detail.get("CHEQUE_CHEQUENO"))
     if not chequeid and not cheque_no:
         return
     cheque = _cheque_by_id(ctx).get(chequeid) if chequeid else None
     bank = _bank_name_for(ctx, detail, cheque)
-    row["reference_type"] = ""
-    row["reference_name"] = ""
-    row["cheque_no"] = cheque_no or clean_str((cheque or {}).get("CHEQUENO"))
-    row["cheque_date"] = parse_date((cheque or {}).get("CDATE")
-                                    or detail.get("CHEQUE_CDATE"))
     row["cheque_clearing_date"] = parse_date((cheque or {}).get("REALCDATE")
                                               or detail.get("CHEQUE_REALCDATE"))
     row["cheque_owner_name"] = clean_str((cheque or {}).get("OWNERNAME")

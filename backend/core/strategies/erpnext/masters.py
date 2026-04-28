@@ -226,21 +226,32 @@ def _emit_bank_account(ctx: Context, row: dict) -> None:
         return
     account_no = clean_str(row.get("ACCOUNTNO"))
     label = f"{bank_name} - {account_no}" if account_no else bank_name
-    # phone_number and address_line_1 don't exist on v16 Bank Account; phones
-    # belong on a separate Contact doctype (skipped — see parties.py).
-    # is_company_account=1 would require a linked GL `account` we can't
-    # always resolve, so leave it at 0 — the admin can flip it manually.
+    gl_account = _bank_gl_account(ctx, row)
+    is_company = 1 if gl_account else 0
     ctx.result.emit("Bank Account", {
         "name": label,
         "account_name": label,
         "bank": bank_name,
-        "is_company_account": 0,
+        "account": gl_account,            # required on v16 — the GL Account link
+        "is_company_account": is_company,
         "company": ctx.config.company_name,
         "bank_account_no": account_no,
         "branch_code": clean_str(row.get("BRANCHNAME")),
         "legacy_bankaccid": clean_str(row.get("BANKACCID")),
     })
     ctx.result.bump("bank_accounts_emitted")
+
+
+def _bank_gl_account(ctx: Context, row: dict) -> str:
+    """Resolve the linked GL Account for a Bank Account.
+
+    BANKACCOUNTT exposes TYPEA / TYPEB / TYPEC / TYPED — these are
+    legacy ACCOUNTIDs for current/savings/transfer/etc. flavours of the
+    bank account in the CoA. TYPEA is the primary one; we use it here
+    and let the admin link the others post-migration.
+    """
+    from core.strategies.erpnext.accounts import account_full_name
+    return account_full_name(ctx, row.get("TYPEA"))
 
 
 def bank_account_label(ctx: Context, bankaccid) -> str:

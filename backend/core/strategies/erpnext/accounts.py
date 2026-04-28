@@ -77,8 +77,39 @@ def emit_accounts(ctx: Context) -> None:
     parent_ids = _parent_id_set(ctx)
     rows = _emittable_accounts(ctx, deleted)
     rows.sort(key=_sort_key)
+    root_for = _root_id_for_each(ctx)
     for row in rows:
-        _emit_account(ctx, row, parent_ids)
+        _emit_account(ctx, row, parent_ids, root_for)
+
+
+def _root_id_for_each(ctx: Context) -> dict[str, str]:
+    """Walk FATHERID up to find each account's root (ALEVEL=0).
+
+    Used to propagate root_type and report_type from the 6 hand-mapped
+    roots down to every descendant — the user's import template marks
+    both as required on EVERY row, not just on roots.
+    """
+    out: dict[str, str] = {}
+    by_id = ctx.accounts_by_id
+    for aid, row in by_id.items():
+        out[aid] = _walk_to_root(aid, by_id)
+    return out
+
+
+def _walk_to_root(account_id: str, by_id: dict) -> str:
+    cur = account_id
+    seen: set[str] = set()
+    for _ in range(20):  # depth-cap; legacy ALEVEL maxes at 4
+        if not cur or cur in seen:
+            break
+        seen.add(cur)
+        if cur in ROOT_TYPE_BY_ID:
+            return cur
+        father = clean_str((by_id.get(cur) or {}).get("FATHERID"))
+        if not father or father == cur:
+            break
+        cur = father
+    return account_id  # fallback to self if no root found
 
 
 # -- Emission -----------------------------------------------------------------
@@ -87,6 +118,7 @@ def _emit_account(
     ctx: Context,
     row: dict,
     parent_ids: set[str],
+    root_for: dict[str, str],
 ) -> None:
     account_id = clean_str(row.get("ACCOUNTID"))
     name = pick(row, "NAME", "NAMEE", "NAMEH")
@@ -94,6 +126,10 @@ def _emit_account(
         ctx.result.warn("Account", "missing NAME", legacy_acctid=account_id)
         return
     is_root = account_id in ROOT_TYPE_BY_ID
+    root_id = root_for.get(account_id, account_id)
+    root_type, report_type = ROOT_TYPE_BY_ID.get(
+        root_id, ("Asset", "Balance Sheet"),
+    )
     payload = {
         "name": ctx.with_abbr(name),
         "account_name": name,
@@ -101,14 +137,12 @@ def _emit_account(
         "parent_account": _parent_account_name(ctx, row, is_root),
         "is_group": 1 if account_id in parent_ids else 0,
         "account_currency": currency_iso(row.get("CURID")),
+        "root_type": root_type,
+        "report_type": report_type,
         "disabled": 0 if _is_active(row) else 1,
         "legacy_acctid": account_id,
         "legacy_class": clean_str(row.get("CLASS")),
     }
-    if is_root:
-        root_type, report_type = ROOT_TYPE_BY_ID[account_id]
-        payload["root_type"] = root_type
-        payload["report_type"] = report_type
     leaf_type = _account_type_for(row, payload["is_group"])
     if leaf_type:
         payload["account_type"] = leaf_type
