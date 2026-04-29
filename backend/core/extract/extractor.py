@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 from utils.sql_parser import SQLParser
 from utils.encoding import (
     detect_and_convert,
+    detect_encoding,
     normalize_arabic_digits,
     strip_directional_marks,
 )
@@ -120,22 +121,35 @@ class Extractor:
 
     # ------------------------------------------------------------------
     def _extract_csv(self, path: str, fname: str):
+        """Stream CSV rows directly through DictReader.
+
+        Previous implementation called detect_and_convert(path) which
+        loaded the whole file as bytes AND decoded the whole thing as a
+        string AND splitlines()'d it — three full-file copies before
+        DictReader even saw a row. For a 1.1GB CSV that's ~3.3GB of
+        peak memory before we touch the per-row dict overhead. Now we
+        sample the first 1MB just for encoding detection and let
+        Python stream the rest line-by-line.
+        """
         table_name = fname.rsplit(".", 1)[0]
-        content, _enc = detect_and_convert(path)
-        lines = content.splitlines()
-        reader = csv.DictReader(lines)
-        cleaned_rows = []
-        for r in reader:
-            row = {}
-            for k, v in r.items():
-                if isinstance(v, str):
-                    original = v
-                    v = strip_directional_marks(v)
-                    if v != original:
-                        self.audit_trail.log_directional_marks_stripped(table_name, k)
-                row[k] = v
-            cleaned_rows.append(row)
+        encoding = detect_encoding(path)
+        cleaned_rows: List[Dict] = []
+        with open(path, "r", encoding=encoding, errors="replace", newline="") as fh:
+            reader = csv.DictReader(fh)
+            for r in reader:
+                cleaned_rows.append(self._clean_row(r, table_name))
         self._raw_tables[table_name] = cleaned_rows
+
+    def _clean_row(self, raw: dict, table_name: str) -> dict:
+        row = {}
+        for k, v in raw.items():
+            if isinstance(v, str):
+                original = v
+                v = strip_directional_marks(v)
+                if v != original:
+                    self.audit_trail.log_directional_marks_stripped(table_name, k)
+            row[k] = v
+        return row
 
     def _extract_excel(self, path: str, fname: str):
         try:

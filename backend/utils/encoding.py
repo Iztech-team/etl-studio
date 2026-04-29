@@ -5,12 +5,11 @@ from typing import Tuple
 def detect_and_convert(path: str) -> Tuple[str, str]:
     """Read a file, detect encoding, return (utf-8 string, detected encoding).
 
-    Fast path: try utf-8 first. chardet.detect is a statistical scan over
-    the entire file's bytes — on the AlArabi 257-CSV dataset it
-    contributes ~40s of pure waste, because every CSV in that path was
-    written by our own extraction pipeline as utf-8 anyway. Only fall
-    through to chardet when utf-8 actually fails to decode (i.e. it's a
-    non-utf-8 file the user uploaded directly).
+    NOTE: this function loads the entire file into memory. Prefer
+    `detect_encoding(path)` + streaming `open(path, encoding=...)` for
+    large CSVs — see _extract_csv in core/extract/extractor.py for the
+    streaming path. Kept here for SQL / SQL-dump callers that need the
+    whole text for parsing.
     """
     with open(path, "rb") as f:
         raw = f.read()
@@ -25,6 +24,24 @@ def detect_and_convert(path: str) -> Tuple[str, str]:
     except Exception:
         text = raw.decode("utf-8", errors="replace")
     return text, enc
+
+
+def detect_encoding(path: str, sample_bytes: int = 1_048_576) -> str:
+    """Sample-based encoding detection for files too large to fit in RAM.
+
+    Reads the first 1 MiB and tries utf-8 first; falls back to chardet
+    on the same sample. Avoids the multi-GB ballooning that
+    `detect_and_convert` causes for large CSV uploads.
+    """
+    with open(path, "rb") as f:
+        sample = f.read(sample_bytes)
+    try:
+        sample.decode("utf-8")
+        return "utf-8"
+    except UnicodeDecodeError:
+        pass
+    detected = chardet.detect(sample)
+    return detected.get("encoding") or "utf-8"
 
 
 def fix_encoding_str(s: str) -> str:
