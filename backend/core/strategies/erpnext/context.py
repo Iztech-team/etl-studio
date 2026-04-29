@@ -93,11 +93,13 @@ class Context:
 
     def free_table(self, name: str) -> None:
         """Drop an in-memory legacy table now that the strategy is done
-        with it. Idempotent. Frees the dict-of-rows memory immediately;
-        re-loading happens lazily on the next `table()` call (which the
-        strategy avoids after free in normal flow)."""
-        if name in self.legacy:
+        with it. Idempotent. Triggers a gc.collect() afterwards so
+        large dict-of-rows memory is reclaimed promptly — Python's
+        cyclic GC otherwise defers freeing until pressure builds."""
+        if name in self.legacy and self.legacy[name]:
             self.legacy[name] = []
+            import gc
+            gc.collect()
 
     def with_abbr(self, base: str) -> str:
         return with_abbr(base, self.config.company_abbr)

@@ -17,10 +17,12 @@ router = APIRouter()
 # typical machines. The strategy reads them via Context.iter_streamed()
 # row-by-row from the JSONL cache instead.
 SKIP_EAGER_LOAD = {
-    # Only the truly enormous tables. Purchase line rows (~15K) and
-    # return line rows (~8K each) fit in RAM without issue and don't
-    # justify the streaming-emit refactor.
-    "CATESINVDOCDETT",  # ~1M+ sales invoice line rows on full Al Arabi data
+    # Tables large enough that materializing as Python list[dict] is
+    # the dominant RSS allocator. Strategy reads them via
+    # Context.iter_streamed() row-by-row instead.
+    "CATEGORYT",         # item master, ~19K rows × ~100 fields → 600MB+
+    "CATESINVDOCT",      # sales invoice headers, ~146K × wide rows
+    "CATESINVDOCDETT",   # sales invoice lines, ~1M+ rows
 }
 
 

@@ -62,7 +62,7 @@ def emit_uoms(ctx: Context) -> None:
     for row in ctx.table("UNITT"):
         for field in ("UNITNAME", "UNITNAMEE"):
             _emit_uom(ctx, clean_str(row.get(field)), seen, skipped_builtin)
-    for row in ctx.table("CATEGORYT"):
+    for row in ctx.iter_streamed("CATEGORYT"):
         for field in ("UNIT", "DEFAULTUNIT", "WMUNIT"):
             _emit_uom(ctx, clean_str(row.get(field)), seen, skipped_builtin)
     ctx.result.bump("uoms_emitted_custom", len(seen))
@@ -186,7 +186,7 @@ def price_list_name(ctx: Context, legacy_price_id) -> str:
 def emit_brands(ctx: Context) -> None:
     """Each unique CATEGORYT.MANUFACTURER becomes a Brand record."""
     seen: set[str] = set()
-    for row in ctx.table("CATEGORYT"):
+    for row in ctx.iter_streamed("CATEGORYT"):
         name = clean_str(row.get("MANUFACTURER"))
         if not name or name in seen:
             continue

@@ -82,7 +82,11 @@ def emit_sales_invoices(ctx: Context) -> None:
     headers_by_pair = _index_sales_headers(ctx)
     named_items: dict[tuple[str, str], list[dict]] = {}
     walkin_buckets: dict[tuple[str, str], dict[tuple[str, str], dict]] = {}
-    walkin_meta: dict[tuple[str, str], list[dict]] = {}
+    # Per-bucket running aggregates: a SET of DOCSERIALs (cheap dedup)
+    # and a running DOCVALUE total. Replaces the previous list-of-headers
+    # which was O(n²) on insert (`if header not in headers_seen`) and
+    # held pointers to every walk-in header forever.
+    walkin_meta: dict[tuple[str, str], dict] = {}
 
     for line in ctx.iter_streamed("CATESINVDOCDETT"):
         key = (clean_str(line.get("DOCNO")), clean_str(line.get("INVTYPE")))
@@ -111,26 +115,47 @@ def emit_sales_invoices(ctx: Context) -> None:
         _emit_walkin_summaries_streaming(ctx, walkin_buckets, walkin_meta)
 
 
+_SALES_HEADER_FIELDS = (
+    "DOCNO", "DOCSERIAL", "INVTYPE", "ACCOUNTID",
+    "DOCDATE", "DOCTIME", "DUEDATE",
+    "SALEPOINT", "POSTFLAG",
+    "CURID", "DOCVALUE", "DISCOUNTV", "NOTES",
+)
+
+
 def _index_sales_headers(ctx: Context) -> dict[tuple[str, str], dict]:
-    """(DOCNO, INVTYPE) → header row, filtered to acceptable POSTFLAGs.
-    Walk-in vs named distinction happens at line-dispatch time, not here."""
+    """(DOCNO, INVTYPE) → slim header dict.
+
+    Streams CATESINVDOCT from disk and keeps only the ~14 fields that
+    downstream emit code actually uses. CATESINVDOCT has ~100 fields
+    per row; stripping to the needed subset cuts header-index memory
+    from ~5KB → ~500B per row (about 10× reduction). For 600K headers
+    that's the difference between ~3GB and ~300MB.
+    """
     out: dict[tuple[str, str], dict] = {}
-    for row in ctx.table("CATESINVDOCT"):
+    for row in ctx.iter_streamed("CATESINVDOCT"):
         if not _accept_invoice(ctx, row, "SalesInvoice", silent=True):
             continue
-        key = (clean_str(row.get("DOCNO")), clean_str(row.get("INVTYPE")))
-        out[key] = row
+        slim = {f: row.get(f) for f in _SALES_HEADER_FIELDS}
+        key = (clean_str(slim.get("DOCNO")), clean_str(slim.get("INVTYPE")))
+        out[key] = slim
     return out
 
 
 def _stream_walkin_line(
     ctx: Context,
     buckets: dict[tuple[str, str], dict[tuple[str, str], dict]],
-    meta: dict[tuple[str, str], list[dict]],
+    meta: dict[tuple[str, str], dict],
     header: dict,
     line: dict,
 ) -> None:
-    """Aggregate one walk-in line into its (date × terminal) bucket."""
+    """Aggregate one walk-in line into its (date × terminal) bucket.
+
+    Per-bucket meta is kept as `{docserials: set[str], total_docvalue: float}`
+    — never a list of full headers. Fixes an O(n²) blow-up in the prior
+    implementation that compared every walk-in header against an
+    accumulating list on every line.
+    """
     catid = clean_str(line.get("CATID"))
     if not catid:
         return
@@ -138,9 +163,13 @@ def _stream_walkin_line(
     salepoint = clean_str(header.get("SALEPOINT"))
     bucket_key = (date, salepoint)
     bucket = buckets.setdefault(bucket_key, {})
-    headers_seen = meta.setdefault(bucket_key, [])
-    if header not in headers_seen:
-        headers_seen.append(header)
+    bucket_meta = meta.setdefault(
+        bucket_key, {"docserials": set(), "total_docvalue": 0.0},
+    )
+    docserial = clean_str(header.get("DOCSERIAL"))
+    if docserial and docserial not in bucket_meta["docserials"]:
+        bucket_meta["docserials"].add(docserial)
+        bucket_meta["total_docvalue"] += parse_decimal(header.get("DOCVALUE"))
     uom = normalize_uom(line.get("CATUNIT"))
     qty = parse_decimal(line.get("CATQTY"))
     rate = parse_decimal(line.get("CATPRICEWOV"))
@@ -159,16 +188,19 @@ def _stream_walkin_line(
 def _emit_walkin_summaries_streaming(
     ctx: Context,
     buckets: dict[tuple[str, str], dict[tuple[str, str], dict]],
-    meta: dict[tuple[str, str], list[dict]],
+    meta: dict[tuple[str, str], dict],
 ) -> None:
     for (date, salepoint), bucket in buckets.items():
-        headers = meta.get((date, salepoint), [])
+        bucket_meta = meta.get((date, salepoint), {})
         items = [_finalize_line(c) for c in bucket.values() if c["qty"] > 0]
         if not items:
             ctx.result.bump("walkin_summaries_skipped_empty")
             continue
         ctx.result.emit("Sales Invoice", _walkin_summary_payload(
-            ctx, date, salepoint, headers, items,
+            ctx, date, salepoint,
+            header_count=len(bucket_meta.get("docserials", ())),
+            total_docvalue=bucket_meta.get("total_docvalue", 0.0),
+            items=items,
         ))
         ctx.result.bump("walkin_summaries_emitted")
 
@@ -208,10 +240,11 @@ def _walkin_summary_payload(
     ctx: Context,
     date: str,
     salepoint: str,
-    headers: list[dict],
+    *,
+    header_count: int,
+    total_docvalue: float,
     items: list[dict],
 ) -> dict:
-    total = sum(parse_decimal(h.get("DOCVALUE")) for h in headers)
     return {
         "name": f"SINV-LEG-WALKIN-{date}-{salepoint or 'NA'}",
         "customer": WALKIN_CUSTOMER_ID,
@@ -229,12 +262,12 @@ def _walkin_summary_payload(
         "payments": [{
             "mode_of_payment": "Cash",
             "account": _cash(ctx),
-            "amount": total,
+            "amount": total_docvalue,
         }],
         "remarks": f"Walk-in summary — terminal {salepoint or 'NA'}, "
-                   f"{len(headers)} legacy invoices",
+                   f"{header_count} legacy invoices",
         "legacy_summary": 1,
-        "legacy_summary_count": len(headers),
+        "legacy_summary_count": header_count,
         "legacy_summary_terminal": salepoint,
         "legacy_kind": "walkin_summary",
     }

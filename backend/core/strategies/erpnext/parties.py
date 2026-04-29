@@ -205,11 +205,16 @@ def _orphan_invoice_account_ids(ctx: Context) -> list[str]:
     that are ALSO in SUPPLIERT (some suppliers act as customers in
     legacy data). Customer and Supplier are separate doctypes in v16,
     so a 'CUST-621010' record alongside 'SUPP-621010' doesn't conflict.
+
+    Uses iter_streamed for CATESINVDOCT (memory-bounded scan) since
+    that table is in SKIP_EAGER_LOAD; only ACCOUNTID is needed so we
+    don't keep rows in memory.
     """
     customers = ctx.customer_account_ids
     seen: set[str] = set()
     for source in ("CATESINVDOCT", "CATESRETINVDOCT"):
-        for row in ctx.table(source):
+        rows = ctx.iter_streamed(source) if source == "CATESINVDOCT" else ctx.table(source)
+        for row in rows:
             aid = clean_str(row.get("ACCOUNTID"))
             if not aid or aid == "0":
                 continue

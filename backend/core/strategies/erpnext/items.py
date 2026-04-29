@@ -40,7 +40,7 @@ def emit_items(ctx: Context) -> None:
     synonyms = group_by(ctx.table("CATESYNONYMT"), "CATID")
     suppliers = group_by(ctx.table("CATSUPPLIERT"), "CATID")
     default_warehouse = _default_warehouse(ctx)
-    for row in ctx.table("CATEGORYT"):
+    for row in ctx.iter_streamed("CATEGORYT"):
         catid = clean_str(row.get("CATID"))
         if not catid or catid in deleted:
             ctx.result.bump("items_skipped_deleted")
@@ -58,7 +58,7 @@ def emit_item_prices(ctx: Context) -> None:
 
 def _index_item_uoms(ctx: Context) -> dict[str, str]:
     out: dict[str, str] = {}
-    for r in ctx.table("CATEGORYT"):
+    for r in ctx.iter_streamed("CATEGORYT"):
         cid = clean_str(r.get("CATID"))
         if cid:
             out[cid] = _stock_uom(r)

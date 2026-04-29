@@ -118,7 +118,7 @@ def _stock_line(
 
 def _cost_lookup(ctx: Context) -> dict[str, float]:
     out: dict[str, float] = {}
-    for row in ctx.table("CATEGORYT"):
+    for row in ctx.iter_streamed("CATEGORYT"):
         catid = clean_str(row.get("CATID"))
         if not catid:
             continue
