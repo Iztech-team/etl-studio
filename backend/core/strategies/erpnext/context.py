@@ -5,7 +5,7 @@ from `ctx.legacy` / `ctx.accounts_by_id` / etc. and emit through
 `ctx.result.emit(...)`. Keeps domain module signatures small and uniform.
 """
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable, Iterable
 
 from core.strategies.base import StrategyResult
 from core.strategies.erpnext.common import (
@@ -46,6 +46,7 @@ class Context:
     config: Config
     legacy: dict[str, list[dict]]
     result: StrategyResult
+    table_loader: Callable[[str], Iterable[dict]] | None = None
 
     # Master lookups, populated by `build()` for cheap in-loop joins.
     accounts_by_id: dict[str, dict] = field(default_factory=dict)
@@ -64,14 +65,39 @@ class Context:
         legacy: dict[str, list[dict]],
         config_dict: dict[str, Any],
         result: StrategyResult,
+        table_loader: Callable[[str], Iterable[dict]] | None = None,
     ) -> "Context":
         cfg = Config.from_dict(config_dict)
-        ctx = cls(config=cfg, legacy=legacy, result=result)
+        ctx = cls(config=cfg, legacy=legacy, result=result, table_loader=table_loader)
         ctx._build_lookups()
         return ctx
 
     def table(self, name: str) -> list[dict]:
         return self.legacy.get(name) or []
+
+    def iter_streamed(self, name: str) -> Iterable[dict]:
+        """Iterate a legacy table without forcing it into memory as a list.
+
+        Use this for tables too large to materialize (millions of rows).
+        Returns from the in-memory copy if already loaded, else streams
+        row-by-row from the JSONL extract cache via `table_loader`.
+        Strategy callers should iterate the result and discard rows
+        after use to keep RSS bounded.
+        """
+        in_mem = self.legacy.get(name)
+        if in_mem:
+            yield from in_mem
+            return
+        if self.table_loader is not None:
+            yield from self.table_loader(name)
+
+    def free_table(self, name: str) -> None:
+        """Drop an in-memory legacy table now that the strategy is done
+        with it. Idempotent. Frees the dict-of-rows memory immediately;
+        re-loading happens lazily on the next `table()` call (which the
+        strategy avoids after free in normal flow)."""
+        if name in self.legacy:
+            self.legacy[name] = []
 
     def with_abbr(self, base: str) -> str:
         return with_abbr(base, self.config.company_abbr)

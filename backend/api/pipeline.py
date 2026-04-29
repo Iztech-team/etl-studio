@@ -58,11 +58,16 @@ def _strategy_result(
     strategy_name: str,
     config: Dict[str, Any],
     staging_dir: Optional[str] = None,
+    table_loader=None,
 ) -> Dict[str, Any]:
     if staging_dir:
         _clear_dir(staging_dir)
     strategy = get_strategy(strategy_name)
-    out: StrategyResult = strategy.transform(legacy, config, staging_dir=staging_dir)
+    out: StrategyResult = strategy.transform(
+        legacy, config,
+        staging_dir=staging_dir,
+        table_loader=table_loader,
+    )
     out.close_files()
     counts = out.doctype_counts()
     if not counts:
@@ -143,7 +148,12 @@ def _run_transform(s: Dict[str, Any]) -> Dict[str, Any]:
     legacy = _legacy_tables(s)
     name, config = _resolve_strategy(s)
     staging_dir = _transform_staging_dir(s)
-    result = _strategy_result(legacy, name, config, staging_dir=staging_dir)
+    loader = _make_table_loader(s)
+    result = _strategy_result(
+        legacy, name, config,
+        staging_dir=staging_dir,
+        table_loader=loader,
+    )
     # Source tables can be freed now that the strategy has consumed them
     # — they're still on disk via the JSONL extract cache and lazy-load
     # if the user re-runs transform. Frees ~1-3GB of RSS for big imports.
@@ -161,6 +171,22 @@ def _transform_staging_dir(s: Dict[str, Any]) -> Optional[str]:
         from persistence.project_state import project_dir
         return os.path.join(project_dir(project_id), "_transform_out")
     return None
+
+
+def _make_table_loader(s: Dict[str, Any]):
+    """Return a callable(name) → iterator-of-rows that streams a legacy
+    table from the JSONL extract cache. Used for tables in
+    SKIP_EAGER_LOAD that the strategy reads via Context.iter_streamed().
+    """
+    project_id = s.get("project_id")
+    if not project_id:
+        return None
+    from utils import extract_cache
+
+    def loader(name: str):
+        yield from extract_cache.stream_table_rows(project_id, name)
+
+    return loader
 
 
 def _clear_dir(path: str) -> None:

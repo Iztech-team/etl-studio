@@ -59,29 +59,122 @@ def emit_invoices(ctx: Context) -> None:
 # -- Sales Invoice ------------------------------------------------------------
 
 def emit_sales_invoices(ctx: Context) -> None:
-    lines_by_key = group_by(ctx.table("CATESINVDOCDETT"), "DOCNO")
-    # group_by indexes single-column; refine to (DOCNO, INVTYPE) below.
-    lines_by_pair = _group_invoice_lines(ctx.table("CATESINVDOCDETT"))
-    for row in ctx.table("CATESINVDOCT"):
-        if not _accept_invoice(ctx, row, "SalesInvoice"):
+    """Two-phase memory-bounded emit.
+
+    Phase 1: build a small (DOCNO, INVTYPE) → header lookup from
+    CATESINVDOCT (146K rows, ~150MB on full Al Arabi data).
+
+    Phase 2: stream CATESINVDOCDETT row-by-row from disk JSONL —
+    NEVER materialized as a Python list. For each line we look up its
+    parent header and dispatch to either:
+      - the per-header items accumulator (named-customer invoices)
+      - the (date × terminal) walk-in summary bucket
+
+    Phase 3: emit named-customer invoices using their accumulated items.
+    Phase 4: emit walk-in summaries from the buckets.
+
+    Memory peak during invoice emit on full Al Arabi data:
+      ~150MB headers + ~30MB walk-in buckets + ~20MB named items
+      ≈ 200MB total
+    Previous structure used `lines_by_pair` (full 1M-row index) which
+    on the user's 4× dataset reached ~6.8GB and OOM'd the process.
+    """
+    headers_by_pair = _index_sales_headers(ctx)
+    named_items: dict[tuple[str, str], list[dict]] = {}
+    walkin_buckets: dict[tuple[str, str], dict[tuple[str, str], dict]] = {}
+    walkin_meta: dict[tuple[str, str], list[dict]] = {}
+
+    for line in ctx.iter_streamed("CATESINVDOCDETT"):
+        key = (clean_str(line.get("DOCNO")), clean_str(line.get("INVTYPE")))
+        header = headers_by_pair.get(key)
+        if header is None:
             continue
-        if _is_walkin_row(row) and ctx.config.summarize_walkin_sales:
-            continue  # handled by _emit_walkin_summaries below
-        _emit_sales_invoice(ctx, row, lines_by_pair)
+        if _is_walkin_row(header) and ctx.config.summarize_walkin_sales:
+            _stream_walkin_line(ctx, walkin_buckets, walkin_meta, header, line)
+        else:
+            row = _sales_item_row(ctx, line)
+            if row:
+                named_items.setdefault(key, []).append(row)
+
+    for key, header in headers_by_pair.items():
+        if _is_walkin_row(header) and ctx.config.summarize_walkin_sales:
+            continue
+        if not _accept_invoice(ctx, header, "SalesInvoice"):
+            continue
+        items = named_items.get(key, [])
+        if not items:
+            ctx.result.bump("sales_invoices_skipped_no_lines")
+            continue
+        _emit_named_sales_invoice(ctx, header, items)
+
     if ctx.config.summarize_walkin_sales:
-        _emit_walkin_summaries(ctx, lines_by_pair)
+        _emit_walkin_summaries_streaming(ctx, walkin_buckets, walkin_meta)
 
 
-def _emit_sales_invoice(
+def _index_sales_headers(ctx: Context) -> dict[tuple[str, str], dict]:
+    """(DOCNO, INVTYPE) → header row, filtered to acceptable POSTFLAGs.
+    Walk-in vs named distinction happens at line-dispatch time, not here."""
+    out: dict[tuple[str, str], dict] = {}
+    for row in ctx.table("CATESINVDOCT"):
+        if not _accept_invoice(ctx, row, "SalesInvoice", silent=True):
+            continue
+        key = (clean_str(row.get("DOCNO")), clean_str(row.get("INVTYPE")))
+        out[key] = row
+    return out
+
+
+def _stream_walkin_line(
     ctx: Context,
+    buckets: dict[tuple[str, str], dict[tuple[str, str], dict]],
+    meta: dict[tuple[str, str], list[dict]],
     header: dict,
-    lines_by_pair: dict[tuple[str, str], list[dict]],
+    line: dict,
 ) -> None:
-    docserial = clean_str(header.get("DOCSERIAL"))
-    items = _sales_items(ctx, _lines_for(header, lines_by_pair))
-    if not items:
-        ctx.result.bump("sales_invoices_skipped_no_lines")
+    """Aggregate one walk-in line into its (date × terminal) bucket."""
+    catid = clean_str(line.get("CATID"))
+    if not catid:
         return
+    date = parse_date(header.get("DOCDATE")) or ""
+    salepoint = clean_str(header.get("SALEPOINT"))
+    bucket_key = (date, salepoint)
+    bucket = buckets.setdefault(bucket_key, {})
+    headers_seen = meta.setdefault(bucket_key, [])
+    if header not in headers_seen:
+        headers_seen.append(header)
+    uom = normalize_uom(line.get("CATUNIT"))
+    qty = parse_decimal(line.get("CATQTY"))
+    rate = parse_decimal(line.get("CATPRICEWOV"))
+    cell_key = (catid, uom)
+    cell = bucket.setdefault(cell_key, {
+        "item_code": f"ALA-{catid}",
+        "uom": uom,
+        "qty": 0.0,
+        "amount": 0.0,
+        "warehouse": _warehouse_for_line(ctx, line),
+    })
+    cell["qty"] += qty
+    cell["amount"] += qty * rate
+
+
+def _emit_walkin_summaries_streaming(
+    ctx: Context,
+    buckets: dict[tuple[str, str], dict[tuple[str, str], dict]],
+    meta: dict[tuple[str, str], list[dict]],
+) -> None:
+    for (date, salepoint), bucket in buckets.items():
+        headers = meta.get((date, salepoint), [])
+        items = [_finalize_line(c) for c in bucket.values() if c["qty"] > 0]
+        if not items:
+            ctx.result.bump("walkin_summaries_skipped_empty")
+            continue
+        ctx.result.emit("Sales Invoice", _walkin_summary_payload(
+            ctx, date, salepoint, headers, items,
+        ))
+        ctx.result.bump("walkin_summaries_emitted")
+
+
+def _emit_named_sales_invoice(ctx: Context, header: dict, items: list[dict]) -> None:
+    docserial = clean_str(header.get("DOCSERIAL"))
     is_pos = _is_pos(header)
     payload = {
         "name": f"SINV-LEG-{docserial}",
@@ -109,22 +202,6 @@ def _emit_sales_invoice(
     ctx.result.bump("sales_invoices_emitted")
 
 
-def _emit_walkin_summaries(
-    ctx: Context,
-    lines_by_pair: dict[tuple[str, str], list[dict]],
-) -> None:
-    """Group anonymous walk-in invoices per (DOCDATE, SALEPOINT) into one
-    summarized Sales Invoice each. Lines are aggregated per (item, uom)."""
-    groups = _group_walkin_headers(ctx)
-    for (date, salepoint), headers in groups.items():
-        items = _summarize_lines(ctx, headers, lines_by_pair)
-        if not items:
-            ctx.result.bump("walkin_summaries_skipped_empty")
-            continue
-        ctx.result.emit("Sales Invoice", _walkin_summary_payload(
-            ctx, date, salepoint, headers, items,
-        ))
-        ctx.result.bump("walkin_summaries_emitted")
 
 
 def _walkin_summary_payload(
@@ -161,53 +238,6 @@ def _walkin_summary_payload(
         "legacy_summary_terminal": salepoint,
         "legacy_kind": "walkin_summary",
     }
-
-
-def _group_walkin_headers(
-    ctx: Context,
-) -> dict[tuple[str, str], list[dict]]:
-    out: dict[tuple[str, str], list[dict]] = {}
-    for row in ctx.table("CATESINVDOCT"):
-        if not _accept_invoice(ctx, row, "SalesInvoice", silent=True):
-            continue
-        if not _is_walkin_row(row):
-            continue
-        date = parse_date(row.get("DOCDATE")) or ""
-        salepoint = clean_str(row.get("SALEPOINT"))
-        out.setdefault((date, salepoint), []).append(row)
-    return out
-
-
-def _summarize_lines(
-    ctx: Context,
-    headers: list[dict],
-    lines_by_pair: dict[tuple[str, str], list[dict]],
-) -> list[dict]:
-    """Aggregate (item, uom) across all line-rows under the given headers."""
-    bucket: dict[tuple[str, str], dict] = {}
-    for h in headers:
-        for line in _lines_for(h, lines_by_pair):
-            _accumulate_line(bucket, ctx, line)
-    return [_finalize_line(b) for b in bucket.values() if b["qty"] > 0]
-
-
-def _accumulate_line(bucket: dict, ctx: Context, line: dict) -> None:
-    catid = clean_str(line.get("CATID"))
-    if not catid:
-        return
-    uom = normalize_uom(line.get("CATUNIT"))
-    qty = parse_decimal(line.get("CATQTY"))
-    rate = parse_decimal(line.get("CATPRICEWOV"))
-    key = (catid, uom)
-    cell = bucket.setdefault(key, {
-        "item_code": f"ALA-{catid}",
-        "uom": uom,
-        "qty": 0.0,
-        "amount": 0.0,
-        "warehouse": _warehouse_for_line(ctx, line),
-    })
-    cell["qty"] += qty
-    cell["amount"] += qty * rate
 
 
 def _finalize_line(cell: dict) -> dict:
@@ -294,15 +324,6 @@ def _default_selling_price_list(ctx: Context) -> str:
 
 
 # -- Sales Invoice line items -------------------------------------------------
-
-def _sales_items(ctx: Context, line_rows: Iterable[dict]) -> list[dict]:
-    items: list[dict] = []
-    for line in line_rows:
-        item = _sales_item_row(ctx, line)
-        if item:
-            items.append(item)
-    return items
-
 
 def _sales_item_row(ctx: Context, line: dict) -> dict | None:
     catid = clean_str(line.get("CATID"))

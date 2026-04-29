@@ -162,6 +162,37 @@ def read_meta(project_id: str) -> Dict[str, Any]:
     return json.loads(cache_meta_path(project_id).read_text(encoding="utf-8"))
 
 
+def stream_table_rows(project_id: str, table: str):
+    """Yield rows from a cached table one at a time.
+
+    Memory-bounded: the JSONL file is read line-by-line (NOT loaded into
+    a list). For multi-million-row tables that's the difference between
+    a few KB of RSS and several GB. Falls back to the legacy pickle
+    format when no JSONL exists; pickle has no stream API so the whole
+    table loads then yields, but pickled tables are smaller in practice.
+    """
+    jsonl = cache_table_path_jsonl(project_id, table)
+    if jsonl.exists():
+        try:
+            with jsonl.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        yield json.loads(line)
+            return
+        except Exception:
+            return
+    pkl = cache_table_path(project_id, table)
+    if pkl.exists():
+        try:
+            with pkl.open("rb") as f:
+                rows = pickle.load(f) or []
+            for row in rows:
+                yield row
+        except Exception:
+            return
+
+
 def read_table_rows(project_id: str, table: str) -> Optional[List[Dict[str, Any]]]:
     """Lazily load one table's rows from disk.
 

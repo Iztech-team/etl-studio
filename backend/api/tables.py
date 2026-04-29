@@ -12,6 +12,18 @@ from utils import extract_cache
 router = APIRouter()
 
 
+# Tables we deliberately DO NOT eager-load — they're large enough that
+# materializing as Python list[dict] would push past available RAM on
+# typical machines. The strategy reads them via Context.iter_streamed()
+# row-by-row from the JSONL cache instead.
+SKIP_EAGER_LOAD = {
+    # Only the truly enormous tables. Purchase line rows (~15K) and
+    # return line rows (~8K each) fit in RAM without issue and don't
+    # justify the streaming-emit refactor.
+    "CATESINVDOCDETT",  # ~1M+ sales invoice line rows on full Al Arabi data
+}
+
+
 def _list_cached_tables(project_id: str) -> List[str]:
     """Return the table names recorded in the cache metadata, or [] if missing."""
     try:
@@ -47,10 +59,12 @@ def _ensure_rows_loaded(
     else:
         wanted = list(tables)
     # Treat both 'missing key' and 'present-but-empty' as needs-loading.
-    # The streaming CSV extract path puts an empty-list placeholder in
-    # raw["tables"][name] (rows live on disk in JSONL), so checking
-    # `t not in raw_tables` would skip the lazy-load entirely.
-    needed = [t for t in wanted if not raw_tables.get(t)]
+    # Skip giant tables in SKIP_EAGER_LOAD — those are streamed by the
+    # strategy via Context.iter_streamed() to keep peak RSS bounded.
+    needed = [
+        t for t in wanted
+        if not raw_tables.get(t) and t not in SKIP_EAGER_LOAD
+    ]
     if not needed:
         return
 

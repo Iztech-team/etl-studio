@@ -87,22 +87,66 @@ class ErpnextStrategy(TransformStrategy):
         tables: dict[str, list[dict[str, Any]]],
         config: dict[str, Any],
         staging_dir: str | None = None,
+        table_loader=None,
     ) -> StrategyResult:
         result = StrategyResult()
         if staging_dir:
             result.use_disk_staging(staging_dir)
-        ctx = Context.build(tables, config, result)
+        ctx = Context.build(tables, config, result, table_loader=table_loader)
         self._record_intake(ctx)
+        # Phase-by-phase emit. Each phase's source tables are freed
+        # immediately after to bound peak RSS — particularly important
+        # for the invoice phase which streams CATESINVDOCDETT (1M+ rows)
+        # from disk rather than ever loading it into memory.
         emit_masters(ctx)
+        ctx.free_table("UNITT")
+
         emit_items(ctx)
         emit_item_prices(ctx)
+        ctx.free_table("CATEGORYT")
+        ctx.free_table("CATPRICET")
+        ctx.free_table("CATESYNONYMT")
+        ctx.free_table("CATSUPPLIERT")
+        ctx.free_table("CATDESCT")
+
         emit_parties(ctx)
-        emit_accounts(ctx)
+        ctx.free_table("CUSTT")
+        ctx.free_table("SUPPLIERT")
+        ctx.free_table("CONTACTST")
+
+        emit_accounts(ctx)  # ACCOUNTT kept — invoices/payments/journals use it
+
         emit_invoices(ctx)
+        # CATESINVDOCDETT was streamed, never loaded
+        ctx.free_table("CATESINVDOCT")
+        ctx.free_table("CATESRETINVDOCT")
+        ctx.free_table("CATESRETINVDOCDETT")
+        ctx.free_table("CATEPINVDOCT")
+        ctx.free_table("CATEPRETINVDOCT")
+        ctx.free_table("CATEPRETINVDOCDETT")
+
         emit_payments(ctx)
+        ctx.free_table("RECDOCT")
+        ctx.free_table("RECDOCDETT")
+        ctx.free_table("PAYDOCT")
+        ctx.free_table("PAYDOCDETT")
+        ctx.free_table("CHEQUET")
+
         emit_journals(ctx)
+        ctx.free_table("ENTRYDOCT")
+        ctx.free_table("ENTRYDOCDETT")
+        ctx.free_table("STARTENTRYDOCT")
+        ctx.free_table("STARTENTRYDOCDETT")
+        ctx.free_table("DNOTEDOCT")
+        ctx.free_table("DNOTEDOCDETT")
+
         emit_stock_opening(ctx)
+        ctx.free_table("CATSTORET")
+
         emit_employees(ctx)
+        ctx.free_table("EMPLOYEET")
+        ctx.free_table("ACCOUNTT")  # safe to drop now
+
         emit_audit(ctx)
         return result
 
