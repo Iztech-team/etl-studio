@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import pickle
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -46,6 +47,10 @@ def cache_rows_dir(project_id: str) -> Path:
 
 def cache_table_path(project_id: str, table: str) -> Path:
     return cache_rows_dir(project_id) / f"{_safe(table)}.pkl"
+
+
+def cache_table_path_jsonl(project_id: str, table: str) -> Path:
+    return cache_rows_dir(project_id) / f"{_safe(table)}.jsonl"
 
 
 def signature_path(project_id: str) -> Path:
@@ -112,19 +117,32 @@ def write(project_id: str, raw: Dict[str, Any], uploads_dir: str) -> None:
     )
     os.replace(meta_tmp, meta_path)
 
-    # Write one pickle per table. Existing rows files for tables no longer
-    # in `tables` get cleaned up so a stale leftover never confuses lazy
-    # loading later.
+    # Per-table row persistence has two paths:
+    #   - JSONL staging files exist on disk (CSV streamed-extract path).
+    #     Move them to the cache dir; rows never need to enter Python's
+    #     memory just to be re-pickled.
+    #   - Rows are in `tables[name]` (Excel/SQL paths). Pickle them as
+    #     before.
+    staged_rows = raw.get("staged_rows") or {}
     for tname in table_names:
-        rows = tables[tname]
+        rows = tables.get(tname) or []
+        staged_path = staged_rows.get(tname)
+        if staged_path and os.path.exists(staged_path):
+            dest = cache_table_path_jsonl(project_id, tname)
+            tmp = dest.with_suffix(".jsonl.tmp")
+            shutil.move(staged_path, tmp)
+            os.replace(tmp, dest)
+            continue
         path = cache_table_path(project_id, tname)
         tmp = path.with_suffix(".pkl.tmp")
         with tmp.open("wb") as f:
             pickle.dump(rows, f, protocol=pickle.HIGHEST_PROTOCOL)
         os.replace(tmp, path)
-    # Sweep stray pickles from a prior write that aren't in this set.
-    keep = {f"{_safe(t)}.pkl" for t in table_names}
-    for p in rows_dir.glob("*.pkl"):
+    # Sweep stray rows files from a prior write that aren't in this set.
+    keep = {f"{_safe(t)}.pkl" for t in table_names} | {
+        f"{_safe(t)}.jsonl" for t in table_names
+    }
+    for p in list(rows_dir.glob("*.pkl")) + list(rows_dir.glob("*.jsonl")):
         if p.name not in keep:
             try:
                 p.unlink()
@@ -145,13 +163,24 @@ def read_meta(project_id: str) -> Dict[str, Any]:
 
 
 def read_table_rows(project_id: str, table: str) -> Optional[List[Dict[str, Any]]]:
-    """Lazily load one table's rows from its pickle. Returns None if the
-    table isn't in the cache (e.g. cache stale or table removed)."""
-    path = cache_table_path(project_id, table)
-    if not path.exists():
+    """Lazily load one table's rows from disk.
+
+    Prefers the JSONL form (written by the streaming CSV path) and
+    falls back to the legacy pickle form (Excel / SQL extraction or
+    older caches). Returns None if neither exists.
+    """
+    jsonl = cache_table_path_jsonl(project_id, table)
+    if jsonl.exists():
+        try:
+            with jsonl.open("r", encoding="utf-8") as f:
+                return [json.loads(line) for line in f if line.strip()]
+        except Exception:
+            pass
+    pkl = cache_table_path(project_id, table)
+    if not pkl.exists():
         return None
     try:
-        with path.open("rb") as f:
+        with pkl.open("rb") as f:
             return pickle.load(f)
     except Exception:
         return None

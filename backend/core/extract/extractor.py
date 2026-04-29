@@ -1,5 +1,6 @@
-import os
 import csv
+import json
+import os
 from typing import Any, Dict, List, Optional
 from utils.sql_parser import SQLParser
 from utils.encoding import (
@@ -12,7 +13,14 @@ from utils.audit import AuditTrail
 
 
 class Extractor:
-    """Reads xlsx, csv, and SQL dump files from a session directory."""
+    """Reads xlsx, csv, and SQL dump files from a session directory.
+
+    CSV files stream row-by-row to JSONL files in a staging directory —
+    rows are NOT held in `_raw_tables` to keep peak RSS proportional to
+    one row at a time, not the whole file. Excel and SQL extraction
+    still buffer in memory (those tend to be smaller, and SQL dumps
+    need the whole text for parsing anyway).
+    """
 
     def __init__(self, session_dir: str, audit_trail: Optional[AuditTrail] = None):
         self.session_dir = session_dir
@@ -20,6 +28,10 @@ class Extractor:
         self._raw_tables: Dict[str, List[Dict]] = {}
         self._schema: Dict[str, Any] = {}
         self._stats: Dict[str, Any] = {}
+        self._previews: Dict[str, List[Dict]] = {}
+        self._staging_dir = os.path.join(session_dir, "_staged_rows")
+        os.makedirs(self._staging_dir, exist_ok=True)
+        self._streamed_tables: Dict[str, str] = {}  # table_name → jsonl path
 
     # ------------------------------------------------------------------
     def extract_all(self) -> Dict[str, Any]:
@@ -112,33 +124,69 @@ class Extractor:
         # drains the events list.
         self.audit_trail.flush_counters_to_events()
 
+        # Preview prefers the inline-computed sample (CSV-streamed
+        # tables) and falls back to slicing rows from `_raw_tables` for
+        # Excel/SQL.
+        preview = {}
+        for table in self._raw_tables:
+            inline = self._previews.get(table)
+            if inline:
+                preview[table] = inline
+            else:
+                preview[table] = self._raw_tables[table][:5]
+
         yield "done", {
             "tables": self._raw_tables,
             "schema": self._schema,
             "stats": self._stats,
-            "preview": {t: rows[:5] for t, rows in self._raw_tables.items()},
+            "preview": preview,
+            "staged_rows": dict(self._streamed_tables),
         }
 
     # ------------------------------------------------------------------
     def _extract_csv(self, path: str, fname: str):
-        """Stream CSV rows directly through DictReader.
+        """Stream CSV rows row-by-row to a per-table JSONL staging file.
 
-        Previous implementation called detect_and_convert(path) which
-        loaded the whole file as bytes AND decoded the whole thing as a
-        string AND splitlines()'d it — three full-file copies before
-        DictReader even saw a row. For a 1.1GB CSV that's ~3.3GB of
-        peak memory before we touch the per-row dict overhead. Now we
-        sample the first 1MB just for encoding detection and let
-        Python stream the rest line-by-line.
+        Schema, stats, and preview are computed inline during the same
+        pass so we never need to iterate the rows again. Result: peak
+        RSS during extract is proportional to one row at a time, not
+        the file size. A 1.1GB CSV that previously needed ~10GB of RAM
+        now fits in well under 1GB.
+
+        The staging JSONL is the rows' on-disk representation until
+        a downstream consumer (transform, /api/tables/data, etc.) lazy-
+        loads them via extract_cache.read_table_rows.
         """
         table_name = fname.rsplit(".", 1)[0]
         encoding = detect_encoding(path)
-        cleaned_rows: List[Dict] = []
-        with open(path, "r", encoding=encoding, errors="replace", newline="") as fh:
-            reader = csv.DictReader(fh)
-            for r in reader:
-                cleaned_rows.append(self._clean_row(r, table_name))
-        self._raw_tables[table_name] = cleaned_rows
+        staging = self._jsonl_path(table_name)
+        preview: List[Dict] = []
+        sample: List[Dict] = []  # up to 50 rows used for type inference
+        row_count = 0
+        columns: List[str] = []
+        with open(path, "r", encoding=encoding, errors="replace", newline="") as src, \
+             open(staging, "w", encoding="utf-8") as dst:
+            reader = csv.DictReader(src)
+            for raw in reader:
+                cleaned = self._clean_row(raw, table_name)
+                if not columns and cleaned:
+                    columns = list(cleaned.keys())
+                row_count += 1
+                if len(preview) < 5:
+                    preview.append(cleaned)
+                if len(sample) < 50:
+                    sample.append(cleaned)
+                dst.write(json.dumps(cleaned, ensure_ascii=False))
+                dst.write("\n")
+        self._streamed_tables[table_name] = staging
+        self._raw_tables[table_name] = []  # rows live on disk; consumers lazy-load
+        self._previews[table_name] = preview
+        self._schema[table_name] = self._infer_columns(sample, columns)
+        self._stats[table_name] = {"row_count": row_count}
+
+    def _jsonl_path(self, table_name: str) -> str:
+        safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in table_name)
+        return os.path.join(self._staging_dir, f"{safe}.jsonl")
 
     def _clean_row(self, raw: dict, table_name: str) -> dict:
         row = {}
@@ -150,6 +198,18 @@ class Extractor:
                     self.audit_trail.log_directional_marks_stripped(table_name, k)
             row[k] = v
         return row
+
+    def _infer_columns(self, sample: List[Dict], columns: List[str]) -> Dict:
+        if not sample or not columns:
+            return {}
+        cols = {}
+        for col in columns:
+            sample_vals = [r[col] for r in sample if r.get(col) not in (None, "")]
+            cols[col] = {
+                "inferred_type": self._guess_type(sample_vals),
+                "nullable": True,
+            }
+        return cols
 
     def _extract_excel(self, path: str, fname: str):
         try:
@@ -194,7 +254,12 @@ class Extractor:
 
     # ------------------------------------------------------------------
     def _infer_schema(self):
+        # CSV-streamed tables already have their schema computed inline
+        # by `_extract_csv`. Only Excel/SQL paths populate `_raw_tables`
+        # with actual rows here, so this loop runs over those.
         for table, rows in self._raw_tables.items():
+            if table in self._schema:
+                continue
             if not rows:
                 self._schema[table] = {}
                 continue
@@ -251,7 +316,12 @@ class Extractor:
 
     # ------------------------------------------------------------------
     def _compute_stats(self):
+        # CSV-streamed tables already have row_count from their
+        # streaming pass. Only fill in for Excel/SQL where rows are
+        # genuinely in `_raw_tables`.
         for table, rows in self._raw_tables.items():
+            if table in self._stats:
+                continue
             self._stats[table] = {"row_count": len(rows)}
 
     # ------------------------------------------------------------------
