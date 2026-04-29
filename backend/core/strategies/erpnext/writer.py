@@ -87,19 +87,26 @@ def write_frappe_csvs(
     audit_report: dict | None = None,
     checklist_md: str | None = None,
     include_legacy_fields: bool = True,
+    staging_dir: str | None = None,
 ) -> list[str]:
     """Write all doctype CSVs in dependency order.
 
-    `include_legacy_fields=False` strips every `legacy_*` parent and child
-    column from the output so the admin doesn't have to register custom
-    fields in ERPnext before importing. The trade-off is loss of
-    traceback (e.g. mapping a Customer back to its legacy CUSTID).
+    Two input modes:
+    - `output_tables` populated (in-memory mode): iterate the dict and
+      emit per doctype.
+    - `staging_dir` set (disk-streaming mode): the strategy already
+      wrote per-doctype JSONL files there during transform. Read them
+      back lazily one doctype at a time so peak memory stays bounded.
+
+    `include_legacy_fields=False` strips every `legacy_*` parent and
+    child column from the output so the admin doesn't have to register
+    custom fields in ERPnext before importing.
 
     Returns the list of filenames produced (relative to output_dir).
     """
     os.makedirs(output_dir, exist_ok=True)
     written: list[str] = []
-    for doctype, records in output_tables.items():
+    for doctype, records in _iter_doctype_records(output_tables, staging_dir):
         if doctype.startswith("__") or not records:
             continue
         cleaned = _strip_legacy(records) if not include_legacy_fields else records
@@ -107,6 +114,60 @@ def write_frappe_csvs(
     written.extend(_write_audit_artifacts(output_dir, audit_report, checklist_md))
     written.sort()
     return written
+
+
+def _iter_doctype_records(
+    output_tables: dict[str, list[dict[str, Any]]],
+    staging_dir: str | None,
+):
+    """Yield (doctype, records) pairs from whichever source has data.
+
+    Disk-mode: read each JSONL file fully into memory ONLY for the
+    duration of writing that doctype's CSV, then drop. Keeps peak
+    memory bounded to one doctype's records at a time.
+    """
+    if staging_dir and os.path.isdir(staging_dir):
+        for fname in sorted(os.listdir(staging_dir)):
+            if not fname.endswith(".jsonl"):
+                continue
+            doctype = _doctype_from_jsonl(fname)
+            path = os.path.join(staging_dir, fname)
+            records: list[dict[str, Any]] = []
+            with open(path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    if line.strip():
+                        records.append(json.loads(line))
+            yield doctype, records
+    for doctype, records in output_tables.items():
+        if not doctype.startswith("__"):
+            yield doctype, records
+
+
+_DOCTYPE_FROM_SAFE = {
+    "uom": "UOM",
+    "warehouse": "Warehouse",
+    "price_list": "Price List",
+    "item_group": "Item Group",
+    "brand": "Brand",
+    "bank": "Bank",
+    "bank_account": "Bank Account",
+    "account": "Account",
+    "item": "Item",
+    "item_price": "Item Price",
+    "customer": "Customer",
+    "supplier": "Supplier",
+    "employee": "Employee",
+    "sales_invoice": "Sales Invoice",
+    "purchase_invoice": "Purchase Invoice",
+    "stock_reconciliation": "Stock Reconciliation",
+    "payment_entry": "Payment Entry",
+    "journal_entry": "Journal Entry",
+}
+
+
+def _doctype_from_jsonl(fname: str) -> str:
+    stem = fname[:-len(".jsonl")]
+    return _DOCTYPE_FROM_SAFE.get(stem, stem)
 
 
 def _strip_legacy(records: list[dict]) -> list[dict]:

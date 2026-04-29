@@ -2734,6 +2734,7 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 						/>
 					)}
 					{runErr && <RlErrorPanel message={runErr} />}
+					{running && <TransformRunningPanel />}
 					<TransformActions
 						disabled={running || !uploadResult?.sessionId || missingFields.length > 0}
 						running={running}
@@ -2743,6 +2744,98 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 					/>
 				</>
 			)}
+		</div>
+	);
+}
+
+function TransformRunningPanel() {
+	const PHASES = [
+		"Reading legacy tables…",
+		"Building items + barcodes…",
+		"Resolving customers and suppliers…",
+		"Walking chart of accounts…",
+		"Aggregating sales invoices…",
+		"Streaming output to disk…",
+	];
+	const [phase, setPhase] = useState(0);
+	const [pulseOffset, setPulseOffset] = useState(0);
+	useEffect(() => {
+		const phaseTimer = window.setInterval(
+			() => setPhase((p) => (p + 1) % PHASES.length),
+			2400,
+		);
+		const pulseTimer = window.setInterval(
+			() => setPulseOffset((o) => (o + 6) % 60),
+			60,
+		);
+		return () => {
+			window.clearInterval(phaseTimer);
+			window.clearInterval(pulseTimer);
+		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
+	return (
+		<div className="panel" style={{ borderColor: "var(--lg-magenta)" }}>
+			<div className="panel-head">
+				<span className="pixel glow-magenta" style={{ color: "var(--lg-magenta)" }}>
+					▣ TRANSFORM IN PROGRESS
+				</span>
+			</div>
+			<div
+				className="panel-body"
+				style={{
+					display: "flex",
+					flexDirection: "column",
+					alignItems: "center",
+					gap: 14,
+					padding: "26px 20px",
+				}}
+			>
+				<div className="sprite-disk" />
+				<div
+					className="pixel"
+					style={{ fontSize: 13, color: "var(--lg-magenta)", letterSpacing: "0.15em" }}
+				>
+					{PHASES[phase]}
+				</div>
+				<div
+					style={{
+						width: "100%",
+						maxWidth: 380,
+						height: 10,
+						border: "1px solid var(--lg-border-br)",
+						background: "var(--lg-bg-2)",
+						overflow: "hidden",
+						position: "relative",
+					}}
+				>
+					<div
+						style={{
+							position: "absolute",
+							top: 0,
+							bottom: 0,
+							left: `${pulseOffset - 30}%`,
+							width: "30%",
+							background:
+								"linear-gradient(90deg, transparent, var(--lg-magenta), transparent)",
+							boxShadow: "0 0 12px rgba(176,102,255,0.6)",
+						}}
+					/>
+				</div>
+				<div
+					className="mono"
+					style={{
+						fontSize: 10,
+						color: "var(--lg-ink-mute)",
+						maxWidth: 380,
+						lineHeight: 1.5,
+						textAlign: "center",
+					}}
+				>
+					Output streams to disk during transform — peak memory stays
+					bounded so large datasets don't OOM. Don't close this tab.
+				</div>
+			</div>
 		</div>
 	);
 }

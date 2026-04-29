@@ -27,7 +27,10 @@ def emit_audit(ctx: Context) -> None:
 
 def _emit_preservation_report(ctx: Context) -> None:
     legacy_counts = _legacy_counts(ctx)
-    output_counts = {dt: len(rows) for dt, rows in ctx.result.output_tables.items()}
+    # Use doctype_counts() so this works regardless of whether the
+    # strategy ran in in-memory or disk-streaming mode — it tracks emits
+    # via a counter independent of where rows ended up.
+    output_counts = ctx.result.doctype_counts()
     report = {
         "legacy_row_counts": legacy_counts,
         "output_doctype_counts": output_counts,
@@ -53,7 +56,7 @@ def _preservation_summary(
     rows: list[dict[str, Any]] = []
     rows.append(_check(
         "Items",
-        legacy.get("CATEGORYT", 0) - len(_deleted_catids(ctx)),
+        max(0, legacy.get("CATEGORYT", 0) - len(_deleted_catids(ctx))),
         output.get("Item", 0),
     ))
     rows.append(_check(

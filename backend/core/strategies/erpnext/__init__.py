@@ -86,8 +86,11 @@ class ErpnextStrategy(TransformStrategy):
         self,
         tables: dict[str, list[dict[str, Any]]],
         config: dict[str, Any],
+        staging_dir: str | None = None,
     ) -> StrategyResult:
         result = StrategyResult()
+        if staging_dir:
+            result.use_disk_staging(staging_dir)
         ctx = Context.build(tables, config, result)
         self._record_intake(ctx)
         emit_masters(ctx)

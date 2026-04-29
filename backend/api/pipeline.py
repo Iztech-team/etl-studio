@@ -57,17 +57,27 @@ def _strategy_result(
     legacy: Dict[str, List[dict]],
     strategy_name: str,
     config: Dict[str, Any],
+    staging_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
+    if staging_dir:
+        _clear_dir(staging_dir)
     strategy = get_strategy(strategy_name)
-    out: StrategyResult = strategy.transform(legacy, config)
-    real_tables = {k: v for k, v in out.output_tables.items() if not k.startswith("__")}
-    if not real_tables:
+    out: StrategyResult = strategy.transform(legacy, config, staging_dir=staging_dir)
+    out.close_files()
+    counts = out.doctype_counts()
+    if not counts:
         return _passthrough_result(legacy)
-    total = sum(len(rows) for rows in real_tables.values())
+    total = sum(counts.values())
     audit_rows = out.output_tables.get("__audit_report__") or []
     checklist_rows = out.output_tables.get("__migration_setup_checklist__") or []
+    # In disk mode we don't surface real doctype data through `tables`
+    # (it lives on disk via staging_dir); pass an empty dict but keep
+    # output_doctypes and the staging_dir on the result so the writer
+    # can find the JSONL files later.
     return _result_shape(
-        tables=real_tables,
+        tables={} if staging_dir else {
+            k: v for k, v in out.output_tables.items() if not k.startswith("__")
+        },
         total_rows=total,
         warnings=[w.get("message", "") for w in out.warnings],
         note=f"strategy={strategy_name}",
@@ -78,6 +88,8 @@ def _strategy_result(
         audit_report=audit_rows[0] if audit_rows else None,
         setup_checklist_md=(checklist_rows[0] or {}).get("content")
                            if checklist_rows else None,
+        output_doctypes=counts,
+        staging_dir=staging_dir,
     )
 
 
@@ -92,11 +104,14 @@ def _result_shape(
     strategy_label: Optional[str] = None,
     audit_report: Optional[Dict[str, Any]] = None,
     setup_checklist_md: Optional[str] = None,
+    output_doctypes: Optional[Dict[str, int]] = None,
+    staging_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
+    counts = output_doctypes or {t: len(rows) for t, rows in tables.items()}
     return {
         "ok": True,
         "tables": tables,
-        "tables_transformed": len(tables),
+        "tables_transformed": len(counts) or len(tables),
         "total_rows": total_rows,
         "encoding_conversions": 0,
         "type_conversions": 0,
@@ -111,9 +126,10 @@ def _result_shape(
         "strategy_label": strategy_label,
         "strategy_stats": stats or {},
         "strategy_errors": errors or [],
-        "output_doctypes": {t: len(rows) for t, rows in tables.items()},
+        "output_doctypes": counts,
         "audit_report": audit_report,
         "setup_checklist_md": setup_checklist_md,
+        "staging_dir": staging_dir,
     }
 
 
@@ -126,7 +142,37 @@ def _resolve_strategy(s: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
 def _run_transform(s: Dict[str, Any]) -> Dict[str, Any]:
     legacy = _legacy_tables(s)
     name, config = _resolve_strategy(s)
-    return _strategy_result(legacy, name, config)
+    staging_dir = _transform_staging_dir(s)
+    result = _strategy_result(legacy, name, config, staging_dir=staging_dir)
+    # Source tables can be freed now that the strategy has consumed them
+    # — they're still on disk via the JSONL extract cache and lazy-load
+    # if the user re-runs transform. Frees ~1-3GB of RSS for big imports.
+    raw = s.get("raw") or {}
+    if isinstance(raw.get("tables"), dict):
+        for tname in list(raw["tables"].keys()):
+            raw["tables"][tname] = []
+    return result
+
+
+def _transform_staging_dir(s: Dict[str, Any]) -> Optional[str]:
+    """Per-session/project dir where strategy emits stream as JSONL."""
+    project_id = s.get("project_id")
+    if project_id:
+        from persistence.project_state import project_dir
+        return os.path.join(project_dir(project_id), "_transform_out")
+    return None
+
+
+def _clear_dir(path: str) -> None:
+    if not os.path.isdir(path):
+        return
+    for entry in os.listdir(path):
+        full = os.path.join(path, entry)
+        if os.path.isfile(full):
+            try:
+                os.remove(full)
+            except OSError:
+                pass
 
 
 async def _ensure_transformed(session_id: str) -> None:
@@ -260,6 +306,7 @@ def _run_frappe_writer(session: Dict[str, Any], out_dir: str) -> Dict[str, Any]:
     tables = transformed.get("tables") or {}
     audit_report = transformed.get("audit_report")
     checklist_md = transformed.get("setup_checklist_md")
+    staging_dir = transformed.get("staging_dir")
     config = session.get("strategy_config") or {}
     include_legacy = bool(config.get("include_legacy_fields", True))
     files = write_frappe_csvs(
@@ -267,9 +314,12 @@ def _run_frappe_writer(session: Dict[str, Any], out_dir: str) -> Dict[str, Any]:
         audit_report=audit_report,
         checklist_md=checklist_md,
         include_legacy_fields=include_legacy,
+        staging_dir=staging_dir,
     )
-    rows_written = {dt: len(rows) for dt, rows in tables.items()
-                    if not dt.startswith("__") and rows}
+    rows_written = transformed.get("output_doctypes") or {
+        dt: len(rows) for dt, rows in tables.items()
+        if not dt.startswith("__") and rows
+    }
     return {
         "ok": True,
         "output_files": files,
