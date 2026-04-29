@@ -5,6 +5,9 @@ gender, date_of_birth, date_of_joining. The legacy data routinely uses
 the 1899-12-30 sentinel for unknown dates so we fall back to defensible
 defaults rather than skip the row.
 """
+
+from datetime import datetime, timedelta
+
 from core.strategies.erpnext.common import (
     clean_str,
     employee_id,
@@ -81,21 +84,17 @@ def _join_date(ctx: Context, row: dict) -> str:
     )
 
 
-def _relieving_date(
-    row: dict,
-    is_working: bool,
-    join_date: str,
-    ctx: Context,
-) -> str:
-    """v16 requires a relieving_date whenever status is 'Left'. Use the
-    legacy EMPENDDATE if it's a real date, otherwise fall back to the
-    opening date so the field is populated and import succeeds — admin
-    can correct individual records post-migration if needed.
-    """
+def _relieving_date(row, is_working, join_date, ctx):
     if is_working:
         return ""
-    return (
-        parse_date(row.get("EMPENDDATE"))
-        or ctx.config.opening_date
-        or join_date
-    )
+
+    jd = datetime.strptime(join_date, "%Y-%m-%d")
+
+    for d in (
+        parse_date(row.get("EMPENDDATE")),
+        ctx.config.opening_date,
+    ):
+        if d and datetime.strptime(d, "%Y-%m-%d") > jd:
+            return d
+
+    return (jd + timedelta(days=1)).strftime("%Y-%m-%d")
