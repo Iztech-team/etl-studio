@@ -46,7 +46,11 @@ def _ensure_rows_loaded(
         wanted = list(raw.get("schema", {}).keys()) or _list_cached_tables(project_id)
     else:
         wanted = list(tables)
-    needed = [t for t in wanted if t not in raw_tables]
+    # Treat both 'missing key' and 'present-but-empty' as needs-loading.
+    # The streaming CSV extract path puts an empty-list placeholder in
+    # raw["tables"][name] (rows live on disk in JSONL), so checking
+    # `t not in raw_tables` would skip the lazy-load entirely.
+    needed = [t for t in wanted if not raw_tables.get(t)]
     if not needed:
         return
 

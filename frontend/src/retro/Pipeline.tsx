@@ -974,12 +974,23 @@ function RlUpload({ onNext }: { onNext: () => void }) {
 									)}
 								</>
 							) : (
-								<div
-									className="mono"
-									style={{ fontSize: 11, color: "var(--lg-ink-mute)" }}
-								>
-									Connecting to database…
-								</div>
+								<>
+									<div
+										className="mono"
+										style={{ fontSize: 11, color: "var(--lg-ink-mute)" }}
+									>
+										{staged.some((s) => isDbFile(s.file.name))
+											? "Connecting to database…"
+											: "Processing files server-side…"}
+									</div>
+									<div
+										className="mono"
+										style={{ fontSize: 10, color: "var(--lg-ink-mute)", maxWidth: 360, lineHeight: 1.5 }}
+									>
+										Reading and indexing your data into staging files. Large
+										uploads take a moment.
+									</div>
+								</>
 							)}
 							<div
 								className="mono"
