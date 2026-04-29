@@ -248,6 +248,85 @@ function fmtSize(n: number): string {
 	return (n / (1024 * 1024 * 1024)).toFixed(1) + " GB";
 }
 
+// We're in the "uploading bytes" phase iff progress is non-null AND we
+// haven't reached 100% yet. Once 100% is reached, the backend has the
+// file and we hand off to the extraction phase.
+function _isUploadingPhase(p: UploadProgress | null): boolean {
+	if (!p) return false;
+	if (p.total === 0) return true;
+	return p.loaded < p.total;
+}
+
+function UploadProgressView({
+	progress,
+	fileCount,
+}: {
+	progress: UploadProgress;
+	fileCount: number;
+}) {
+	const pct = progress.total > 0
+		? Math.min(100, Math.floor((progress.loaded / progress.total) * 100))
+		: 0;
+	return (
+		<>
+			<div
+				className="pixel"
+				style={{ fontSize: 14, color: "var(--lg-amber)", letterSpacing: "0.15em" }}
+			>
+				UPLOADING…
+			</div>
+			<div className="mono" style={{ fontSize: 11, color: "var(--lg-ink-dim)" }}>
+				{fileCount} FILE{fileCount === 1 ? "" : "S"} · {fmtSize(progress.loaded)} /{" "}
+				{progress.total > 0 ? fmtSize(progress.total) : "…"}
+			</div>
+			<div
+				style={{
+					width: "100%",
+					maxWidth: 360,
+					height: 12,
+					marginTop: 6,
+					border: "1px solid var(--lg-border-br)",
+					background: "var(--lg-bg-2)",
+					position: "relative",
+					overflow: "hidden",
+				}}
+			>
+				<div
+					style={{
+						width: `${pct}%`,
+						height: "100%",
+						background: "var(--lg-amber)",
+						transition: "width 120ms linear",
+						boxShadow: "0 0 8px rgba(255,179,71,0.6)",
+					}}
+				/>
+				<div
+					className="pixel"
+					style={{
+						position: "absolute",
+						top: 0,
+						left: 0,
+						right: 0,
+						bottom: 0,
+						display: "flex",
+						alignItems: "center",
+						justifyContent: "center",
+						fontSize: 9,
+						color: pct > 50 ? "#1a1006" : "var(--lg-ink)",
+						mixBlendMode: pct > 50 ? "normal" : "normal",
+						letterSpacing: "0.15em",
+					}}
+				>
+					{pct}%
+				</div>
+			</div>
+			<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginTop: 4 }}>
+				Don't close this tab until the upload reaches 100%.
+			</div>
+		</>
+	);
+}
+
 type ExtractEvent =
 	| { event: "listing" }
 	| { event: "start"; tables: string[] }
@@ -337,6 +416,54 @@ async function consumeExtractStream(
 	return finalPayload;
 }
 
+type UploadProgress = { loaded: number; total: number };
+
+// fetch() doesn't expose upload progress — XMLHttpRequest does. Wrap it
+// in a fetch-shaped Promise<Response> so callers stay simple.
+function xhrUpload(
+	url: string,
+	body: FormData,
+	options: {
+		onProgress?: (p: UploadProgress) => void;
+		signal?: AbortSignal;
+	} = {},
+): Promise<Response> {
+	return new Promise((resolve, reject) => {
+		const xhr = new XMLHttpRequest();
+		xhr.open("POST", url);
+		if (options.onProgress) {
+			xhr.upload.onprogress = (e) => {
+				if (e.lengthComputable) {
+					options.onProgress!({ loaded: e.loaded, total: e.total });
+				}
+			};
+		}
+		xhr.onload = () => {
+			const headers = new Headers();
+			const ct = xhr.getResponseHeader("Content-Type");
+			if (ct) headers.set("Content-Type", ct);
+			resolve(
+				new Response(xhr.responseText, {
+					status: xhr.status,
+					statusText: xhr.statusText,
+					headers,
+				}),
+			);
+		};
+		xhr.onerror = () => reject(new Error("Network error"));
+		xhr.onabort = () => reject(new DOMException("Aborted", "AbortError"));
+		if (options.signal) {
+			if (options.signal.aborted) {
+				xhr.abort();
+				return;
+			}
+			options.signal.addEventListener("abort", () => xhr.abort());
+		}
+		xhr.send(body);
+	});
+}
+
+
 async function uploadToBackend(
 	files: File[],
 	projectId: string | null,
@@ -344,6 +471,7 @@ async function uploadToBackend(
 	onEvent?: (event: ExtractEvent) => void,
 	onSessionReady?: (sessionId: string) => void,
 	signal?: AbortSignal,
+	onUploadProgress?: (p: UploadProgress) => void,
 ): Promise<UploadResult> {
 	// If any file is a DB file, use the two-phase endpoints:
 	//   1. POST /api/upload-db          (sync — returns session_id once file is on disk)
@@ -355,7 +483,10 @@ async function uploadToBackend(
 		const uploadForm = new FormData();
 		uploadForm.append("file", dbFile);
 		if (projectId) uploadForm.append("project_id", projectId);
-		const upRes = await fetch("/api/upload-db", { method: "POST", body: uploadForm, signal });
+		const upRes = await xhrUpload("/api/upload-db", uploadForm, {
+			onProgress: onUploadProgress,
+			signal,
+		});
 		if (!upRes.ok) {
 			const err = await upRes.json().catch(() => null);
 			throw new Error(err?.detail || `Upload failed (HTTP ${upRes.status})`);
@@ -386,7 +517,10 @@ async function uploadToBackend(
 	const form = new FormData();
 	for (const f of files) form.append("files", f);
 	if (projectId) form.append("project_id", projectId);
-	const res = await fetch("/api/upload", { method: "POST", body: form, signal });
+	const res = await xhrUpload("/api/upload", form, {
+		onProgress: onUploadProgress,
+		signal,
+	});
 	if (!res.ok) {
 		const err = await res.json().catch(() => null);
 		throw new Error(err?.detail || "Upload failed");
@@ -567,6 +701,7 @@ function RlUpload({ onNext }: { onNext: () => void }) {
 	const [doneTables, setDoneTables] = useState<
 		{ name: string; rows: number }[]
 	>([]);
+	const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
 	const tableLogRef = useRef<HTMLDivElement | null>(null);
 	const abortRef = useRef<AbortController | null>(null);
 	const sessionRef = useRef<string | null>(null);
@@ -648,6 +783,7 @@ function RlUpload({ onNext }: { onNext: () => void }) {
 		setExtractStatus("Uploading…");
 		setAllTables([]);
 		setDoneTables([]);
+		setUploadProgress({ loaded: 0, total: 0 });
 		const dbFile = staged.find((s) => isDbFile(s.file.name));
 		try {
 			const password =
@@ -669,6 +805,7 @@ function RlUpload({ onNext }: { onNext: () => void }) {
 					}
 				},
 				ctrl.signal,
+				(p) => setUploadProgress(p),
 			);
 			clearActiveExtraction(projectId);
 			setUploadResult(result);
@@ -780,7 +917,11 @@ function RlUpload({ onNext }: { onNext: () => void }) {
 			<div className="panel">
 				<div className="panel-head">
 					<IUpload size={10} />{" "}
-					{uploading ? "EXTRACTING DATABASE" : "UPLOAD DATA FILES"}
+					{uploading
+						? _isUploadingPhase(uploadProgress)
+							? "UPLOADING TO SERVER"
+							: "EXTRACTING DATABASE"
+						: "UPLOAD DATA FILES"}
 				</div>
 				<div className="panel-body">
 					{uploading ? (
@@ -795,6 +936,10 @@ function RlUpload({ onNext }: { onNext: () => void }) {
 							}}
 						>
 							<div className="sprite-disk" style={{ margin: "0 auto 4px" }} />
+							{_isUploadingPhase(uploadProgress) ? (
+								<UploadProgressView progress={uploadProgress!} fileCount={staged.length} />
+							) : (
+								<>
 							<div
 								className="pixel"
 								style={{
@@ -849,6 +994,8 @@ function RlUpload({ onNext }: { onNext: () => void }) {
 								Extraction continues server-side. You can leave this page and
 								come back — progress is saved.
 							</div>
+								</>
+								)}
 						</div>
 					) : (
 						<div
