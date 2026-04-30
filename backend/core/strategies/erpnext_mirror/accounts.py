@@ -20,6 +20,7 @@ from typing import Iterable
 
 from core.strategies.erpnext_shared.common import (
     ROOT_TYPE_BY_ID,
+    account_full_name,
     clean_str,
     currency_iso,
     pick,
