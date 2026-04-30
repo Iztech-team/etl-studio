@@ -52,55 +52,71 @@ def _preservation_summary(
     legacy: dict[str, int],
     output: dict[str, int],
 ) -> list[dict[str, Any]]:
-    """One row per major preservation invariant, with pass/fail pulse."""
+    """One row per major preservation invariant, with pass/fail pulse.
+
+    Only checks entities the user selected — partial migrations skip the
+    rest so the report doesn't flag deliberately-omitted slices as
+    "short".
+    """
+    active = ctx.config.selected_entities
+    stats = ctx.result.stats
     rows: list[dict[str, Any]] = []
-    rows.append(_check(
-        "Items",
-        max(0, legacy.get("CATEGORYT", 0) - len(_deleted_catids(ctx))),
-        output.get("Item", 0),
-    ))
-    rows.append(_check(
-        "Item Prices (non-zero only)",
-        ctx.result.stats.get("item_prices_emitted", 0),
-        output.get("Item Price", 0),
-    ))
-    rows.append(_check(
-        "Customers (incl. walk-in + orphans)",
-        legacy.get("CUSTT", 0) + 1
-        + ctx.result.stats.get("orphan_customers_emitted", 0),
-        output.get("Customer", 0),
-    ))
-    rows.append(_check(
-        "Suppliers",
-        legacy.get("SUPPLIERT", 0),
-        output.get("Supplier", 0),
-    ))
-    rows.append(_check(
-        "Banks",
-        legacy.get("BANKT", 0),
-        output.get("Bank", 0),
-        slack=2,  # legacy may have duplicate bank names
-    ))
-    rows.append(_check(
-        "Bank Accounts",
-        legacy.get("BANKACCOUNTT", 0),
-        output.get("Bank Account", 0),
-    ))
-    rows.append(_check(
-        "Opening Journal Entries (parties + GL + cheques)",
-        ctx.result.stats.get("opening_customer_balances_emitted", 0)
-        + ctx.result.stats.get("opening_supplier_balances_emitted", 0)
-        + ctx.result.stats.get("opening_gl_balances_emitted", 0)
-        + ctx.result.stats.get("opening_cheques_emitted", 0),
-        output.get("Journal Entry", 0),
-    ))
-    rows.append(_check(
-        "Employees",
-        legacy.get("EMPLOYEET", 0),
-        output.get("Employee", 0),
-        slack=5,
-    ))
+    if "items" in active:
+        rows.append(_check(
+            "Items",
+            max(0, legacy.get("CATEGORYT", 0) - len(_deleted_catids(ctx))),
+            output.get("Item", 0),
+        ))
+        rows.append(_check(
+            "Item Prices (non-zero only)",
+            stats.get("item_prices_emitted", 0),
+            output.get("Item Price", 0),
+        ))
+    if "customers" in active:
+        rows.append(_check(
+            "Customers (incl. walk-in + orphans)",
+            legacy.get("CUSTT", 0) + 1 + stats.get("orphan_customers_emitted", 0),
+            output.get("Customer", 0),
+        ))
+    if "suppliers" in active:
+        rows.append(_check(
+            "Suppliers",
+            legacy.get("SUPPLIERT", 0),
+            output.get("Supplier", 0),
+        ))
+    if "bank_accounts" in active:
+        rows.append(_check(
+            "Banks",
+            legacy.get("BANKT", 0),
+            output.get("Bank", 0),
+            slack=2,
+        ))
+        rows.append(_check(
+            "Bank Accounts",
+            legacy.get("BANKACCOUNTT", 0),
+            output.get("Bank Account", 0),
+        ))
+    if "opening_balances" in active:
+        rows.append(_check(
+            "Opening Journal Entries (parties + GL + cheques)",
+            _opening_je_expected(stats),
+            output.get("Journal Entry", 0),
+        ))
+    if "employees" in active:
+        rows.append(_check(
+            "Employees",
+            legacy.get("EMPLOYEET", 0),
+            output.get("Employee", 0),
+            slack=5,
+        ))
     return rows
+
+
+def _opening_je_expected(stats: dict[str, int]) -> int:
+    """Sum every `opening_*_emitted` stat so mirror's per-leaf and native's
+    bucketed / bank-leaf JE counts both contribute to the same total."""
+    return sum(v for k, v in stats.items()
+               if k.startswith("opening_") and k.endswith("_emitted"))
 
 
 def _check(label: str, expected: int, actual: int, slack: int = 0) -> dict:

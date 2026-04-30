@@ -106,10 +106,9 @@ class ErpnextMirrorStrategy(TransformStrategy):
         if "employees" in active:
             emit_employees(ctx)
 
+        emit_audit(ctx)
         for tbl in list(ctx.legacy.keys()):
             ctx.free_table(tbl)
-
-        emit_audit(ctx)
         return result
 
     def _record_intake(self, ctx: Context) -> None:
