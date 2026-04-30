@@ -3197,16 +3197,7 @@ function StrategyConfigForm({
 	const entries = Object.entries(schema);
 	if (entries.length === 0) return null;
 	return (
-		<div
-			style={{
-				display: "grid",
-				gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-				gap: 14,
-				padding: "12px 14px",
-				border: "1px solid var(--lg-border)",
-				background: "var(--lg-bg-2)",
-			}}
-		>
+		<div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 			{entries.map(([key, field]) => (
 				<ConfigField
 					key={key}
@@ -3235,41 +3226,58 @@ function ConfigField({
 	const required = !!field.required;
 	const help = field.help;
 	const type = field.type ?? "string";
+
+	if (type === "boolean") {
+		return (
+			<label
+				className="mono"
+				title={help}
+				style={{
+					display: "flex",
+					alignItems: "center",
+					gap: 10,
+					fontSize: 12,
+					color: "var(--lg-ink)",
+				}}
+			>
+				<input
+					type="checkbox"
+					checked={!!value}
+					onChange={(e) => onChange(e.target.checked)}
+				/>
+				<span>
+					{label}
+					{required ? " *" : ""}
+				</span>
+			</label>
+		);
+	}
+
 	return (
-		<label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-			<span className="pixel" style={{ fontSize: 9, color: "var(--lg-ink-mute)", letterSpacing: "0.1em" }}>
+		<label
+			title={help}
+			style={{ display: "flex", flexDirection: "column", gap: 4 }}
+		>
+			<span
+				className="pixel"
+				style={{ fontSize: 9, color: "var(--lg-ink-mute)", letterSpacing: "0.1em" }}
+			>
 				{label}
 				{required ? " *" : ""}
 			</span>
-			{type === "boolean" ? (
-				<label className="mono" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "var(--lg-ink)" }}>
-					<input
-						type="checkbox"
-						checked={!!value}
-						onChange={(e) => onChange(e.target.checked)}
-					/>
-					{help || "enabled"}
-				</label>
-			) : (
-				<input
-					type={type === "date" ? "date" : "text"}
-					className="mono"
-					value={(value as string | number | undefined) ?? ""}
-					onChange={(e) => onChange(e.target.value)}
-					style={{
-						background: "var(--lg-bg-2)",
-						border: "1px solid var(--lg-border-br)",
-						color: "var(--lg-ink)",
-						padding: "8px 10px",
-						fontSize: 12,
-					}}
-				/>
-			)}
-			{help && type !== "boolean" && (
-				<span className="mono" style={{ fontSize: 9, color: "var(--lg-ink-dim)" }}>
-					{help}
-				</span>
-			)}
+			<input
+				type={type === "date" ? "date" : "text"}
+				className="mono"
+				value={(value as string | number | undefined) ?? ""}
+				onChange={(e) => onChange(e.target.value)}
+				style={{
+					background: "var(--lg-bg-2)",
+					border: "1px solid var(--lg-border-br)",
+					color: "var(--lg-ink)",
+					padding: "8px 10px",
+					fontSize: 12,
+				}}
+			/>
 		</label>
 	);
 }
@@ -3390,7 +3398,7 @@ function StrategyConfigModal({
 				style={{
 					background: "var(--lg-bg)",
 					border: "2px solid var(--lg-magenta)",
-					width: 640,
+					width: 420,
 					maxWidth: "92vw",
 					maxHeight: "90vh",
 					display: "flex",
@@ -3408,24 +3416,16 @@ function StrategyConfigModal({
 						background: "var(--lg-bg-2)",
 					}}
 				>
-					<div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-						<span
-							className="pixel"
-							style={{
-								fontSize: 11,
-								color: "var(--lg-magenta)",
-								letterSpacing: "0.1em",
-							}}
-						>
-							▣ EQUIP STRATEGY · {strategy.label.toUpperCase()}
-						</span>
-						<span
-							className="mono"
-							style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}
-						>
-							{strategy.description}
-						</span>
-					</div>
+					<span
+						className="pixel"
+						style={{
+							fontSize: 11,
+							color: "var(--lg-magenta)",
+							letterSpacing: "0.1em",
+						}}
+					>
+						{strategy.label.toUpperCase()}
+					</span>
 					<button
 						className="btn btn-ghost"
 						style={{ padding: "2px 6px", fontSize: 10 }}
@@ -3447,7 +3447,7 @@ function StrategyConfigModal({
 							className="mono"
 							style={{ fontSize: 11, color: "var(--lg-ink-dim)" }}
 						>
-							This strategy has no configuration. Click EQUIP to confirm.
+							No configuration needed.
 						</div>
 					)}
 				</div>
@@ -3455,33 +3455,27 @@ function StrategyConfigModal({
 				<div
 					style={{
 						display: "flex",
-						alignItems: "center",
-						justifyContent: "space-between",
+						justifyContent: "flex-end",
 						gap: 8,
-						padding: "12px 14px",
+						padding: "10px 14px",
 						borderTop: "1px solid var(--lg-border)",
 					}}
 				>
-					<div className="mono" style={{ fontSize: 10, color: "var(--lg-coral)" }}>
-						{missing.length > 0 ? `Missing: ${missing.join(", ")}` : ""}
-					</div>
-					<div style={{ display: "flex", gap: 8 }}>
-						<button
-							className="btn btn-ghost"
-							style={{ padding: "8px 16px", fontSize: 11 }}
-							onClick={onCancel}
-						>
-							CANCEL
-						</button>
-						<button
-							className="btn btn-primary"
-							style={{ padding: "8px 18px", fontSize: 11 }}
-							onClick={onEquip}
-							disabled={missing.length > 0}
-						>
-							▶ EQUIP
-						</button>
-					</div>
+					<button
+						className="btn btn-ghost"
+						style={{ padding: "6px 14px", fontSize: 11 }}
+						onClick={onCancel}
+					>
+						CANCEL
+					</button>
+					<button
+						className="btn btn-primary"
+						style={{ padding: "6px 16px", fontSize: 11 }}
+						onClick={onEquip}
+						disabled={missing.length > 0}
+					>
+						EQUIP
+					</button>
 				</div>
 			</div>
 		</div>
