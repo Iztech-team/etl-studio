@@ -6,6 +6,7 @@ from pathlib import Path
 from definitions import (
     CHECK_PIPELINE_RUN_EXISTS,
     CREATE_AUDIT_EVENTS_TABLE,
+    CREATE_ERPNEXT_CREDS_TABLE,
     CREATE_INDEX_AUDIT_EVENTS_PROJECT,
     CREATE_INDEX_AUDIT_EVENTS_RUN,
     CREATE_INDEX_PIPELINE_RUNS_PROJECT,
@@ -14,6 +15,7 @@ from definitions import (
     DELETE_PROJECT,
     FINISH_PIPELINE_RUN,
     GET_DASHBOARD_STATS,
+    GET_ERPNEXT_CREDS,
     GET_PIPELINE_RUN,
     GET_PROJECT,
     GET_PROJECT_USERNAME,
@@ -32,6 +34,7 @@ from definitions import (
     PRAGMA_JOURNAL_MODE_WAL,
     RENAME_PROJECT,
     UPDATE_PROJECT_PHASE,
+    UPSERT_ERPNEXT_CREDS,
 )
 
 _DB_PATH = Path(__file__).parent.parent / "data" / "etl_studio.db"
@@ -51,9 +54,24 @@ def init_db() -> None:
         conn.execute(CREATE_PROJECTS_TABLE)
         conn.execute(CREATE_PIPELINE_RUNS_TABLE)
         conn.execute(CREATE_AUDIT_EVENTS_TABLE)
+        conn.execute(CREATE_ERPNEXT_CREDS_TABLE)
         conn.execute(CREATE_INDEX_PIPELINE_RUNS_PROJECT)
         conn.execute(CREATE_INDEX_AUDIT_EVENTS_PROJECT)
         conn.execute(CREATE_INDEX_AUDIT_EVENTS_RUN)
+
+
+def save_erpnext_credentials(
+    project_id: str, url: str, api_key: str, api_secret: str, company: str | None,
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with _get_conn() as conn:
+        conn.execute(UPSERT_ERPNEXT_CREDS, (project_id, url, api_key, api_secret, company, now))
+
+
+def get_erpnext_credentials(project_id: str) -> dict | None:
+    with _get_conn() as conn:
+        row = conn.execute(GET_ERPNEXT_CREDS, (project_id,)).fetchone()
+        return dict(row) if row else None
 
 
 def backfill_pipeline_runs() -> int:

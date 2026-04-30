@@ -3480,6 +3480,7 @@ function RlExport({ onDone }: { onDone: () => void }) {
 
 	const FORMATS = usedStrategy
 		? [
+			{ id: "erpnext", label: "ERPNEXT (LIVE)", sub: "Push directly via REST API" },
 			{ id: "frappe", label: "FRAPPE CSV", sub: "ERPnext Data Import (chunked, ordered)" },
 			{ id: "json",   label: "JSON",       sub: "One object per row" },
 			{ id: "csv",    label: "CSV",        sub: "One file per table" },
@@ -3528,6 +3529,22 @@ function RlExport({ onDone }: { onDone: () => void }) {
 			setRunning(false);
 		}
 	};
+
+	if (fmt === "erpnext") {
+		return (
+			<ErpnextLiveExport
+				FORMATS={FORMATS}
+				fmt={fmt}
+				onFormatChange={(id) => {
+					if (loadResult) setLoadResult(null);
+					setFmt(id);
+				}}
+				sessionId={uploadResult?.sessionId ?? null}
+				projectId={projectId}
+				onDone={onDone}
+			/>
+		);
+	}
 
 	return (
 		<div
@@ -3750,6 +3767,384 @@ function RlExport({ onDone }: { onDone: () => void }) {
 		</div>
 	);
 }
+
+
+// ---------- ERPnext live export -------------------------------------------
+
+type ErpnextEvent = {
+	event: string;
+	[key: string]: unknown;
+};
+
+function ErpnextLiveExport({
+	FORMATS,
+	fmt,
+	onFormatChange,
+	sessionId,
+	projectId,
+	onDone,
+}: {
+	FORMATS: { id: string; label: string; sub: string }[];
+	fmt: string;
+	onFormatChange: (id: string) => void;
+	sessionId: string | null;
+	projectId: string | null;
+	onDone: () => void;
+}) {
+	const [url, setUrl] = useState("");
+	const [apiKey, setApiKey] = useState("");
+	const [apiSecret, setApiSecret] = useState("");
+	const [company, setCompany] = useState("");
+	const [running, setRunning] = useState(false);
+	const [events, setEvents] = useState<ErpnextEvent[]>([]);
+	const [error, setError] = useState<string | null>(null);
+	const abortRef = useRef<AbortController | null>(null);
+
+	useEffect(() => {
+		if (!projectId) return;
+		fetch(`/api/erpnext-credentials/${projectId}`)
+			.then((r) => r.json())
+			.then((d) => {
+				const c = d?.credentials;
+				if (!c) return;
+				setUrl(c.url ?? "");
+				setApiKey(c.api_key ?? "");
+				setApiSecret(c.api_secret ?? "");
+				setCompany(c.company ?? "");
+			})
+			.catch(() => {});
+	}, [projectId]);
+
+	const send = async () => {
+		if (!sessionId || !url || !apiKey || !apiSecret) return;
+		setRunning(true);
+		setError(null);
+		setEvents([]);
+		const ctl = new AbortController();
+		abortRef.current = ctl;
+		try {
+			const res = await fetch(`/api/load-erpnext/${sessionId}`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					url, api_key: apiKey, api_secret: apiSecret, company,
+				}),
+				signal: ctl.signal,
+			});
+			if (!res.ok || !res.body) {
+				const e = await res.json().catch(() => null);
+				throw new Error(e?.detail ?? `HTTP ${res.status}`);
+			}
+			const reader = res.body.getReader();
+			const decoder = new TextDecoder();
+			let buf = "";
+			while (true) {
+				const { value, done } = await reader.read();
+				if (done) break;
+				buf += decoder.decode(value, { stream: true });
+				let idx;
+				while ((idx = buf.indexOf("\n\n")) >= 0) {
+					const chunk = buf.slice(0, idx);
+					buf = buf.slice(idx + 2);
+					if (!chunk.startsWith("data: ")) continue;
+					try {
+						const ev = JSON.parse(chunk.slice(6)) as ErpnextEvent;
+						setEvents((prev) => [...prev, ev]);
+					} catch {}
+				}
+			}
+		} catch (e) {
+			if ((e as { name?: string })?.name !== "AbortError") {
+				setError(e instanceof Error ? e.message : "Send failed");
+			}
+		} finally {
+			setRunning(false);
+			abortRef.current = null;
+		}
+	};
+
+	const cancel = () => abortRef.current?.abort();
+
+	const complete = events.find((e) => e.event === "complete");
+	const fatalError = events.find((e) => e.event === "error" && !e.file);
+
+	return (
+		<div
+			style={{
+				display: "grid",
+				gridTemplateColumns: "240px 1fr 280px",
+				gap: 14,
+				marginTop: 14,
+			}}
+		>
+			<div className="panel">
+				<div className="panel-head">FORMAT</div>
+				<div className="panel-body" style={{ padding: 0 }}>
+					{FORMATS.map((f) => (
+						<div
+							key={f.id}
+							onClick={() => onFormatChange(f.id)}
+							className={`rl-fmt-row ${fmt === f.id ? "active" : ""}`}
+						>
+							<div
+								className="pixel"
+								style={{
+									fontSize: 9,
+									color: fmt === f.id ? "#0a0410" : "var(--lg-amber)",
+									letterSpacing: "0.1em",
+								}}
+							>
+								{f.label}
+							</div>
+							<div
+								className="mono"
+								style={{
+									fontSize: 10,
+									color: fmt === f.id ? "#0a0410" : "var(--lg-ink-mute)",
+									marginTop: 3,
+								}}
+							>
+								{f.sub}
+							</div>
+						</div>
+					))}
+				</div>
+			</div>
+
+			<div className="panel">
+				<div className="panel-head">ERPNEXT TARGET</div>
+				<div
+					className="panel-body"
+					style={{ display: "flex", flexDirection: "column", gap: 14 }}
+				>
+					<ErpnextField
+						label="URL"
+						value={url}
+						onChange={setUrl}
+						placeholder="https://erp.example.com"
+						disabled={running}
+					/>
+					<ErpnextField
+						label="API KEY"
+						value={apiKey}
+						onChange={setApiKey}
+						disabled={running}
+					/>
+					<ErpnextField
+						label="API SECRET"
+						value={apiSecret}
+						onChange={setApiSecret}
+						type="password"
+						disabled={running}
+					/>
+					<ErpnextField
+						label="COMPANY"
+						value={company}
+						onChange={setCompany}
+						placeholder="Al Arabi"
+						disabled={running}
+					/>
+					{events.length > 0 && (
+						<div
+							style={{
+								borderTop: "1px solid var(--lg-border)",
+								paddingTop: 10,
+								marginTop: 4,
+								display: "flex",
+								flexDirection: "column",
+								gap: 4,
+								maxHeight: 400,
+								overflowY: "auto",
+							}}
+						>
+							{events.map((ev, i) => (
+								<EventRow key={i} ev={ev} />
+							))}
+						</div>
+					)}
+					{error && (
+						<div className="mono" style={{ fontSize: 10, color: "var(--lg-coral)" }}>
+							{"> "}{error}
+						</div>
+					)}
+				</div>
+			</div>
+
+			<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+				<div className="panel">
+					<div className="panel-head">VERIFICATION</div>
+					<div className="panel-body">
+						{complete ? (
+							<VerificationList complete={complete} />
+						) : fatalError ? (
+							<div className="mono" style={{ fontSize: 10, color: "var(--lg-coral)" }}>
+								{String(fatalError.message ?? "failed")}
+							</div>
+						) : (
+							<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}>
+								Counts will appear here once import completes.
+							</div>
+						)}
+					</div>
+				</div>
+
+				{!complete ? (
+					<button
+						className={`btn btn-primary ${!running ? "pulse" : ""}`}
+						onClick={running ? cancel : send}
+						disabled={!sessionId || (!running && (!url || !apiKey || !apiSecret))}
+						style={{ fontSize: 13, padding: "12px 14px", justifyContent: "center" }}
+					>
+						{running ? "CANCEL" : "▶ SEND TO ERPNEXT"}
+					</button>
+				) : (
+					<button
+						className="btn btn-primary"
+						onClick={onDone}
+						style={{ fontSize: 13, padding: "12px 14px", justifyContent: "center" }}
+					>
+						DONE · BACK TO PROJECTS
+					</button>
+				)}
+			</div>
+		</div>
+	);
+}
+
+
+function ErpnextField({
+	label,
+	value,
+	onChange,
+	placeholder,
+	type = "text",
+	disabled,
+}: {
+	label: string;
+	value: string;
+	onChange: (v: string) => void;
+	placeholder?: string;
+	type?: string;
+	disabled?: boolean;
+}) {
+	return (
+		<label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+			<span
+				className="pixel"
+				style={{ fontSize: 9, color: "var(--lg-ink-mute)", letterSpacing: "0.1em" }}
+			>
+				{label}
+			</span>
+			<input
+				type={type}
+				className="mono"
+				value={value}
+				onChange={(e) => onChange(e.target.value)}
+				placeholder={placeholder}
+				disabled={disabled}
+				autoComplete="off"
+				spellCheck={false}
+				style={{
+					background: "var(--lg-bg-2)",
+					border: "1px solid var(--lg-border-br)",
+					color: "var(--lg-ink)",
+					padding: "8px 10px",
+					fontSize: 12,
+				}}
+			/>
+		</label>
+	);
+}
+
+
+function EventRow({ ev }: { ev: ErpnextEvent }) {
+	const file = (ev.file as string | undefined) ?? "";
+	const doctype = (ev.doctype as string | undefined) ?? "";
+	const stage = (ev.stage as string | undefined) ?? "";
+	const message = (ev.message as string | undefined) ?? "";
+	const reason = (ev.reason as string | undefined) ?? "";
+	const imported = (ev.imported as number | undefined) ?? null;
+	const failed = (ev.failed as number | undefined) ?? null;
+
+	const palette: Record<string, string> = {
+		begin: "var(--lg-cyan)",
+		stage: "var(--lg-cyan)",
+		done: "var(--lg-green)",
+		skipped: "var(--lg-amber)",
+		error: "var(--lg-coral)",
+		complete: "var(--lg-green)",
+	};
+	const color = palette[ev.event] ?? "var(--lg-ink-mute)";
+
+	let label = ev.event.toUpperCase();
+	if (file) label += ` · ${file}`;
+	else if (stage) label += ` · ${stage}`;
+	else if (doctype) label += ` · ${doctype}`;
+
+	let detail = "";
+	if (imported !== null) {
+		detail = `${imported} imported${failed ? `, ${failed} failed` : ""}`;
+	} else if (reason) {
+		detail = reason;
+	} else if (message) {
+		detail = message;
+	}
+
+	return (
+		<div
+			className="mono"
+			style={{ fontSize: 10, display: "flex", gap: 8, lineHeight: 1.6 }}
+		>
+			<span className="pixel" style={{ color, letterSpacing: "0.1em", flexShrink: 0 }}>
+				{label}
+			</span>
+			{detail && (
+				<span style={{ color: "var(--lg-ink-dim)" }}>— {detail}</span>
+			)}
+		</div>
+	);
+}
+
+
+function VerificationList({ complete }: { complete: ErpnextEvent }) {
+	const verification = (complete.verification as Record<string, {
+		expected: number;
+		actual: number | null;
+		error?: string;
+	}>) ?? {};
+	const entries = Object.entries(verification);
+	if (entries.length === 0) {
+		return (
+			<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}>
+				No doctypes to verify.
+			</div>
+		);
+	}
+	return (
+		<dl className="kv">
+			{entries.map(([dt, v]) => {
+				const ok = v.actual !== null && v.actual >= v.expected;
+				return (
+					<Fragment key={dt}>
+						<dt>{dt.toUpperCase()}</dt>
+						<dd
+							style={{
+								color: v.error
+									? "var(--lg-coral)"
+									: ok
+									? "var(--lg-green)"
+									: "var(--lg-amber)",
+							}}
+						>
+							{v.error ? "err" : `${v.actual ?? "?"}/${v.expected}`}
+						</dd>
+					</Fragment>
+				);
+			})}
+		</dl>
+	);
+}
+
 
 // ---------- pipeline wrapper ----------
 

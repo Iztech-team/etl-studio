@@ -1,9 +1,14 @@
+import json
 import os
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from api.tables import _ensure_rows_loaded
+from core.load.erpnext_client import ErpnextClient, ErpnextError
+from core.load.erpnext_loader import run_live_import
 from core.load.loader import Loader
 from core.strategies import (
     StrategyResult,
@@ -24,7 +29,12 @@ from models.schemas import (
     StatsResponse,
     TransformResponse,
 )
-from persistence.db import create_pipeline_run, finish_pipeline_run
+from persistence.db import (
+    create_pipeline_run,
+    finish_pipeline_run,
+    get_erpnext_credentials,
+    save_erpnext_credentials,
+)
 from persistence.project_state import project_outputs_dir
 from startup import OUTPUT_DIR
 from state import session_store
@@ -302,6 +312,84 @@ async def load(session_id: str, body: LoadRequest):
         if audit_trail:
             _flush_audit_events(project_id, audit_trail, run["id"])
     return LoadResponse(**result)
+
+
+class ErpnextLoadRequest(BaseModel):
+    url: str
+    api_key: str
+    api_secret: str
+    company: Optional[str] = None
+
+
+@router.get("/erpnext-credentials/{project_id}")
+async def get_erpnext_creds(project_id: str):
+    return {"credentials": get_erpnext_credentials(project_id)}
+
+
+@router.post("/load-erpnext/{session_id}")
+async def load_erpnext(session_id: str, body: ErpnextLoadRequest):
+    if not await session_store.exists(session_id):
+        raise HTTPException(404, "Session not found")
+    s = await session_store.require(session_id)
+    if "transformed" not in s or not s["transformed"]:
+        raise HTTPException(400, "Run /api/transform before /api/load-erpnext")
+    project_id = s.get("project_id")
+    if project_id:
+        save_erpnext_credentials(
+            project_id, body.url, body.api_key, body.api_secret, body.company,
+        )
+
+    out_dir = (
+        project_outputs_dir(project_id)
+        if project_id
+        else os.path.join(OUTPUT_DIR, session_id)
+    )
+    os.makedirs(out_dir, exist_ok=True)
+    _clean_output_dir(out_dir)
+
+    transformed = s.get("transformed") or {}
+    write_frappe_csvs(
+        transformed.get("tables") or {},
+        out_dir,
+        audit_report=transformed.get("audit_report"),
+        checklist_md=transformed.get("setup_checklist_md"),
+        bucket_coverage_md=transformed.get("bucket_coverage_md"),
+        # API path skips legacy_* per the user's spec — they need
+        # custom-field registration that we deliberately don't automate.
+        include_legacy_fields=False,
+        staging_dir=transformed.get("staging_dir"),
+    )
+
+    company = body.company or (s.get("strategy_config") or {}).get("company_name")
+    client = ErpnextClient(body.url, body.api_key, body.api_secret)
+    run = create_pipeline_run(project_id, "load") if project_id else None
+
+    def stream():
+        yield _sse({"event": "begin", "company": company})
+        last_event: Dict[str, Any] = {}
+        try:
+            for ev in run_live_import(out_dir, client, company or ""):
+                last_event = ev
+                yield _sse(ev)
+        except ErpnextError as e:
+            yield _sse({"event": "error", "message": str(e), "payload": e.payload})
+        except Exception as e:
+            yield _sse({"event": "error", "message": str(e)})
+        finally:
+            if run and project_id:
+                status = "done" if last_event.get("event") == "complete" else "error"
+                note = "via live api" if status == "done" else str(last_event.get("message", ""))[:200]
+                rows = 0
+                summary = last_event.get("summary") or []
+                if isinstance(summary, list):
+                    rows = sum(int(e.get("imported") or 0) for e in summary)
+                finish_pipeline_run(run["id"], status, rows, note)
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+def _sse(event: Dict[str, Any]) -> str:
+    return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
 def _clean_output_dir(out_dir: str) -> None:
