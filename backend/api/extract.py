@@ -10,9 +10,14 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 from core.extract.extractor import Extractor
+from core.strategies.erpnext_shared.entities import (
+    descriptors as entity_descriptors,
+    resolve_dependencies,
+)
 from helpers import _auto_save, _excluded_set, _flush_audit_events
 from models.schemas import (
     DB_TYPE_EXTENSIONS,
+    EntitySelectionRequest,
     PreExtractFileInfo,
     PreExtractResponse,
     TableSelectionRequest,
@@ -411,6 +416,34 @@ async def pre_extract_select(session_id: str, body: TableSelectionRequest):
         "ok": True, "changed": changed,
         "kept": sorted(selected), "excluded": sorted(new_excluded),
     }
+
+
+@router.get("/entities")
+async def list_entities():
+    """Return the entity menu the extract UI renders."""
+    return {"entities": entity_descriptors()}
+
+
+@router.post("/select-entities/{session_id}")
+async def select_entities(session_id: str, body: EntitySelectionRequest):
+    """Persist the user's entity selection on the session.
+
+    Stale transform / load artefacts are dropped if the selection
+    changed so the next /api/transform run respects the new scope.
+    """
+    if not await session_store.exists(session_id):
+        raise HTTPException(404, "Session not found")
+    s = await session_store.require(session_id)
+    resolved = sorted(resolve_dependencies(body.entities))
+    prev = sorted(s.get("selected_entities") or [])
+    changed = resolved != prev
+    s["selected_entities"] = resolved
+    if changed:
+        s.pop("transformed", None)
+        s.pop("transformer", None)
+        s.pop("load_result", None)
+    await _auto_save(session_id, "edit")
+    return {"ok": True, "changed": changed, "selected": resolved}
 
 
 @router.post("/upload")

@@ -141,7 +141,10 @@ def _result_shape(
 
 def _resolve_strategy(s: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
     name = s.get("strategy_name") or default_strategy_name()
-    config = s.get("strategy_config") or {}
+    config = dict(s.get("strategy_config") or {})
+    selected = s.get("selected_entities")
+    if selected is not None:
+        config["selected_entities"] = selected
     return name, config
 
 

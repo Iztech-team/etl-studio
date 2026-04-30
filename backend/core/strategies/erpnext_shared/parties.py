@@ -32,24 +32,25 @@ CUSTOMER_TYPE_DEFAULT = "Company"
 SUPPLIER_TYPE_DEFAULT = "Company"
 
 
-def emit_parties(ctx: Context) -> None:
-    """Emit Customer / Supplier records.
-
-    The user's exported Data Import templates include Mobile No and
-    Phone columns on both Customer and Supplier — those fields are
-    writable on import (the Read-Only flag in the doctype JSON only
-    governs the form UI). Phones are denormalized from CONTACTST.
-    """
+def emit_customers(ctx: Context) -> None:
+    """Emit walk-in + regular + orphan Customer records."""
     contacts = group_by(ctx.table("CONTACTST"), "ACCOUNTID")
-    emit_walkin_customer(ctx)
-    emit_customers(ctx, contacts)
-    emit_suppliers(ctx, contacts)
-    emit_orphan_customers(ctx, contacts)
+    _emit_walkin_customer(ctx)
+    for row in ctx.table("CUSTT"):
+        _emit_customer(ctx, row, contacts)
+    _emit_orphan_customers(ctx, contacts)
+
+
+def emit_suppliers(ctx: Context) -> None:
+    """Emit Supplier records from SUPPLIERT."""
+    contacts = group_by(ctx.table("CONTACTST"), "ACCOUNTID")
+    for row in ctx.table("SUPPLIERT"):
+        _emit_supplier(ctx, row, contacts)
 
 
 # -- Walk-in ------------------------------------------------------------------
 
-def emit_walkin_customer(ctx: Context) -> None:
+def _emit_walkin_customer(ctx: Context) -> None:
     ctx.result.emit("Customer", {
         "name": WALKIN_CUSTOMER_ID,
         "customer_name": WALKIN_DISPLAY_NAME,
@@ -65,11 +66,6 @@ def emit_walkin_customer(ctx: Context) -> None:
 
 
 # -- Customer (CUSTT) ---------------------------------------------------------
-
-def emit_customers(ctx: Context, contacts: dict[str, list[dict]]) -> None:
-    for row in ctx.table("CUSTT"):
-        _emit_customer(ctx, row, contacts)
-
 
 def _emit_customer(
     ctx: Context,
@@ -107,11 +103,6 @@ def _emit_customer(
 
 # -- Supplier (SUPPLIERT) -----------------------------------------------------
 
-def emit_suppliers(ctx: Context, contacts: dict[str, list[dict]]) -> None:
-    for row in ctx.table("SUPPLIERT"):
-        _emit_supplier(ctx, row, contacts)
-
-
 def _emit_supplier(
     ctx: Context,
     row: dict,
@@ -144,7 +135,7 @@ def _emit_supplier(
 
 # -- Orphans (referenced by invoices, not in CUSTT/SUPPLIERT) -----------------
 
-def emit_orphan_customers(ctx: Context, contacts: dict[str, list[dict]]) -> None:
+def _emit_orphan_customers(ctx: Context, contacts: dict[str, list[dict]]) -> None:
     """Customers that appear in invoices but not in CUSTT/SUPPLIERT.
 
     Typically employee accounts (CLASS=1) or representative accounts

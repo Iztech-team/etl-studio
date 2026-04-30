@@ -59,6 +59,7 @@ export type ResumedSession = {
 	tables: string[];
 	excludedTables: string[];
 	allExtractedTables: string[];
+	selectedEntities: string[];
 	config: Record<string, unknown> | null;
 	transform: Record<string, unknown> | null;
 	loadResult: Record<string, unknown> | null;

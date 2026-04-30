@@ -7,8 +7,8 @@ from core.strategies.erpnext_shared.audit import emit_audit
 from core.strategies.erpnext_shared.context import Context
 from core.strategies.erpnext_shared.employees import emit_employees
 from core.strategies.erpnext_shared.items import emit_item_prices, emit_items
-from core.strategies.erpnext_shared.masters import emit_masters
-from core.strategies.erpnext_shared.parties import emit_parties
+from core.strategies.erpnext_shared.masters import emit_bank_masters, emit_item_masters
+from core.strategies.erpnext_shared.parties import emit_customers, emit_suppliers
 from core.strategies.erpnext_shared.stock_moves import emit_stock_opening
 
 
@@ -16,16 +16,11 @@ class ErpnextNativeStrategy(TransformStrategy):
     """Convert Al Arabi legacy schema → ERPnext v16, using ERPnext's
     standard (modular) chart of accounts.
 
-    Unlike `ErpnextMirrorStrategy`, this strategy does NOT preserve the
-    legacy Arabic tree. Each legacy leaf is classified into one of
-    ERPnext's standard buckets (Sales, Miscellaneous Expenses, etc.)
-    and balances are aggregated per bucket instead of per legacy
-    account.
-
-    Phase 1 status: CLASS-only mapping. Most expense / income legacy
-    leaves land in `Miscellaneous Expenses` / `Sales` until Phase 2
-    adds NAME-based heuristics to split them per ERPnext leaf
-    (Salary, Office Rent, Marketing Expenses, etc.).
+    Each legacy leaf is classified into one of ERPnext's standard
+    buckets (Sales, Miscellaneous Expenses, etc.) and balances are
+    aggregated per bucket. Phase 2 NAME heuristics split the catch-all
+    buckets (Salary, Office Rent, Marketing Expenses, …) by matching
+    Arabic regex against legacy account names.
 
     Assumes the admin creates the company first so ERPnext auto-creates
     the standard CoA. This strategy emits only the customs not in
@@ -96,42 +91,29 @@ class ErpnextNativeStrategy(TransformStrategy):
         ctx = Context.build(tables, config, result, table_loader=table_loader)
         self._record_intake(ctx)
 
-        emit_masters(ctx)
-        ctx.free_table("UNITT")
+        active = ctx.config.selected_entities
 
-        emit_items(ctx)
-        emit_item_prices(ctx)
-        ctx.free_table("CATEGORYT")
-        ctx.free_table("CATPRICET")
-        ctx.free_table("CATESYNONYMT")
-        ctx.free_table("CATSUPPLIERT")
-        ctx.free_table("CATDESCT")
+        if "items" in active:
+            emit_item_masters(ctx)
+            emit_items(ctx)
+            emit_item_prices(ctx)
+        if "bank_accounts" in active:
+            emit_bank_masters(ctx)
+        if "customers" in active:
+            emit_customers(ctx)
+        if "suppliers" in active:
+            emit_suppliers(ctx)
+        if "chart_of_accounts" in active:
+            emit_accounts(ctx)
+        if "opening_balances" in active:
+            emit_opening_balances(ctx)
+        if "opening_stock" in active:
+            emit_stock_opening(ctx)
+        if "employees" in active:
+            emit_employees(ctx)
 
-        emit_parties(ctx)
-        ctx.free_table("CONTACTST")
-
-        emit_accounts(ctx)
-
-        emit_opening_balances(ctx)
-        ctx.free_table("CUSTT")
-        ctx.free_table("SUPPLIERT")
-        ctx.free_table("CHEQUET")
-        for unused in (
-            "CATESINVDOCT", "CATESRETINVDOCT", "CATESRETINVDOCDETT",
-            "CATEPINVDOCT", "CATEPRETINVDOCT", "CATEPRETINVDOCDETT",
-            "RECDOCT", "RECDOCDETT", "PAYDOCT", "PAYDOCDETT",
-            "ENTRYDOCT", "ENTRYDOCDETT",
-            "STARTENTRYDOCT", "STARTENTRYDOCDETT",
-            "DNOTEDOCT", "DNOTEDOCDETT",
-        ):
-            ctx.free_table(unused)
-
-        emit_stock_opening(ctx)
-        ctx.free_table("CATSTORET")
-
-        emit_employees(ctx)
-        ctx.free_table("EMPLOYEET")
-        ctx.free_table("ACCOUNTT")
+        for tbl in list(ctx.legacy.keys()):
+            ctx.free_table(tbl)
 
         emit_audit(ctx)
         return result

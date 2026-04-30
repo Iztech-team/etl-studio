@@ -16,6 +16,7 @@ PERSIST_KEYS = [
     "pre_extract",
     "audit_trail",
     "excluded_tables",
+    "selected_entities",
 ]
 
 PHASE_ORDER = ["upload", "edit", "configure", "transform", "load", "stats"]

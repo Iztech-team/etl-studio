@@ -92,6 +92,10 @@ class TableSelectionRequest(BaseModel):
     tables: List[str]
 
 
+class EntitySelectionRequest(BaseModel):
+    entities: List[str]
+
+
 class EditDataRequest(BaseModel):
     tables: Dict[str, List[Dict[str, Any]]]
 

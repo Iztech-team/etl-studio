@@ -16,6 +16,10 @@ from core.strategies.erpnext_shared.common import (
     supplier_id,
     with_abbr,
 )
+from core.strategies.erpnext_shared.entities import (
+    ALL_ENTITIES,
+    resolve_dependencies,
+)
 
 
 @dataclass
@@ -27,6 +31,7 @@ class Config:
     opening_date: str | None = None
     summarize_walkin_sales: bool = True
     include_legacy_fields: bool = True
+    selected_entities: frozenset[str] = field(default_factory=lambda: frozenset(ALL_ENTITIES))
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "Config":
@@ -38,6 +43,7 @@ class Config:
             opening_date=clean_str(raw.get("opening_date")) or None,
             summarize_walkin_sales=bool(raw.get("summarize_walkin_sales", True)),
             include_legacy_fields=bool(raw.get("include_legacy_fields", True)),
+            selected_entities=resolve_dependencies(raw.get("selected_entities")),
         )
 
 

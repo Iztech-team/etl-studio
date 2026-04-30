@@ -36,12 +36,23 @@ PRICE_LIST_FALLBACK_NAMES = {
 
 
 def emit_masters(ctx: Context) -> None:
-    """Top-level master emit — invoked once at the start of transform."""
+    """Emit every reference master. Prefer the per-entity entry points
+    (`emit_item_masters`, `emit_bank_masters`) when running a partial
+    migration so unselected doctypes don't appear in the output.
+    """
+    emit_item_masters(ctx)
+    emit_bank_masters(ctx)
+
+
+def emit_item_masters(ctx: Context) -> None:
     emit_uoms(ctx)
     emit_item_group(ctx)
     emit_warehouses(ctx)
     emit_price_lists(ctx)
     emit_brands(ctx)
+
+
+def emit_bank_masters(ctx: Context) -> None:
     emit_banks(ctx)
     emit_bank_accounts(ctx)
 

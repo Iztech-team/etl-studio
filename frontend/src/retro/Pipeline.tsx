@@ -43,6 +43,13 @@ type UploadResult = {
 	schema: Record<string, Record<string, unknown>>;
 	stats: Record<string, { row_count: number }>;
 	excludedTables: string[];
+	selectedEntities: string[];
+};
+
+type EntityDescriptor = {
+	id: string;
+	label: string;
+	depends_on: string[];
 };
 
 type AuditCheck = {
@@ -168,6 +175,7 @@ function PipelineProvider({
 			schema: resumed.schema,
 			stats: resumed.stats,
 			excludedTables: resumed.excludedTables ?? [],
+			selectedEntities: resumed.selectedEntities ?? [],
 		};
 	});
 	const [transformResult, setTransformResult] = useState<TransformResult | null>(() => {
@@ -359,6 +367,7 @@ function donePayloadToUploadResult(data: DonePayload): UploadResult {
 		schema: data.inferred_schema ?? {},
 		stats: data.stats ?? {},
 		excludedTables: [],
+		selectedEntities: [],
 	};
 }
 
@@ -543,6 +552,7 @@ async function uploadToBackend(
 		schema,
 		stats,
 		excludedTables: [],
+		selectedEntities: [],
 	};
 }
 
@@ -1940,227 +1950,76 @@ function TablePreviewModal({
 
 // ---------- extract ----------
 
-const EXTRACT_KEYS = [
-	{
-		title: "NAVIGATION",
-		bindings: [
-			{ keys: ["j", "↓"], label: "next table" },
-			{ keys: ["k", "↑"], label: "prev table" },
-			{ keys: ["/"], label: "focus search" },
-		],
-	},
-	{
-		title: "SELECTION",
-		bindings: [
-			{ keys: ["Space", "d"], label: "toggle table" },
-			{ keys: ["a"], label: "toggle all / filtered" },
-			{ keys: ["e"], label: "deselect empty" },
-		],
-	},
-	{
-		title: "ACTIONS",
-		bindings: [
-			{ keys: ["p"], label: "preview focused table" },
-			{ keys: ["Enter"], label: "proceed to transform" },
-		],
-	},
-];
-
 function RlExtract({ onNext }: { onNext: () => void }) {
-	const {
-		uploadResult,
-		setUploadResult,
-		transformResult,
-		setTransformResult,
-		setLoadResult,
-	} = usePipelineCtx();
-	const [previewTable, setPreviewTable] = useState<string | null>(null);
+	const { uploadResult, setUploadResult, setTransformResult, setLoadResult } =
+		usePipelineCtx();
+	const [entities, setEntities] = useState<EntityDescriptor[] | null>(null);
+	const [picks, setPicks] = useState<Set<string>>(new Set());
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const [search, setSearch] = useState("");
-	const [focusIdx, setFocusIdx] = useState(0);
-	const searchRef = useRef<HTMLInputElement>(null);
-	const proceedRef = useRef<() => void>(() => {});
-
-	const tables = uploadResult?.tables ?? [];
-	const schema = uploadResult?.schema ?? {};
-	const excludedSet = useMemo(
-		() => new Set(uploadResult?.excludedTables ?? []),
-		[uploadResult?.excludedTables],
-	);
-
-	const rows = useMemo(() => {
-		return tables.map((t) => {
-			const colTypes = Object.values(schema[t.name] ?? {}) as string[];
-			const uniqueTypes = Array.from(
-				new Set(
-					colTypes.map((v) =>
-						typeof v === "string" ? v.toUpperCase() : "TEXT",
-					),
-				),
-			);
-			return {
-				n: t.name,
-				r: t.rowCount,
-				c: t.colCount,
-				types: uniqueTypes.length > 0 ? uniqueTypes.slice(0, 4) : ["TEXT"],
-			};
-		});
-	}, [tables, schema]);
-
-	// Selection state, keyed by table name so it survives re-orderings.
-	// Initial pick state honours any tables that were previously excluded
-	// (e.g. when the user navigates back to the extract stage from a later
-	// stage).
-	const [picked, setPicked] = useState<Record<string, boolean>>(() =>
-		Object.fromEntries(tables.map((t) => [t.name, !excludedSet.has(t.name)])),
-	);
-
-	// If tables change (new extraction) or excluded set changes, re-sync.
-	useEffect(() => {
-		setPicked((prev) => {
-			const next: Record<string, boolean> = {};
-			let same = Object.keys(prev).length === tables.length;
-			for (const t of tables) {
-				const defaultPicked = !excludedSet.has(t.name);
-				next[t.name] = t.name in prev ? prev[t.name] : defaultPicked;
-				if (!(t.name in prev)) same = false;
-			}
-			return same ? prev : next;
-		});
-	}, [tables, excludedSet]);
-
-	const filtered = useMemo(() => {
-		if (!search.trim()) return rows;
-		const q = search.trim().toLowerCase();
-		return rows.filter((r) => r.n.toLowerCase().includes(q));
-	}, [rows, search]);
 
 	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			const target = e.target as HTMLElement;
-			const isInput = target.tagName === "INPUT" || target.tagName === "TEXTAREA";
-			if (isInput) return;
+		let cancelled = false;
+		fetch("/api/entities")
+			.then((r) => r.json())
+			.then((d) => {
+				if (cancelled) return;
+				const list = (d.entities ?? []) as EntityDescriptor[];
+				setEntities(list);
+				const prev = uploadResult?.selectedEntities ?? [];
+				setPicks(prev.length > 0
+					? new Set(prev)
+					: new Set(list.map((e) => e.id)));
+			})
+			.catch((e) => { if (!cancelled) setError(String(e)); });
+		return () => { cancelled = true; };
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
 
-			switch (e.key.toLowerCase()) {
-				case "arrowup":
-				case "k":
-					e.preventDefault();
-					setFocusIdx((i) => Math.max(0, i - 1));
-					break;
-				case "arrowdown":
-				case "j":
-					e.preventDefault();
-					setFocusIdx((i) => Math.min(filtered.length - 1, i + 1));
-					break;
-				case "enter":
-				case "d":
-				case " ":
-					if (filtered.length > 0 && focusIdx < filtered.length) {
-						e.preventDefault();
-						const tableName = filtered[focusIdx].n;
-						togglePick(tableName);
-					}
-					break;
-				case "p":
-					if (filtered.length > 0 && focusIdx < filtered.length && uploadResult?.sessionId) {
-						e.preventDefault();
-						setPreviewTable(filtered[focusIdx].n);
-					}
-					break;
-				case "e":
-					e.preventDefault();
-					deselectEmpty();
-					break;
-				case "a":
-					e.preventDefault();
-					toggleAllTables();
-					break;
-				case "/":
-					e.preventDefault();
-					searchRef.current?.focus();
-					break;
-				case "enter": {
-					const count = rows.filter((r) => picked[r.n]).length;
-					if (count > 0 && !saving) {
-						e.preventDefault();
-						proceedRef.current();
-					}
-					break;
-				}
-			}
-		};
-		window.addEventListener("keydown", handleKeyDown);
-		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [focusIdx, filtered, rows, picked, saving, uploadResult?.sessionId]);
-
-	const pickedCount = rows.filter((r) => picked[r.n]).length;
-	const pickedRowCount = rows.reduce(
-		(a, r) => a + (picked[r.n] ? r.r : 0),
-		0,
+	const effective = useMemo(
+		() => (entities ? resolveEntityDeps(picks, entities) : new Set<string>()),
+		[picks, entities],
 	);
-	const emptyCount = rows.filter((r) => r.r === 0 && picked[r.n]).length;
 
-	const togglePick = (name: string) =>
-		setPicked((p) => ({ ...p, [name]: !p[name] }));
+	if (!entities) {
+		return (
+			<div className="mono" style={{ fontSize: 11, color: "var(--lg-ink-dim)", padding: 24 }}>
+				Loading entities…
+			</div>
+		);
+	}
 
-	const allFilteredPicked = filtered.every((r) => picked[r.n]);
-	const toggleAllFiltered = () => {
-		setPicked((p) => {
-			const next = { ...p };
-			const target = !allFilteredPicked;
-			for (const r of filtered) next[r.n] = target;
-			return next;
-		});
-	};
-
-	const allTablesPicked = rows.every((r) => picked[r.n]);
-	const toggleAllTables = () => {
-		setPicked((p) => {
-			const next = { ...p };
-			const target = !allTablesPicked;
-			for (const r of rows) next[r.n] = target;
-			return next;
-		});
-	};
-
-	const deselectEmpty = () => {
-		setPicked((p) => {
-			const next = { ...p };
-			for (const r of rows) if (r.r === 0) next[r.n] = false;
+	const togglePick = (id: string) => {
+		setPicks((prev) => {
+			const next = new Set(prev);
+			if (next.has(id)) {
+				next.delete(id);
+				for (const dep of entityDependents(id, entities)) next.delete(dep);
+			} else {
+				next.add(id);
+			}
 			return next;
 		});
 	};
 
 	const proceed = async () => {
-		if (!uploadResult?.sessionId) return;
-		const selectedNames = rows.filter((r) => picked[r.n]).map((r) => r.n);
+		const sid = uploadResult?.sessionId;
+		if (!sid) return;
 		setSaving(true);
 		setError(null);
 		try {
-			const res = await fetch(
-				`/api/pre-extract-select/${uploadResult.sessionId}`,
-				{
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ tables: selectedNames }),
-				},
-			);
+			const res = await fetch(`/api/select-entities/${sid}`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ entities: Array.from(picks) }),
+			});
 			if (!res.ok) {
 				const err = await res.json().catch(() => null);
-				throw new Error(err?.detail || "Selection failed");
+				throw new Error(err?.detail ?? "Selection failed");
 			}
-			const data = (await res.json()) as {
-				ok: boolean;
-				changed: boolean;
-				kept: string[];
-				excluded: string[];
-			};
+			const data = (await res.json()) as { selected: string[]; changed: boolean };
 			if (uploadResult) {
-				setUploadResult({
-					...uploadResult,
-					excludedTables: data.excluded,
-				});
+				setUploadResult({ ...uploadResult, selectedEntities: data.selected });
 			}
 			if (data.changed) {
 				setTransformResult(null);
@@ -2173,273 +2032,182 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 			setSaving(false);
 		}
 	};
-	proceedRef.current = proceed;
+
+	const labelMap = useMemo(
+		() => Object.fromEntries(entities.map((e) => [e.id, e.label])),
+		[entities],
+	);
 
 	return (
-		<div
-			style={{
-				display: "grid",
-				gridTemplateColumns: "1fr 320px",
-				gap: 14,
-				marginTop: 14,
-			}}
-		>
-			{previewTable && uploadResult?.sessionId && (
-				<TablePreviewModal
-					sessionId={uploadResult.sessionId}
-					tableName={previewTable}
-					onClose={() => setPreviewTable(null)}
-				/>
-			)}
-			<div className="panel">
-				<div
-					className="panel-head"
-					style={{ display: "flex", alignItems: "center", gap: 12 }}
-				>
-					<IDisk size={10} />
-					<span>
-						EXTRACTED {tables.length} · {pickedCount} PICKED
-					</span>
-					<div style={{ flex: 1 }} />
-					<input
-						ref={searchRef}
-						className="input"
-						placeholder="Search… [/]"
-						value={search}
-						onChange={(e) => setSearch(e.target.value)}
-						onKeyDown={(e) => { if (e.key === "Escape") { e.currentTarget.blur(); setSearch(""); } }}
-						style={{
-							fontSize: 10,
-							padding: "3px 8px",
-							width: 160,
-							background: "var(--lg-bg)",
-							border: "1px solid var(--lg-border)",
-							color: "var(--lg-ink)",
-							fontFamily: "var(--lg-mono)",
-							textTransform: "none",
-							letterSpacing: 0,
-						}}
-					/>
-					<button
-						className="btn btn-ghost"
-						style={{ padding: "3px 10px", fontSize: 9 }}
-						onClick={toggleAllFiltered}
-						disabled={filtered.length === 0}
-					>
-						{allFilteredPicked ? "DESELECT" : "SELECT"}{" "}
-						{search ? "FILTERED" : "ALL"}
-					</button>
+		<div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
+			<div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+				<div className="pixel glow-amber" style={{ fontSize: 11, color: "var(--lg-amber)" }}>
+					▣ EXTRACT — pick what to migrate
 				</div>
-				<div className="panel-body" style={{ padding: 0 }}>
-					{filtered.length === 0 ? (
-						<div
-							className="mono"
-							style={{
-								fontSize: 11,
-								color: "var(--lg-ink-mute)",
-								padding: 30,
-								textAlign: "center",
-							}}
-						>
-							{rows.length === 0
-								? "No tables extracted yet. Go back to Upload first."
-								: `No tables match "${search}".`}
-						</div>
-					) : (
-						<table className="table">
-							<thead>
-								<tr>
-									<th style={{ width: 30 }}></th>
-									<th>TABLE</th>
-									<th>ROWS</th>
-									<th>COLS</th>
-									<th>TYPES</th>
-									<th style={{ width: 70 }}></th>
-								</tr>
-							</thead>
-							<tbody>
-								{filtered.map((t, idx) => {
-									const isPicked = !!picked[t.n];
-										const isFocused = idx === focusIdx;
-									return (
-										<tr
-											key={t.n}
-											onClick={() => togglePick(t.n)}
-											style={{ cursor: "pointer", background: isFocused ? "var(--lg-bg-2)" : undefined }}
-											className={isPicked ? "row-selected" : ""}
-										>
-											<td>
-												<div
-													style={{
-														width: 12,
-														height: 12,
-														border: "1px solid var(--lg-amber)",
-														background: isPicked
-															? "var(--lg-amber)"
-															: "transparent",
-														display: "flex",
-														alignItems: "center",
-														justifyContent: "center",
-														color: "#0a0410",
-													}}
-												>
-													{isPicked && <ICheck size={8} />}
-												</div>
-											</td>
-											<td
-												style={{
-													fontFamily: "var(--lg-pixel)",
-													fontSize: 9,
-													color: "var(--lg-amber)",
-													letterSpacing: "0.1em",
-												}}
-											>
-												{t.n.toUpperCase()}
-											</td>
-											<td
-												style={{
-													fontVariantNumeric: "tabular-nums",
-													color:
-														t.r === 0 ? "var(--lg-ink-mute)" : undefined,
-												}}
-											>
-												{t.r.toLocaleString()}
-											</td>
-											<td>{t.c}</td>
-											<td>
-												<div
-													style={{ display: "flex", gap: 4, flexWrap: "wrap" }}
-												>
-													{t.types.map((tp) => (
-														<span key={tp} className="badge badge-mute">
-															{tp}
-														</span>
-													))}
-												</div>
-											</td>
-											<td onClick={(e) => e.stopPropagation()}>
-												<button
-													className="btn btn-ghost"
-													style={{ padding: "2px 8px", fontSize: 9 }}
-													onClick={() => setPreviewTable(t.n)}
-												>
-													PREVIEW
-												</button>
-											</td>
-										</tr>
-									);
-								})}
-							</tbody>
-						</table>
-					)}
+				<div style={{ flex: 1 }} />
+				<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}>
+					{effective.size} of {entities.length} selected
 				</div>
 			</div>
-			<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-				<div className="panel">
-					<div className="panel-head">SELECTED</div>
-					<div className="panel-body">
-						<div
-							className="pixel"
-							style={{ fontSize: 28, color: "var(--lg-amber)" }}
-						>
-							{String(pickedCount).padStart(2, "0")} / {tables.length} TBLS
-						</div>
-						<div
-							className="mono"
-							style={{
-								fontSize: 11,
-								color: "var(--lg-ink-dim)",
-								marginTop: 4,
-							}}
-						>
-							{pickedRowCount.toLocaleString()} ROWS
-						</div>
-					</div>
-				</div>
-				<div className="panel">
-					<div className="panel-head">QUICK ACTIONS</div>
-					<div
-						className="panel-body"
-						style={{ display: "flex", flexDirection: "column", gap: 8 }}
-					>
-						<button
-							className="btn btn-ghost"
-							style={{ fontSize: 10, padding: "6px 10px" }}
-							onClick={deselectEmpty}
-							disabled={emptyCount === 0}
-							title="Uncheck every table that has zero rows"
-						>
-							DESELECT EMPTY ({emptyCount})
-						</button>
-						<div
-							className="mono"
-							style={{
-								fontSize: 10,
-								color: "var(--lg-ink-mute)",
-								lineHeight: 1.6,
-							}}
-						>
-							Click a row to toggle selection. Use Search to find tables.
-							Preview shows the first 100 rows.
-						</div>
-					</div>
-				</div>
-				{(() => {
-					const currentExcluded = new Set(
-						rows.filter((r) => !picked[r.n]).map((r) => r.n),
+
+			<div
+				style={{
+					display: "grid",
+					gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+					gap: 10,
+				}}
+			>
+				{entities.map((e) => {
+					const userPicked = picks.has(e.id);
+					const forced = !userPicked && effective.has(e.id);
+					return (
+						<EntityCard
+							key={e.id}
+							entity={e}
+							picked={userPicked}
+							forced={forced}
+							depLabels={e.depends_on.map((d) => labelMap[d] ?? d)}
+							onToggle={() => togglePick(e.id)}
+						/>
 					);
-					const prevExcluded = excludedSet;
-					let diff = currentExcluded.size !== prevExcluded.size;
-					if (!diff) {
-						for (const n of currentExcluded) {
-							if (!prevExcluded.has(n)) {
-								diff = true;
-								break;
-							}
-						}
-					}
-					if (diff && transformResult) {
-						return (
-							<div
-								className="mono"
-								style={{
-									fontSize: 10,
-									padding: "8px 10px",
-									border: "1px solid var(--lg-amber, #c79b00)",
-									color: "var(--lg-amber, #c79b00)",
-									lineHeight: 1.5,
-								}}
-							>
-								{"> "}Changing the selection will reset transform & export
-								results. Configure work for tables that remain selected is
-								preserved.
-							</div>
-						);
-					}
-					return null;
-				})()}
-				{error && (
-					<div
-						className="mono"
-						style={{ fontSize: 11, color: "var(--lg-coral)" }}
-					>
-						{"> "}
-						{error}
-					</div>
-				)}
-				<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-					<CheatSheet groups={EXTRACT_KEYS} />
-					<button
-						className="btn btn-primary"
-						onClick={proceed}
-						disabled={pickedCount === 0 || saving}
-					>
-						{saving ? "SAVING…" : "CONTINUE TO TRANSFORM"} <IArrow size={10} />
-					</button>
+				})}
+			</div>
+
+			{error && (
+				<div className="mono" style={{ fontSize: 11, color: "var(--lg-coral)" }}>
+					{"> "}{error}
 				</div>
+			)}
+
+			<div style={{ display: "flex", justifyContent: "flex-end" }}>
+				<button
+					className="btn btn-primary"
+					onClick={proceed}
+					disabled={effective.size === 0 || saving || !uploadResult?.sessionId}
+				>
+					{saving ? "SAVING…" : "CONTINUE TO TRANSFORM"} <IArrow size={10} />
+				</button>
 			</div>
 		</div>
 	);
+}
+
+
+function EntityCard({
+	entity,
+	picked,
+	forced,
+	depLabels,
+	onToggle,
+}: {
+	entity: EntityDescriptor;
+	picked: boolean;
+	forced: boolean;
+	depLabels: string[];
+	onToggle: () => void;
+}) {
+	const active = picked || forced;
+	return (
+		<button
+			onClick={forced ? undefined : onToggle}
+			className="btn"
+			disabled={forced}
+			title={forced ? "Auto-included as a dependency" : ""}
+			style={{
+				textAlign: "left",
+				padding: "12px 14px",
+				borderColor: active ? "var(--lg-amber)" : "var(--lg-border-br)",
+				background: forced
+					? "rgba(199,155,0,0.04)"
+					: picked
+					? "rgba(199,155,0,0.08)"
+					: "transparent",
+				opacity: forced ? 0.7 : 1,
+				cursor: forced ? "not-allowed" : "pointer",
+				display: "flex",
+				flexDirection: "column",
+				gap: 6,
+				textTransform: "none",
+				letterSpacing: 0,
+			}}
+		>
+			<div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+				<span
+					style={{
+						display: "inline-flex",
+						alignItems: "center",
+						justifyContent: "center",
+						width: 14,
+						height: 14,
+						border: "1px solid var(--lg-amber)",
+						background: active ? "var(--lg-amber)" : "transparent",
+						color: "#0a0410",
+						flexShrink: 0,
+					}}
+				>
+					{active && <ICheck size={8} />}
+				</span>
+				<span
+					className="pixel"
+					style={{
+						fontSize: 12,
+						color: active ? "var(--lg-amber)" : "var(--lg-ink)",
+						letterSpacing: "0.05em",
+					}}
+				>
+					{entity.label.toUpperCase()}
+				</span>
+			</div>
+			{forced ? (
+				<span className="mono" style={{ fontSize: 9, color: "var(--lg-ink-mute)" }}>
+					auto-included
+				</span>
+			) : depLabels.length > 0 ? (
+				<span className="mono" style={{ fontSize: 9, color: "var(--lg-ink-dim)" }}>
+					requires: {depLabels.join(", ")}
+				</span>
+			) : null}
+		</button>
+	);
+}
+
+
+function resolveEntityDeps(picks: Set<string>, all: EntityDescriptor[]): Set<string> {
+	const out = new Set(picks);
+	let changed = true;
+	while (changed) {
+		changed = false;
+		for (const e of all) {
+			if (!out.has(e.id)) continue;
+			for (const d of e.depends_on) {
+				if (!out.has(d)) {
+					out.add(d);
+					changed = true;
+				}
+			}
+		}
+	}
+	return out;
+}
+
+
+function entityDependents(id: string, all: EntityDescriptor[]): Set<string> {
+	const out = new Set<string>();
+	let changed = true;
+	while (changed) {
+		changed = false;
+		for (const e of all) {
+			if (out.has(e.id)) continue;
+			for (const dep of e.depends_on) {
+				if (dep === id || out.has(dep)) {
+					out.add(e.id);
+					changed = true;
+					break;
+				}
+			}
+		}
+	}
+	return out;
 }
 
 // Reusable scrollable table-picker for stages with many tables.
@@ -2653,44 +2421,6 @@ function RlTableSidebar({
 //   2) edit config (form derived from the strategy's config_schema)
 //   3) save to /api/strategies/{sid}; trigger /api/transform/{sid}
 //   4) show preservation audit + per-doctype counts
-
-const TRANSFORM_KEYS = [
-	{
-		title: "COLUMN LIST",
-		bindings: [
-			{ keys: ["j", "↓"], label: "next column" },
-			{ keys: ["k", "↑"], label: "prev column" },
-			{ keys: ["d"], label: "toggle drop" },
-			{ keys: ["c"], label: "toggle cast" },
-			{ keys: ["r"], label: "rename column" },
-			{ keys: ["Alt+r"], label: "rename table" },
-		],
-	},
-	{
-		title: "TABLE SIDEBAR",
-		bindings: [
-			{ keys: ["Tab"], label: "next table" },
-			{ keys: ["Shift+Tab"], label: "prev table" },
-			{ keys: ["Shift+H"], label: "focus sidebar" },
-			{ keys: ["Shift+L"], label: "focus columns" },
-		],
-	},
-	{
-		title: "TRANSFORM CARDS",
-		bindings: [
-			{ keys: ["t"], label: "add transform" },
-			{ keys: ["j", "k"], label: "navigate cards" },
-			{ keys: ["Enter"], label: "edit focused card" },
-			{ keys: ["Del", "⌫"], label: "remove focused card" },
-		],
-	},
-	{
-		title: "ACTIONS",
-		bindings: [
-			{ keys: ["Ctrl+s"], label: "run transform / proceed" },
-		],
-	},
-];
 
 function RlTransform({ onNext }: { onNext: () => void }) {
 	const { uploadResult, transformResult, setTransformResult, projectId, projectName } =

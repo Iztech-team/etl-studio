@@ -108,6 +108,7 @@ def _resume_payload(project: dict, session_id: str, session: dict) -> dict:
         "load_result": session.get("load_result"),
         "excluded_tables": list(_excluded_set(session)),
         "all_extracted_tables": list(raw.get("tables", {}).keys()),
+        "selected_entities": list(session.get("selected_entities") or []),
     }
 
 
