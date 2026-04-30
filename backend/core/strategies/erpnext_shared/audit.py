@@ -182,6 +182,21 @@ the data CSVs. Each step is required for the imports to succeed.
 - Stock Settings → **Allow Negative Stock = ✓**
 {negative_note}
 
+## 2b. Fiscal Year (REQUIRED)
+
+ERPnext rejects every Journal Entry whose `posting_date` doesn't fall
+inside an active Fiscal Year for the company. The standard install
+auto-creates one for the install year only — older years are NOT
+created from a Company's `date_of_establishment`.
+
+Before importing the opening JE files, ensure a Fiscal Year covers
+your **opening_date** ({opening_date}). Either:
+
+- **Accounting → Fiscal Year → New** with year_start_date and
+  year_end_date that bracket the opening date, or
+- run the live ERPnext push (the loader auto-creates a Jan→Dec
+  Fiscal Year for the opening date's year if none exists).
+
 ## 3. Add custom fields (traceback)
 
 The strategy emits a few `legacy_*` fields on standard doctypes for

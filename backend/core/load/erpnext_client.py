@@ -152,6 +152,23 @@ class ErpnextClient:
         resp = self.get("/api/method/frappe.client.get_count", params=params)
         return int((resp or {}).get("message") or 0)
 
+    def has_fiscal_year_for(self, iso_date: str) -> bool:
+        """True iff a Fiscal Year already covers `iso_date`."""
+        return self.get_count("Fiscal Year", filters=[
+            ["year_start_date", "<=", iso_date],
+            ["year_end_date", ">=", iso_date],
+        ]) > 0
+
+    def create_fiscal_year(
+        self, year_label: str, year_start_date: str, year_end_date: str,
+    ) -> Any:
+        return self.post("/api/resource/Fiscal Year", {
+            "doctype": "Fiscal Year",
+            "year": year_label,
+            "year_start_date": year_start_date,
+            "year_end_date": year_end_date,
+        })
+
     def list_companies(self) -> list[str]:
         resp = self.get(
             "/api/resource/Company",

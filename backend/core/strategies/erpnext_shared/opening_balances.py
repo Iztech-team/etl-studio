@@ -175,8 +175,12 @@ def emit_outstanding_cheques(
             "cheque_no": cheque_no,
             "cheque_date": cheque_date,
             "company": ctx.config.company_name,
-            "posting_date": parse_date(cheque.get("DOCDATE"))
-                            or ctx.config.opening_date,
+            # Opening JEs all freeze the world on opening_date — the
+            # cheque's original DOCDATE / CDATE survive in cheque_date
+            # and user_remark for traceback but must NOT drive the
+            # posting_date, otherwise ERPnext rejects the row when no
+            # Fiscal Year covers that historical date.
+            "posting_date": ctx.config.opening_date,
             "user_remark": (
                 f"Outstanding cheque #{cheque_no} from {owner}, "
                 f"due {cheque_date}, bank {bank}{original_remark}"

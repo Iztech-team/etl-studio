@@ -63,6 +63,7 @@ POLL_TIMEOUT_SEC = 600
 
 def run_live_import(
     output_dir: str, client: ErpnextClient, company: str,
+    opening_date: str = "",
     already_imported: dict[str, dict] | None = None,
     on_file_imported: Any = None,
     selected_doctypes: list[str] | None = None,
@@ -100,6 +101,9 @@ def run_live_import(
             # call fail loudly if perms really are the blocker.
             yield {"event": "preflight", "doctype": doctype,
                    "status": "warning", "message": str(e)}
+
+    if opening_date and _will_send_journal_entries(files, selected_doctypes):
+        yield from _ensure_fiscal_year(client, opening_date)
 
     summary: list[dict] = []
     for fname in files:
@@ -255,6 +259,49 @@ def _poll_data_import_streaming(
         if warnings:
             err = f"{err} | warnings: {' | '.join(warnings)[:500]}"
         raise ErpnextError(f"Data Import {name} failed: {err}")
+
+
+def _will_send_journal_entries(
+    files: list[str], selected_doctypes: list[str] | None,
+) -> bool:
+    """True iff at least one upcoming file maps to Journal Entry and the
+    user didn't deselect that doctype."""
+    selection = set(selected_doctypes) if selected_doctypes is not None else None
+    for f in files:
+        slug = _slug_from_filename(f)
+        dt = SLUG_TO_DOCTYPE.get(slug)
+        if dt != "Journal Entry":
+            continue
+        if selection is None or dt in selection:
+            return True
+    return False
+
+
+def _ensure_fiscal_year(
+    client: ErpnextClient, opening_date: str,
+) -> Iterator[dict]:
+    """Verify ERPnext has a Fiscal Year covering opening_date; create
+    one (Jan→Dec of that year) if not. Without this, every opening JE
+    posts to a date Frappe rejects as 'not in any active Fiscal Year'."""
+    try:
+        if client.has_fiscal_year_for(opening_date):
+            yield {"event": "preflight", "stage": "fiscal_year",
+                   "status": "ok", "date": opening_date}
+            return
+    except ErpnextError as e:
+        yield {"event": "preflight", "stage": "fiscal_year",
+               "status": "warning", "message": f"lookup failed: {e}"}
+        return
+
+    try:
+        year = opening_date.split("-")[0]
+        client.create_fiscal_year(year, f"{year}-01-01", f"{year}-12-31")
+        yield {"event": "preflight", "stage": "fiscal_year",
+               "status": "created", "year": year}
+    except ErpnextError as e:
+        yield {"event": "preflight", "stage": "fiscal_year",
+               "status": "warning",
+               "message": f"could not create Fiscal Year for {opening_date}: {e}"}
 
 
 def _read_emitted_item_codes(output_dir: str) -> set[str]:
