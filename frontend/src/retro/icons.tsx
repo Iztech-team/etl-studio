@@ -99,6 +99,20 @@ export const IDownload = ({ size = 12 }: IconProps) => (
 	</PX>
 );
 
+export const IStar = ({ size = 12 }: IconProps) => (
+	<PX size={size}>
+		<rect x="5" y="0" width="2" height="2" />
+		<rect x="3" y="2" width="6" height="2" />
+		<rect x="1" y="4" width="10" height="2" />
+		<rect x="3" y="6" width="2" height="2" />
+		<rect x="7" y="6" width="2" height="2" />
+		<rect x="2" y="8" width="2" height="2" />
+		<rect x="8" y="8" width="2" height="2" />
+		<rect x="1" y="10" width="2" height="2" />
+		<rect x="9" y="10" width="2" height="2" />
+	</PX>
+);
+
 export const IKeyboard = ({ size = 12 }: IconProps) => (
 	<PX size={size}>
 		<rect x="1" y="2" width="10" height="8" />

@@ -53,7 +53,9 @@ class AuditTrail:
         self._counters[key] = self._counters.get(key, 0) + count
         self.stats["null_normalized"] += count
 
-    def log_type_coerced(self, table: str, column: str, from_type: str, to_type: str, count: int = 1):
+    def log_type_coerced(
+        self, table: str, column: str, from_type: str, to_type: str, count: int = 1
+    ):
         key = ("type_coerced", table, column, from_type, to_type)
         self._counters[key] = self._counters.get(key, 0) + count
         self.stats["type_coerced"] += count

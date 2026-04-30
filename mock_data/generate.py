@@ -128,9 +128,9 @@ def gen_orders():
                 "customer_id": random.randint(1, 50),
                 "product_id": random.randint(1, 30),
                 "quantity": qty,
-                "unit_price": f"{unit_price:,.2f}"
-                if random.random() > 0.7
-                else str(unit_price),  # mixed formats
+                "unit_price": (
+                    f"{unit_price:,.2f}" if random.random() > 0.7 else str(unit_price)
+                ),  # mixed formats
                 "total": f"{qty * unit_price:.2f}",
                 "order_date": _date(400),
                 "shipped": random.choice(

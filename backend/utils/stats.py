@@ -1,4 +1,3 @@
-import time
 from typing import Any, Dict
 
 
@@ -13,7 +12,9 @@ class StatsEngine:
         validation = self.session.get("validation", {})
 
         raw_tables = raw.get("tables", {})
-        t_tables = transformed.get("tables", {}) if isinstance(transformed, dict) else {}
+        t_tables = (
+            transformed.get("tables", {}) if isinstance(transformed, dict) else {}
+        )
 
         total_in = sum(len(v) for v in raw_tables.values())
         total_out = sum(len(v) for v in t_tables.values()) if t_tables else total_in

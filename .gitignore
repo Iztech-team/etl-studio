@@ -46,3 +46,15 @@ ETL_CAPABILITIES_ROADMAP.md
 migration_mapping_IB_to_Baraka_v18.docx
 TEST_*.sql
 message.txt
+
+# Theme reference (kept locally, not version controlled)
+new_theme/
+
+# Legacy source data (kept locally, not version controlled)
+data/
+
+# Stray output dir bug from build_erpnext_preset.py running from backend/
+backend/backend/
+
+# Project state runtime files
+backend/persistence/data/projects/

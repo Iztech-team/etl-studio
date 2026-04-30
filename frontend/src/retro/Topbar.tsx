@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useAuth } from "./Auth";
 import { RL_STAGES, type StageId } from "./data";
-import { ICheck, IClock, IDisk, IFolder } from "./icons";
+import { ICheck, IDisk, IFolder } from "./icons";
 
 // Same key prefix Pipeline.tsx writes under. Kept in sync by convention —
 // both must use the literal string. If you rename it, rename both places.
@@ -105,95 +105,30 @@ function useActiveExtraction(): ActiveExtractionInfo | null {
 	return info;
 }
 
-// Sibling of useActiveExtraction: polls /api/transform/{sid}/status while
-// a transform marker is present in localStorage. Surfaces the same
-// {done, total, current} shape so the dock's view can be symmetrical.
+// useActiveTransform was a poller for /api/transform/{sid}/status. The
+// passthrough transform completes instantly so there's no progress to
+// show; the hook now returns null until a real progress endpoint exists.
 function useActiveTransform(): ActiveTransformInfo | null {
-	const [info, setInfo] = useState<ActiveTransformInfo | null>(null);
-
-	useEffect(() => {
-		let cancelled = false;
-		let timer: ReturnType<typeof setTimeout> | null = null;
-
-		const scanLs = (): { sessionId: string } | null => {
-			for (let i = 0; i < localStorage.length; i++) {
-				const key = localStorage.key(i);
-				if (!key || !key.startsWith(ACTIVE_TRANSFORM_LS_PREFIX)) continue;
-				try {
-					const raw = localStorage.getItem(key);
-					if (!raw) continue;
-					const v = JSON.parse(raw) as { sessionId?: string };
-					if (v.sessionId) return { sessionId: v.sessionId };
-				} catch {
-					// ignore corrupt entry
-				}
-			}
-			return null;
-		};
-
-		const poll = async () => {
-			if (cancelled) return;
-			const active = scanLs();
-			if (!active) {
-				setInfo(null);
-				timer = setTimeout(poll, 2500);
-				return;
-			}
-			try {
-				const res = await fetch(`/api/transform/${active.sessionId}/status`);
-				if (res.ok) {
-					const data = (await res.json()) as {
-						status: string;
-						tables_done?: number;
-						tables_total?: number;
-						current_table?: string | null;
-					};
-					if (cancelled) return;
-					if (data.status === "running") {
-						setInfo({
-							sessionId: active.sessionId,
-							done: data.tables_done ?? 0,
-							total: data.tables_total ?? 0,
-							current: data.current_table ?? null,
-						});
-						if (!cancelled) timer = setTimeout(poll, 800);
-						return;
-					}
-					// done / error — stop showing. The page-level handler
-					// in Pipeline.tsx removes the LS marker on completion.
-					setInfo(null);
-				}
-			} catch {
-				// network blip, retry
-			}
-			if (!cancelled) timer = setTimeout(poll, 2500);
-		};
-
-		void poll();
-		return () => {
-			cancelled = true;
-			if (timer) clearTimeout(timer);
-		};
-	}, []);
-
-	return info;
+	return null;
 }
 
 export function RlTopbar({
 	title,
 	sub,
+	center,
 	right,
 }: {
 	title: string;
 	sub?: string;
+	center?: ReactNode;
 	right?: ReactNode;
 }) {
 	return (
 		<div className="rl-topbar">
 			<div className="rl-topbar-title">
 				<div
-					className="pixel"
-					style={{ fontSize: 18, color: "var(--lg-amber)" }}
+					className="pixel glow-magenta"
+					style={{ fontSize: 18, color: "var(--lg-magenta)" }}
 				>
 					{title}
 				</div>
@@ -202,7 +137,7 @@ export function RlTopbar({
 						className="mono"
 						style={{
 							fontSize: 11,
-							color: "var(--lg-ink-mute)",
+							color: "var(--lg-cyan)",
 							marginTop: 6,
 							textTransform: "uppercase",
 							letterSpacing: "0.1em",
@@ -212,7 +147,9 @@ export function RlTopbar({
 					</div>
 				)}
 			</div>
-			<div style={{ flex: 1 }} />
+			<div style={{ flex: 1, display: "flex", justifyContent: "center" }}>
+				{center}
+			</div>
 			{right}
 			<UserButton />
 		</div>
@@ -315,7 +252,7 @@ function UserButton() {
 	);
 }
 
-type PageId = "projects" | "templates" | "history";
+type PageId = "projects";
 
 function ExtractionDockView({ info }: { info: ActiveExtractionInfo }) {
 	const pct = info.total > 0 ? Math.round((info.done / info.total) * 100) : 0;
@@ -532,9 +469,7 @@ export function RlDock({
 		label: string;
 		I: (p: { size?: number }) => JSX.Element;
 	}[] = [
-		{ id: "projects", label: "PROJECTS", I: IFolder },
-		{ id: "templates", label: "TEMPLATES", I: IDisk },
-		{ id: "history", label: "HISTORY", I: IClock },
+		{ id: "projects", label: "DUNGEONS", I: IFolder },
 	];
 	const inPipe = pipelineStage != null;
 	const activeIdx = RL_STAGES.findIndex((s) => s.id === pipelineStage);
@@ -668,19 +603,7 @@ export function RlDock({
 				})}
 			</div>
 			<div className="rl-dock-divider" />
-			{activePage === "templates" ? (
-				<div className="rl-dock-pipe" style={{ justifyContent: "center" }}>
-					<div className="mono" style={{ fontSize: 9, color: "var(--lg-ink-mute)", display: "flex", gap: 14, alignItems: "center" }}>
-						<span className="pixel" style={{ fontSize: 8, color: "var(--lg-ink-faint)", letterSpacing: "0.1em" }}>SHORTCUTS</span>
-						{[["↑↓", "nav"], ["R", "rename"], ["D", "drop"], ["Space", "preview"], ["Esc", "close"]].map(([k, label]) => (
-							<span key={k}>
-								<span style={{ fontFamily: "var(--lg-mono)", color: "var(--lg-amber)", marginRight: 3 }}>{k}</span>
-								<span style={{ color: "var(--lg-ink-faint)" }}>{label}</span>
-							</span>
-						))}
-					</div>
-				</div>
-			) : renderPipeArea()}
+			{renderPipeArea()}
 		</div>
 	);
 }

@@ -7,8 +7,6 @@ import type {
   LoadRequest,
   LoadResponse,
   StatsResponse,
-  DDLUploadResponse,
-  ApplyDDLResponse,
   PreExtractResponse,
   TableDataResponse,
   EditDataResponse,
@@ -163,46 +161,3 @@ export function downloadUrl(sessionId: string, filename: string): string {
   return `/api/download/${sessionId}/${encodeURIComponent(filename)}`
 }
 
-export async function uploadDDL(sessionId: string, files: File[]): Promise<DDLUploadResponse> {
-  const form = new FormData()
-  for (const f of files) form.append('files', f)
-  const { data } = await api.post<DDLUploadResponse>(`/upload-ddl/${sessionId}`, form)
-  return data
-}
-
-export async function applyDDL(sessionId: string, tables: string[]): Promise<ApplyDDLResponse> {
-  const { data } = await api.post<ApplyDDLResponse>(`/apply-ddl/${sessionId}`, { tables })
-  return data
-}
-
-export async function uploadAndParseDDL(sessionId: string, file: File): Promise<DDLUploadResponse> {
-  const formData = new FormData()
-  formData.append('files', file)
-
-  const { data } = await api.post<DDLUploadResponse>(
-    `/upload-ddl/${sessionId}`,
-    formData,
-    { headers: { 'Content-Type': 'multipart/form-data' } }
-  )
-
-  return data
-}
-
-export async function saveTemplate(projectId: string, name: string, ddlContent: string, createdBy?: string): Promise<any> {
-  const response = await api.post(`/projects/${projectId}/templates`, {
-    name,
-    ddl_content: ddlContent,
-    created_by: createdBy || 'user'
-  })
-  return response.data
-}
-
-export async function listTemplates(projectId: string): Promise<any> {
-  const response = await api.get(`/projects/${projectId}/templates`)
-  return response.data
-}
-
-export async function deleteTemplate(projectId: string, templateId: string): Promise<any> {
-  const response = await api.delete(`/projects/${projectId}/templates/${templateId}`)
-  return response.data
-}
