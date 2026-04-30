@@ -9,7 +9,7 @@ Orphan customers are ACCOUNTIDs that appear in CATESINVDOCT but in
 neither CUSTT nor SUPPLIERT — typically employee or representative
 accounts; we emit them as customers so their invoices have a valid party.
 """
-from core.strategies.erpnext.common import (
+from core.strategies.erpnext_shared.common import (
     WALKIN_CUSTOMER_ID,
     clean_str,
     customer_id,
@@ -18,8 +18,8 @@ from core.strategies.erpnext.common import (
     pick,
     supplier_id,
 )
-from core.strategies.erpnext.context import Context
-from core.strategies.erpnext.masters import (
+from core.strategies.erpnext_shared.context import Context
+from core.strategies.erpnext_shared.masters import (
     CUSTOMER_GROUP_NAME,
     SUPPLIER_GROUP_NAME,
     TERRITORY_NAME,

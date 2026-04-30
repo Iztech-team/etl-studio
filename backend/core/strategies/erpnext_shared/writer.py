@@ -167,7 +167,11 @@ _DOCTYPE_FROM_SAFE = {
 
 def _doctype_from_jsonl(fname: str) -> str:
     stem = fname[:-len(".jsonl")]
-    return _DOCTYPE_FROM_SAFE.get(stem, stem)
+    # JSONL stems come from `_safe_doctype()` which preserves case but
+    # replaces spaces with underscores ('Bank Account' → 'Bank_Account').
+    # The dict keys are lowercase, so normalize before lookup. Fall back
+    # to the underscore-stripped stem if no entry matches.
+    return _DOCTYPE_FROM_SAFE.get(stem.lower(), stem.replace("_", " "))
 
 
 def _strip_legacy(records: list[dict]) -> list[dict]:

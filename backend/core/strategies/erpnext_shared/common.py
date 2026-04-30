@@ -256,3 +256,14 @@ def group_by(rows: Iterable[dict], key: str) -> dict[str, list[dict]]:
         if k:
             out.setdefault(k, []).append(r)
     return out
+
+
+# -- account name resolution (shared between strategies) ----------------------
+
+def account_full_name(ctx, account_id) -> str:
+    """Return the autonamed Account form '{name} - {abbr}' for an ACCOUNTID."""
+    row = ctx.accounts_by_id.get(clean_str(account_id))
+    if not row:
+        return ""
+    name = pick(row, "NAME", "NAMEE", "NAMEH")
+    return ctx.with_abbr(name) if name else ""

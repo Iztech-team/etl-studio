@@ -11,7 +11,7 @@ Critical preservation requirements (per planning doc):
 """
 from typing import Iterable
 
-from core.strategies.erpnext.common import (
+from core.strategies.erpnext_shared.common import (
     clean_str,
     currency_iso,
     group_by,
@@ -24,8 +24,8 @@ from core.strategies.erpnext.common import (
     pick,
     supplier_id,
 )
-from core.strategies.erpnext.context import Context
-from core.strategies.erpnext.masters import (
+from core.strategies.erpnext_shared.context import Context
+from core.strategies.erpnext_shared.masters import (
     ITEM_GROUP_NAME,
     price_list_name,
     warehouse_for_store,

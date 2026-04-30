@@ -1,50 +1,43 @@
 from typing import Any
 
 from core.strategies.base import StrategyResult, TransformStrategy
-from core.strategies.erpnext.accounts import emit_accounts
-from core.strategies.erpnext.audit import emit_audit
-from core.strategies.erpnext.context import Context
-from core.strategies.erpnext.invoices import emit_invoices
-from core.strategies.erpnext.items import emit_item_prices, emit_items
-from core.strategies.erpnext.journals import emit_journals
-from core.strategies.erpnext.masters import emit_masters
-from core.strategies.erpnext.parties import emit_parties
-from core.strategies.erpnext.employees import emit_employees
-from core.strategies.erpnext.payments import emit_payments
-from core.strategies.erpnext.stock_moves import emit_stock_opening
+from core.strategies.erpnext_mirror.accounts import emit_accounts
+from core.strategies.erpnext_mirror.opening_balances import emit_opening_balances
+from core.strategies.erpnext_shared.audit import emit_audit
+from core.strategies.erpnext_shared.context import Context
+from core.strategies.erpnext_shared.employees import emit_employees
+from core.strategies.erpnext_shared.items import emit_item_prices, emit_items
+from core.strategies.erpnext_shared.masters import emit_masters
+from core.strategies.erpnext_shared.parties import emit_parties
+from core.strategies.erpnext_shared.stock_moves import emit_stock_opening
 
 
-class ErpnextStrategy(TransformStrategy):
-    """Convert Al Arabi legacy schema → ERPnext v16 Frappe Data Import CSVs.
+class ErpnextMirrorStrategy(TransformStrategy):
+    """Convert Al Arabi legacy schema → ERPnext v16, preserving the legacy
+    chart of accounts as-is.
 
-    Output is grouped by ERPnext doctype (Item, Customer, Sales Invoice, …).
-    Mapping rationale lives in `.planning/research/erpnext-mapping.md`.
-
-    The class is intentionally a thin orchestrator. Each domain
-    (masters / items / parties / accounts / invoices / payments / journals /
-    stock / employees) is implemented in a sibling module and dispatched
-    here so the file stays readable as the migration grows.
+    The Al Arabi tree (~3,500 accounts, hierarchical Arabic naming) is
+    emitted unchanged; opening balances are posted per-account with a
+    1:1 correspondence to legacy `ACCOUNTT`. Sibling strategy
+    `ErpnextNativeStrategy` aggregates onto ERPnext's standard chart
+    instead — see that module for the alternative.
     """
 
-    name = "erpnext"
-    label = "ERPnext"
+    name = "erpnext_mirror"
+    label = "ERPnext Mirror"
     description = (
-        "Standard ERPnext v16 doctype layout. Items, barcodes, customers, "
-        "suppliers, accounts, invoices (with returns), payments, journals, "
-        "opening stock, employees."
+        "Mirrors the Al Arabi chart of accounts into ERPnext, preserving "
+        "the Arabic hierarchy. Opening balances are emitted per-leaf so "
+        "every legacy ACCOUNTID round-trips to a real GL account."
     )
-    # Card-level metadata for the picker (tier / kind / stats).
     tier = "S"
     kind = "OFFICIAL"
     stats = {
-        "target_doctypes": 17,    # how many ERPnext doctypes we emit
-        "target_fields": 190,     # approx total fields across emitted shapes
-        "source_tables": 30,      # legacy tables we consume
-        "fit_score": 94,          # mapping confidence %
+        "target_doctypes": 13,
+        "target_fields": 150,
+        "source_tables": 20,
+        "fit_score": 94,
     }
-    # Only fields the operator must decide remain in `config_schema`. Country
-    # and default_currency live as defaults inside Config.from_dict so the
-    # admin can override via API/file but the UI stays compact.
     config_schema: dict[str, Any] = {
         "company_name": {
             "type": "string",
@@ -94,10 +87,7 @@ class ErpnextStrategy(TransformStrategy):
             result.use_disk_staging(staging_dir)
         ctx = Context.build(tables, config, result, table_loader=table_loader)
         self._record_intake(ctx)
-        # Phase-by-phase emit. Each phase's source tables are freed
-        # immediately after to bound peak RSS — particularly important
-        # for the invoice phase which streams CATESINVDOCDETT (1M+ rows)
-        # from disk rather than ever loading it into memory.
+
         emit_masters(ctx)
         ctx.free_table("UNITT")
 
@@ -110,42 +100,30 @@ class ErpnextStrategy(TransformStrategy):
         ctx.free_table("CATDESCT")
 
         emit_parties(ctx)
-        ctx.free_table("CUSTT")
-        ctx.free_table("SUPPLIERT")
         ctx.free_table("CONTACTST")
 
-        emit_accounts(ctx)  # ACCOUNTT kept — invoices/payments/journals use it
+        emit_accounts(ctx)
 
-        emit_invoices(ctx)
-        # CATESINVDOCDETT was streamed, never loaded
-        ctx.free_table("CATESINVDOCT")
-        ctx.free_table("CATESRETINVDOCT")
-        ctx.free_table("CATESRETINVDOCDETT")
-        ctx.free_table("CATEPINVDOCT")
-        ctx.free_table("CATEPRETINVDOCT")
-        ctx.free_table("CATEPRETINVDOCDETT")
-
-        emit_payments(ctx)
-        ctx.free_table("RECDOCT")
-        ctx.free_table("RECDOCDETT")
-        ctx.free_table("PAYDOCT")
-        ctx.free_table("PAYDOCDETT")
+        emit_opening_balances(ctx)
+        ctx.free_table("CUSTT")
+        ctx.free_table("SUPPLIERT")
         ctx.free_table("CHEQUET")
-
-        emit_journals(ctx)
-        ctx.free_table("ENTRYDOCT")
-        ctx.free_table("ENTRYDOCDETT")
-        ctx.free_table("STARTENTRYDOCT")
-        ctx.free_table("STARTENTRYDOCDETT")
-        ctx.free_table("DNOTEDOCT")
-        ctx.free_table("DNOTEDOCDETT")
+        for unused in (
+            "CATESINVDOCT", "CATESRETINVDOCT", "CATESRETINVDOCDETT",
+            "CATEPINVDOCT", "CATEPRETINVDOCT", "CATEPRETINVDOCDETT",
+            "RECDOCT", "RECDOCDETT", "PAYDOCT", "PAYDOCDETT",
+            "ENTRYDOCT", "ENTRYDOCDETT",
+            "STARTENTRYDOCT", "STARTENTRYDOCDETT",
+            "DNOTEDOCT", "DNOTEDOCDETT",
+        ):
+            ctx.free_table(unused)
 
         emit_stock_opening(ctx)
         ctx.free_table("CATSTORET")
 
         emit_employees(ctx)
         ctx.free_table("EMPLOYEET")
-        ctx.free_table("ACCOUNTT")  # safe to drop now
+        ctx.free_table("ACCOUNTT")
 
         emit_audit(ctx)
         return result

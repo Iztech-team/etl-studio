@@ -10,14 +10,14 @@ in our data) keeps this simple.
 """
 from typing import Iterable
 
-from core.strategies.erpnext.common import (
+from core.strategies.erpnext_shared.common import (
     clean_str,
     index_by,
     item_id,
     parse_decimal,
 )
-from core.strategies.erpnext.context import Context
-from core.strategies.erpnext.masters import warehouse_for_store
+from core.strategies.erpnext_shared.context import Context
+from core.strategies.erpnext_shared.masters import warehouse_for_store
 
 
 def emit_stock_opening(ctx: Context) -> None:

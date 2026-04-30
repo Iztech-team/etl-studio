@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
 
 from core.strategies.base import StrategyResult
-from core.strategies.erpnext.common import (
+from core.strategies.erpnext_shared.common import (
     DEFAULT_CURRENCY,
     clean_str,
     customer_id,

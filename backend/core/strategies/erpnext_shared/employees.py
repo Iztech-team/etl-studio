@@ -6,9 +6,7 @@ the 1899-12-30 sentinel for unknown dates so we fall back to defensible
 defaults rather than skip the row.
 """
 
-from datetime import datetime, timedelta
-
-from core.strategies.erpnext.common import (
+from core.strategies.erpnext_shared.common import (
     clean_str,
     employee_id,
     is_truthy,
@@ -16,7 +14,7 @@ from core.strategies.erpnext.common import (
     parse_decimal,
     pick,
 )
-from core.strategies.erpnext.context import Context
+from core.strategies.erpnext_shared.context import Context
 
 # Sensible fallback for the rare row missing both BIRTH and a usable
 # placeholder. ERPnext won't accept null on a required Date field.
@@ -48,7 +46,7 @@ def _emit_employee(ctx: Context, row: dict) -> None:
         "gender": _gender(row),
         "date_of_birth": parse_date(row.get("BIRTH")) or DEFAULT_DOB,
         "date_of_joining": join_date,
-        "relieving_date": _relieving_date(row, is_working, join_date, ctx),
+        "relieving_date": "",
         "status": "Active" if is_working else "Left",
         "salary_currency": ctx.config.default_currency,
         "ctc": parse_decimal(row.get("SALARY")),
@@ -82,19 +80,3 @@ def _join_date(ctx: Context, row: dict) -> str:
         or ctx.config.opening_date
         or DEFAULT_DOB
     )
-
-
-def _relieving_date(row, is_working, join_date, ctx):
-    if is_working:
-        return ""
-
-    jd = datetime.strptime(join_date, "%Y-%m-%d")
-
-    for d in (
-        parse_date(row.get("EMPENDDATE")),
-        ctx.config.opening_date,
-    ):
-        if d and datetime.strptime(d, "%Y-%m-%d") > jd:
-            return d
-
-    return (jd + timedelta(days=1)).strftime("%Y-%m-%d")

@@ -18,12 +18,12 @@ Three load-bearing decisions live here:
 """
 from typing import Iterable
 
-from core.strategies.erpnext.common import (
+from core.strategies.erpnext_shared.common import (
     clean_str,
     currency_iso,
     pick,
 )
-from core.strategies.erpnext.context import Context
+from core.strategies.erpnext_shared.context import Context
 
 # 6 real roots + the ACCOUNTID=0 placeholder. Maps ACCOUNTID → (root_type,
 # report_type). The Arabic names live in ACCOUNTT.NAME so we don't repeat
@@ -84,23 +84,35 @@ def emit_accounts(ctx: Context) -> None:
 
 
 def _emit_party_leaf_accounts(ctx: Context) -> None:
-    """Emit synthetic 'Debtors' and 'Creditors' leaf accounts.
+    """Emit synthetic leaf accounts the opening-balance flow needs.
 
-    ERPnext requires a Receivable-type account for Sales Invoice.debit_to
-    and a Payable-type account for Purchase Invoice.credit_to. Our CoA
-    emit filters out per-customer (CLASS=2) and per-supplier (CLASS=3)
-    leaf accounts because ERPnext tracks party balances by party_type +
-    party rather than per-customer GL accounts. That leaves us with no
-    Receivable / Payable leaves under الذمم / المطلوبات.
+    Four accounts are added that don't exist in legacy:
 
-    Adding these two synthetic accounts gives Sales Invoice / Purchase
-    Invoice a valid debit_to / credit_to target.
+    - **Debtors** / **Creditors** (Receivable / Payable) — required so
+      opening Journal Entries with `party_type=Customer/Supplier` have a
+      valid GL target. ERPnext skips per-customer GL accounts (CLASS=2/3
+      filtered out earlier) and tracks party balances by party_type +
+      party instead.
+
+    - **Temporary Opening** (Equity) — counter-account every opening JE
+      posts to. Should net to ~zero across all opening JEs if the legacy
+      books balance. Lives under رأس المال (Equity root).
+
+    - **Cheques in Hand** (Asset, account_type=Cash) — destination for
+      individual outstanding-cheque opening JEs. Lives under الموجودات
+      المتداولة (Current Assets).
     """
+    abbr_or_id = lambda acctid, fallback: account_full_name(ctx, acctid) or ctx.with_abbr(fallback)
+    equity_parent = abbr_or_id("3", "راس المال")
+    current_assets_parent = abbr_or_id("11", "الموجودات المتداولة")
+    receivable_parent = abbr_or_id("6", "الذمم")
+    payable_parent = abbr_or_id("2", "المطلوبات")
+
     ctx.result.emit("Account", {
         "name": ctx.with_abbr("Debtors"),
         "account_name": "Debtors",
         "company": ctx.config.company_name,
-        "parent_account": ctx.with_abbr("الذمم"),
+        "parent_account": receivable_parent,
         "is_group": 0,
         "account_currency": ctx.config.default_currency,
         "root_type": "Asset",
@@ -111,14 +123,36 @@ def _emit_party_leaf_accounts(ctx: Context) -> None:
         "name": ctx.with_abbr("Creditors"),
         "account_name": "Creditors",
         "company": ctx.config.company_name,
-        "parent_account": ctx.with_abbr("المطلوبات"),
+        "parent_account": payable_parent,
         "is_group": 0,
         "account_currency": ctx.config.default_currency,
         "root_type": "Liability",
         "report_type": "Balance Sheet",
         "account_type": "Payable",
     })
-    ctx.result.bump("party_leaf_accounts_emitted", 2)
+    ctx.result.emit("Account", {
+        "name": ctx.with_abbr("Temporary Opening"),
+        "account_name": "Temporary Opening",
+        "company": ctx.config.company_name,
+        "parent_account": equity_parent,
+        "is_group": 0,
+        "account_currency": ctx.config.default_currency,
+        "root_type": "Equity",
+        "report_type": "Balance Sheet",
+        "account_type": "Temporary",
+    })
+    ctx.result.emit("Account", {
+        "name": ctx.with_abbr("Cheques in Hand"),
+        "account_name": "Cheques in Hand",
+        "company": ctx.config.company_name,
+        "parent_account": current_assets_parent,
+        "is_group": 0,
+        "account_currency": ctx.config.default_currency,
+        "root_type": "Asset",
+        "report_type": "Balance Sheet",
+        "account_type": "Cash",
+    })
+    ctx.result.bump("party_leaf_accounts_emitted", 4)
 
 
 def _root_id_for_each(ctx: Context) -> dict[str, str]:
@@ -263,12 +297,3 @@ def _deleted_account_ids(ctx: Context) -> set[str]:
     }
 
 
-# -- Cross-reference helper for invoices / payments ---------------------------
-
-def account_full_name(ctx: Context, account_id) -> str:
-    """Return the autonamed Account form '{name} - {abbr}' for an ACCOUNTID."""
-    row = ctx.accounts_by_id.get(clean_str(account_id))
-    if not row:
-        return ""
-    name = pick(row, "NAME", "NAMEE", "NAMEH")
-    return ctx.with_abbr(name) if name else ""

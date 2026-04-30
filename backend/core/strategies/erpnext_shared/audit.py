@@ -13,7 +13,7 @@ side by side. Two outputs land in `ctx.result`:
 """
 from typing import Any
 
-from core.strategies.erpnext.context import Context
+from core.strategies.erpnext_shared.context import Context
 
 CHECKLIST_KEY = "__migration_setup_checklist__"
 
@@ -87,29 +87,11 @@ def _preservation_summary(
         output.get("Bank Account", 0),
     ))
     rows.append(_check(
-        "Sales Invoices (named + summaries + returns)",
-        ctx.result.stats.get("sales_invoices_emitted", 0)
-        + ctx.result.stats.get("walkin_summaries_emitted", 0)
-        + ctx.result.stats.get("sales_returns_emitted", 0),
-        output.get("Sales Invoice", 0),
-    ))
-    rows.append(_check(
-        "Purchase Invoices (incl. returns)",
-        ctx.result.stats.get("purchase_invoices_emitted", 0)
-        + ctx.result.stats.get("purchase_returns_emitted", 0),
-        output.get("Purchase Invoice", 0),
-    ))
-    rows.append(_check(
-        "Payment Entries",
-        ctx.result.stats.get("customer_receipts_emitted", 0)
-        + ctx.result.stats.get("supplier_payments_emitted", 0),
-        output.get("Payment Entry", 0),
-    ))
-    rows.append(_check(
-        "Journal Entries (manual + opening + bounced)",
-        ctx.result.stats.get("manual_journals_emitted", 0)
-        + ctx.result.stats.get("opening_journals_emitted", 0)
-        + ctx.result.stats.get("bounced_cheque_journals_emitted", 0),
+        "Opening Journal Entries (parties + GL + cheques)",
+        ctx.result.stats.get("opening_customer_balances_emitted", 0)
+        + ctx.result.stats.get("opening_supplier_balances_emitted", 0)
+        + ctx.result.stats.get("opening_gl_balances_emitted", 0)
+        + ctx.result.stats.get("opening_cheques_emitted", 0),
         output.get("Journal Entry", 0),
     ))
     rows.append(_check(
@@ -184,36 +166,25 @@ the data CSVs. Each step is required for the imports to succeed.
 - Stock Settings → **Allow Negative Stock = ✓**
 {negative_note}
 
-## 3. Add custom fields (cheque + traceback)
+## 3. Add custom fields (traceback)
 
-The strategy emits a number of legacy_* and cheque_* fields on
-standard doctypes. Register them via Customize Form once:
+The strategy emits a few `legacy_*` fields on standard doctypes for
+post-migration auditability. Register them via Customize Form once:
 
-- **Sales Invoice**: legacy_docno, legacy_docserial, legacy_kind,
-  legacy_summary, legacy_summary_count, legacy_summary_terminal
-- **Purchase Invoice**: legacy_docno, legacy_docserial
 - **Customer**: legacy_custid, legacy_kind
 - **Supplier**: legacy_suppid
 - **Account**: legacy_acctid, legacy_class
 - **Item**: legacy_catid
 - **Employee**: legacy_empid, legacy_acctid
-- **Payment Entry** (cheque metadata): cheque_owner_name (Data),
-  cheque_bank (Link → Bank), cheque_branch (Data),
-  cheque_clearing_date (Date), cheque_returned (Check),
-  cheque_returned_count (Int), cheque_bank_account (Data),
-  linked_legacy_cheque_id (Data), legacy_docno, legacy_docserial
-- **Journal Entry**: linked_legacy_cheque_id, is_cheque_bounce (Check),
-  legacy_docno, legacy_docserial; on the `accounts` child:
-  cheque_no, cheque_date, cheque_clearing_date, cheque_owner_name,
-  cheque_bank, cheque_branch, cheque_returned, cheque_bank_account,
-  linked_legacy_cheque_id
+- **Journal Entry**: legacy_acctid, legacy_chequeid, legacy_kind
 
-(Field types in parens; default Data otherwise.)
+(All Data fields. Toggle off via `include_legacy_fields=False` if you
+don't want the custom-field setup step.)
 
 ## 4. Import sequence
 
-Use Frappe Data Import (UI) for masters; `bench --site … import-csv
---submit` for the bulk transactional files.
+Use Frappe Data Import (UI) for masters; the **Chart of Accounts
+Importer** for accounts; bulk submit for opening JEs.
 
 ```
 01_uom.csv                          → UOM (insert)
@@ -225,34 +196,43 @@ Use Frappe Data Import (UI) for masters; `bench --site … import-csv
 10_account.csv                      → USE 'Chart of Accounts Importer'
                                       (Accounting → Chart of Accounts
                                       Importer), NOT regular Data Import.
-                                      Tree doctype validation fails on
-                                      Data Import because parent_account
-                                      links are checked against the DB
-                                      up-front; the dedicated importer
-                                      handles the hierarchy in one pass.
-                                      File is the 8-column CoA template.
-11_bank_account.csv                 → Bank Account (references the GL
-                                      Account from 10_, hence imported
-                                      after.)
+                                      8-column CoA template format.
+                                      Includes synthetic Debtors,
+                                      Creditors, Temporary Opening,
+                                      and Cheques in Hand.
+11_bank_account.csv                 → Bank Account (references GL
+                                      Accounts from 10_, hence after.)
 20_customer.csv                     → Customer (incl. walk-in, orphans)
 21_supplier.csv                     → Supplier
 22_employee.csv                     → Employee
-30_item.csv (chunked)               → Item (with barcodes child;
-                                      depends on Supplier from 21_)
+30_item.csv (chunked)               → Item (with barcodes child)
 31_item_price.csv (chunked)         → Item Price
-50_opening_journal.csv              → Journal Entry (is_opening=Yes)
+50_journal_entry_opening_NN.csv     → Journal Entry (is_opening=Yes)
+                                      Three flavours interleaved:
+                                      • OPN-CUST-* customer balances
+                                      • OPN-SUPP-* supplier balances
+                                      • OPN-GL-*   bank/cash/VAT/
+                                                   capital/etc.
+                                      • OPN-CHQ-*  outstanding cheques
 51_stock_reconciliation.csv         → Stock Reconciliation (Opening)
-60_sales_invoice_NN.csv (chunked)   → Sales Invoice (incl. returns)
-61_purchase_invoice.csv             → Purchase Invoice (incl. returns)
-70_payment_entry.csv                → Payment Entry (with cheque fields)
-71_journal_entry.csv                → Journal Entry (manual + bounced)
 ```
 
-For each transactional file, enable **Submit After Import** and
+For the opening JE files, enable **Submit After Import** and
 **Don't Send Emails** in the Data Import form.
 
 ## 5. Verify
 
-After load, compare the strategy's preservation report (in the
-transform output) against ERPnext's record counts to confirm parity.
+After load, check **Trial Balance**:
+
+- The synthetic **Temporary Opening** account should net to ~zero
+  if the legacy books balance. A non-zero residual = data integrity
+  gap in the legacy source (e.g., orphan accounts, unposted journals).
+- **Customer Aging** report should show customer-by-customer balances.
+- **Supplier Aging** report should show supplier-by-supplier balances.
+- **Cheques in Hand** account ledger lists each outstanding cheque
+  with its number, date, and originator (in the JE remark).
+
+After verification, you can disable / archive the **Temporary Opening**
+account (or post a closing JE to roll its residual into Retained
+Earnings if you want a perfectly clean trial balance).
 """
