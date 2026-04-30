@@ -3794,6 +3794,7 @@ function ErpnextLiveExport({
 	const [apiKey, setApiKey] = useState("");
 	const [apiSecret, setApiSecret] = useState("");
 	const [company, setCompany] = useState("");
+	const [forceReupload, setForceReupload] = useState(false);
 	const [running, setRunning] = useState(false);
 	const [events, setEvents] = useState<ErpnextEvent[]>([]);
 	const [error, setError] = useState<string | null>(null);
@@ -3827,6 +3828,7 @@ function ErpnextLiveExport({
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					url, api_key: apiKey, api_secret: apiSecret, company,
+					force_reupload: forceReupload,
 				}),
 				signal: ctl.signal,
 			});
@@ -3943,6 +3945,26 @@ function ErpnextLiveExport({
 						placeholder="Al Arabi"
 						disabled={running}
 					/>
+					<label
+						className="mono"
+						style={{
+							display: "flex",
+							alignItems: "center",
+							gap: 10,
+							fontSize: 11,
+							color: "var(--lg-ink)",
+							cursor: running ? "not-allowed" : "pointer",
+						}}
+						title="Re-send every CSV even if it was successfully imported on a previous run"
+					>
+						<input
+							type="checkbox"
+							checked={forceReupload}
+							onChange={(e) => setForceReupload(e.target.checked)}
+							disabled={running}
+						/>
+						<span>Re-upload everything</span>
+					</label>
 					{events.length > 0 && (
 						<div
 							style={{

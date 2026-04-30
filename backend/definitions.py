@@ -84,6 +84,33 @@ GET_ERPNEXT_CREDS = """
     FROM erpnext_credentials WHERE project_id = ?
 """
 
+CREATE_ERPNEXT_IMPORTS_TABLE = """
+    CREATE TABLE IF NOT EXISTS erpnext_imports (
+        project_id     TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        file_name      TEXT NOT NULL,
+        doctype        TEXT NOT NULL,
+        imported_count INTEGER NOT NULL DEFAULT 0,
+        completed_at   TEXT NOT NULL,
+        PRIMARY KEY (project_id, file_name)
+    )
+"""
+
+UPSERT_ERPNEXT_IMPORT = """
+    INSERT INTO erpnext_imports (project_id, file_name, doctype, imported_count, completed_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(project_id, file_name) DO UPDATE SET
+        doctype = excluded.doctype,
+        imported_count = excluded.imported_count,
+        completed_at = excluded.completed_at
+"""
+
+LIST_ERPNEXT_IMPORTS = """
+    SELECT file_name, doctype, imported_count, completed_at
+    FROM erpnext_imports WHERE project_id = ?
+"""
+
+CLEAR_ERPNEXT_IMPORTS = "DELETE FROM erpnext_imports WHERE project_id = ?"
+
 # --- Project queries ---
 
 INSERT_PROJECT = (

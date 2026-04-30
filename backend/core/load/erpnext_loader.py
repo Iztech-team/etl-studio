@@ -61,12 +61,24 @@ POLL_TIMEOUT_SEC = 600
 
 def run_live_import(
     output_dir: str, client: ErpnextClient, company: str,
+    already_imported: dict[str, dict] | None = None,
+    on_file_imported: Any = None,
 ) -> Iterator[dict]:
-    """Yield progress events while pushing every CSV in `output_dir`."""
+    """Yield progress events while pushing every CSV in `output_dir`.
+
+    `already_imported` maps file_name → record from a previous successful
+    run; matching files are skipped so re-runs don't replay finished
+    imports. Pass an empty dict (or None) to force a full re-upload.
+
+    `on_file_imported(file_name, doctype, imported_count)` is called
+    after each fully-successful file so the caller can persist the
+    record for the next re-run's skip set.
+    """
     files = _ordered_csv_files(output_dir)
     if not files:
         yield {"event": "error", "message": "no CSV files in output dir — run transform first"}
         return
+    already = already_imported or {}
 
     yield {"event": "stage", "name": "preflight",
            "doctypes": DOCTYPES_NEEDING_IMPORT_PERM}
@@ -96,6 +108,15 @@ def run_live_import(
             summary.append({"file": fname, "status": "skipped"})
             continue
 
+        prior = already.get(fname)
+        if prior:
+            yield {"event": "skipped", "file": fname, "doctype": doctype,
+                   "reason": f"already imported {prior['imported_count']} rows on "
+                             f"{prior['completed_at']} — toggle 'Re-upload everything' to redo"}
+            summary.append({"file": fname, "doctype": doctype, "status": "skipped",
+                            "imported": prior["imported_count"]})
+            continue
+
         path = os.path.join(output_dir, fname)
         result: dict = {}
         try:
@@ -112,6 +133,11 @@ def run_live_import(
             return
 
         summary.append({"file": fname, **result})
+        # Only persist a 'this file is done' record when Frappe reports
+        # a fully successful import. Partial Success means the user will
+        # want a retry on the next run, so we don't mark it complete.
+        if on_file_imported and result.get("status") == "success":
+            on_file_imported(fname, doctype, int(result.get("imported") or 0))
 
     counts = _verify_counts(client, summary)
     yield {"event": "complete", "summary": summary, "verification": counts}

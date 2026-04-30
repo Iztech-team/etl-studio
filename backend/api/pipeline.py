@@ -30,9 +30,12 @@ from models.schemas import (
     TransformResponse,
 )
 from persistence.db import (
+    clear_erpnext_imports,
     create_pipeline_run,
     finish_pipeline_run,
     get_erpnext_credentials,
+    list_erpnext_imports,
+    record_erpnext_import,
     save_erpnext_credentials,
 )
 from persistence.project_state import project_outputs_dir
@@ -319,6 +322,7 @@ class ErpnextLoadRequest(BaseModel):
     api_key: str
     api_secret: str
     company: Optional[str] = None
+    force_reupload: bool = False
 
 
 @router.get("/erpnext-credentials/{project_id}")
@@ -366,16 +370,29 @@ async def load_erpnext(session_id: str, body: ErpnextLoadRequest):
     client = ErpnextClient(body.url, body.api_key, body.api_secret)
     run = create_pipeline_run(project_id, "load") if project_id else None
 
+    if project_id and body.force_reupload:
+        clear_erpnext_imports(project_id)
+    already = list_erpnext_imports(project_id) if project_id else {}
+
+    def on_done(file_name: str, doctype: str, imported: int) -> None:
+        if project_id:
+            record_erpnext_import(project_id, file_name, doctype, imported)
+
     def stream():
         # Some intermediaries (nginx, vite proxy) hold ~4KB of bytes
         # before flushing. Send a comment line of padding plus the
         # X-Accel-Buffering header so the first real events reach the
         # browser as soon as we yield them.
         yield ":" + (" " * 2048) + "\n\n"
-        yield _sse({"event": "begin", "company": company})
+        yield _sse({"event": "begin", "company": company,
+                    "skipping": sorted(already.keys()) if already else []})
         last_event: Dict[str, Any] = {}
         try:
-            for ev in run_live_import(out_dir, client, company or ""):
+            for ev in run_live_import(
+                out_dir, client, company or "",
+                already_imported=already,
+                on_file_imported=on_done,
+            ):
                 last_event = ev
                 yield _sse(ev)
         except ErpnextError as e:

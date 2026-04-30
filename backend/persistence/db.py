@@ -5,8 +5,10 @@ from pathlib import Path
 
 from definitions import (
     CHECK_PIPELINE_RUN_EXISTS,
+    CLEAR_ERPNEXT_IMPORTS,
     CREATE_AUDIT_EVENTS_TABLE,
     CREATE_ERPNEXT_CREDS_TABLE,
+    CREATE_ERPNEXT_IMPORTS_TABLE,
     CREATE_INDEX_AUDIT_EVENTS_PROJECT,
     CREATE_INDEX_AUDIT_EVENTS_RUN,
     CREATE_INDEX_PIPELINE_RUNS_PROJECT,
@@ -27,6 +29,7 @@ from definitions import (
     INSERT_PIPELINE_RUN,
     INSERT_PROJECT,
     LIST_AUDIT_EVENTS,
+    LIST_ERPNEXT_IMPORTS,
     LIST_PIPELINE_RUNS,
     LIST_PROJECTS_BY_USER,
     LIST_PROJECTS_FOR_BACKFILL,
@@ -35,6 +38,7 @@ from definitions import (
     RENAME_PROJECT,
     UPDATE_PROJECT_PHASE,
     UPSERT_ERPNEXT_CREDS,
+    UPSERT_ERPNEXT_IMPORT,
 )
 
 _DB_PATH = Path(__file__).parent.parent / "data" / "etl_studio.db"
@@ -55,6 +59,7 @@ def init_db() -> None:
         conn.execute(CREATE_PIPELINE_RUNS_TABLE)
         conn.execute(CREATE_AUDIT_EVENTS_TABLE)
         conn.execute(CREATE_ERPNEXT_CREDS_TABLE)
+        conn.execute(CREATE_ERPNEXT_IMPORTS_TABLE)
         conn.execute(CREATE_INDEX_PIPELINE_RUNS_PROJECT)
         conn.execute(CREATE_INDEX_AUDIT_EVENTS_PROJECT)
         conn.execute(CREATE_INDEX_AUDIT_EVENTS_RUN)
@@ -72,6 +77,27 @@ def get_erpnext_credentials(project_id: str) -> dict | None:
     with _get_conn() as conn:
         row = conn.execute(GET_ERPNEXT_CREDS, (project_id,)).fetchone()
         return dict(row) if row else None
+
+
+def record_erpnext_import(
+    project_id: str, file_name: str, doctype: str, imported_count: int,
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with _get_conn() as conn:
+        conn.execute(UPSERT_ERPNEXT_IMPORT,
+                     (project_id, file_name, doctype, imported_count, now))
+
+
+def list_erpnext_imports(project_id: str) -> dict[str, dict]:
+    """Map file_name → {doctype, imported_count, completed_at}."""
+    with _get_conn() as conn:
+        rows = conn.execute(LIST_ERPNEXT_IMPORTS, (project_id,)).fetchall()
+        return {r["file_name"]: dict(r) for r in rows}
+
+
+def clear_erpnext_imports(project_id: str) -> None:
+    with _get_conn() as conn:
+        conn.execute(CLEAR_ERPNEXT_IMPORTS, (project_id,))
 
 
 def backfill_pipeline_runs() -> int:
