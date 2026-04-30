@@ -1,5 +1,6 @@
 import {
 	createContext,
+	Fragment,
 	useContext,
 	useEffect,
 	useMemo,
@@ -1981,6 +1982,11 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 		[picks, entities],
 	);
 
+	const labelMap = useMemo(
+		() => Object.fromEntries((entities ?? []).map((e) => [e.id, e.label])),
+		[entities],
+	);
+
 	if (!entities) {
 		return (
 			<div className="mono" style={{ fontSize: 11, color: "var(--lg-ink-dim)", padding: 24 }}>
@@ -2032,11 +2038,6 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 			setSaving(false);
 		}
 	};
-
-	const labelMap = useMemo(
-		() => Object.fromEntries(entities.map((e) => [e.id, e.label])),
-		[entities],
-	);
 
 	return (
 		<div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
@@ -3666,10 +3667,10 @@ function RlExport({ onDone }: { onDone: () => void }) {
 								</div>
 								<dl className="kv">
 									{Object.entries(loadResult.rows_written).map(([table, count]) => (
-										<>
-											<dt key={table + "-dt"}>{table.toUpperCase()}</dt>
-											<dd key={table + "-dd"}>{count.toLocaleString()}</dd>
-										</>
+										<Fragment key={table}>
+											<dt>{table.toUpperCase()}</dt>
+											<dd>{count.toLocaleString()}</dd>
+										</Fragment>
 									))}
 								</dl>
 							</div>
