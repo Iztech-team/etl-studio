@@ -331,8 +331,10 @@ async def load_erpnext(session_id: str, body: ErpnextLoadRequest):
     if not await session_store.exists(session_id):
         raise HTTPException(404, "Session not found")
     s = await session_store.require(session_id)
+    # Lazy re-transform on resume: project state intentionally doesn't
+    # persist the heavy `transformed` dict; recompute from raw + config.
     if "transformed" not in s or not s["transformed"]:
-        raise HTTPException(400, "Run /api/transform before /api/load-erpnext")
+        await _ensure_transformed(session_id)
     project_id = s.get("project_id")
     if project_id:
         save_erpnext_credentials(

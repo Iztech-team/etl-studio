@@ -3453,12 +3453,11 @@ function requiredMissing(
 
 function RlExport({ onDone }: { onDone: () => void }) {
 	const { projectId, uploadResult, transformResult, loadResult, setLoadResult } = usePipelineCtx();
-	// `transformResult` alone is enough to know a strategy ran — every
-	// transform in the current pipeline is a strategy-driven one. Falling
-	// back to `strategy_name` was unreliable because older persisted
-	// project state didn't always round-trip that field, and the Frappe
-	// CSV option would silently disappear.
-	const usedStrategy = !!transformResult;
+	// Strategy-driven formats (Frappe CSV, ERPnext live) always available
+	// when the user has uploaded data — the backend re-runs transform on
+	// demand if the heavy `transformed` payload was dropped between
+	// sessions, so we don't gate the UI on `transformResult` being live.
+	const usedStrategy = !!uploadResult;
 	const [fmt, setFmt] = useState(usedStrategy ? "frappe" : "json");
 	const [running, setRunning] = useState(false);
 	const [error, setError] = useState<string | null>(null);
