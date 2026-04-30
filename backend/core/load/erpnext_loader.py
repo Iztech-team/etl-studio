@@ -169,13 +169,19 @@ def _import_via_data_import(
     with open(path, "rb") as fh:
         content = fh.read()
 
+    # Item Price references item_code on a doctype the loader uploads
+    # earlier in the same run. If the strategy filtered some Items out
+    # but their prices slipped through, drop those rows here so Frappe
+    # doesn't complain. Source of truth is our own item CSVs in the
+    # output dir — no ERPnext round-trip needed.
     if doctype == "Item Price":
-        existing_items = client.list_doctype_names("Item")
-        content, dropped = _filter_csv_by_column(content, "item_code", existing_items)
-        if dropped:
-            yield {"event": "filtering",
-                   "message": f"dropped {dropped} Item Price rows referencing items not in ERPnext",
-                   "filtered": dropped}
+        emitted_items = _read_emitted_item_codes(os.path.dirname(path))
+        if emitted_items:
+            content, dropped = _filter_csv_by_column(content, "item_code", emitted_items)
+            if dropped:
+                yield {"event": "filtering",
+                       "message": f"dropped {dropped} Item Price rows referencing items not in 30_item.csv",
+                       "filtered": dropped}
 
     yield {"event": "uploading", "stage": "upload"}
     file_url = client.upload_file(fname, content, content_type="text/csv")
@@ -249,6 +255,44 @@ def _poll_data_import_streaming(
         if warnings:
             err = f"{err} | warnings: {' | '.join(warnings)[:500]}"
         raise ErpnextError(f"Data Import {name} failed: {err}")
+
+
+def _read_emitted_item_codes(output_dir: str) -> set[str]:
+    """Collect item_code values from every 30_item*.csv chunk we wrote.
+
+    Item Price's item_code references the same set, so the value of
+    `name` / `item_code` in those CSVs is the authoritative list of
+    Items the strategy actually emitted this run.
+    """
+    out: set[str] = set()
+    for fname in sorted(os.listdir(output_dir)):
+        if not fname.endswith(".csv"):
+            continue
+        if not fname.startswith("30_item"):
+            continue
+        if "item_price" in fname:  # 31_item_price has different prefix anyway
+            continue
+        path = os.path.join(output_dir, fname)
+        try:
+            with open(path, "rb") as fh:
+                content = fh.read()
+            text = content.decode("utf-8-sig")
+        except (OSError, UnicodeDecodeError):
+            continue
+        reader = csv.reader(io.StringIO(text))
+        rows = list(reader)
+        if not rows:
+            continue
+        header = rows[0]
+        idx = header.index("item_code") if "item_code" in header else (
+            header.index("ID") if "ID" in header else None
+        )
+        if idx is None:
+            continue
+        for row in rows[1:]:
+            if idx < len(row) and row[idx].strip():
+                out.add(row[idx].strip())
+    return out
 
 
 def _filter_csv_by_column(
