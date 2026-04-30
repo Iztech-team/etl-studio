@@ -3790,6 +3790,13 @@ function ErpnextLiveExport({
 	projectId: string | null;
 	onDone: () => void;
 }) {
+	const { transformResult } = usePipelineCtx();
+	const expectedCounts = transformResult?.output_doctypes ?? {};
+	const allDoctypes = useMemo(
+		() => Object.keys(expectedCounts).sort(),
+		[expectedCounts],
+	);
+
 	const [url, setUrl] = useState("");
 	const [apiKey, setApiKey] = useState("");
 	const [apiSecret, setApiSecret] = useState("");
@@ -3798,7 +3805,14 @@ function ErpnextLiveExport({
 	const [running, setRunning] = useState(false);
 	const [events, setEvents] = useState<ErpnextEvent[]>([]);
 	const [error, setError] = useState<string | null>(null);
+	const [selectedDoctypes, setSelectedDoctypes] = useState<Set<string>>(
+		() => new Set(allDoctypes),
+	);
 	const abortRef = useRef<AbortController | null>(null);
+
+	useEffect(() => {
+		setSelectedDoctypes(new Set(allDoctypes));
+	}, [allDoctypes]);
 
 	useEffect(() => {
 		if (!projectId) return;
@@ -3829,6 +3843,9 @@ function ErpnextLiveExport({
 				body: JSON.stringify({
 					url, api_key: apiKey, api_secret: apiSecret, company,
 					force_reupload: forceReupload,
+					selected_doctypes: allDoctypes.length > 0
+						? Array.from(selectedDoctypes)
+						: null,
 				}),
 				signal: ctl.signal,
 			});
@@ -3865,7 +3882,23 @@ function ErpnextLiveExport({
 	};
 
 	const cancel = () => abortRef.current?.abort();
+	const toggleDoctype = (dt: string) =>
+		setSelectedDoctypes((prev) => {
+			const next = new Set(prev);
+			if (next.has(dt)) next.delete(dt);
+			else next.add(dt);
+			return next;
+		});
+	const toggleAll = () =>
+		setSelectedDoctypes((prev) =>
+			prev.size === allDoctypes.length ? new Set() : new Set(allDoctypes),
+		);
 
+	const states = useMemo(
+		() => deriveDoctypeStates(events, expectedCounts),
+		[events, expectedCounts],
+	);
+	const idle = !running && events.length === 0;
 	const complete = events.find((e) => e.event === "complete");
 	const fatalError = events.find((e) => e.event === "error" && !e.file);
 
@@ -3965,22 +3998,66 @@ function ErpnextLiveExport({
 						/>
 						<span>Re-upload everything</span>
 					</label>
-					{events.length > 0 && (
+					{allDoctypes.length > 0 && (
 						<div
 							style={{
 								borderTop: "1px solid var(--lg-border)",
-								paddingTop: 10,
+								paddingTop: 12,
 								marginTop: 4,
 								display: "flex",
 								flexDirection: "column",
-								gap: 4,
-								maxHeight: 400,
-								overflowY: "auto",
+								gap: 8,
 							}}
 						>
-							{events.map((ev, i) => (
-								<EventRow key={i} ev={ev} />
-							))}
+							<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+								<span
+									className="pixel"
+									style={{
+										fontSize: 9,
+										color: "var(--lg-ink-mute)",
+										letterSpacing: "0.1em",
+										flex: 1,
+									}}
+								>
+									{idle
+										? `DOCTYPES — ${selectedDoctypes.size} of ${allDoctypes.length} selected`
+										: `PROGRESS — ${states.filter((s) =>
+												s.status === "success" || s.status === "partial",
+											).length} of ${
+												states.filter((s) => s.status !== "skipped" && s.status !== "idle").length || allDoctypes.length
+											} done`}
+								</span>
+								{idle && (
+									<button
+										className="btn btn-ghost"
+										onClick={toggleAll}
+										style={{ padding: "2px 8px", fontSize: 9 }}
+									>
+										{selectedDoctypes.size === allDoctypes.length
+											? "DESELECT ALL"
+											: "SELECT ALL"}
+									</button>
+								)}
+							</div>
+							<div
+								style={{
+									display: "flex",
+									flexDirection: "column",
+									gap: 6,
+									maxHeight: 400,
+									overflowY: "auto",
+								}}
+							>
+								{states.map((s) => (
+									<DoctypeRow
+										key={s.doctype}
+										state={s}
+										picked={selectedDoctypes.has(s.doctype)}
+										idle={idle}
+										onToggle={() => toggleDoctype(s.doctype)}
+									/>
+								))}
+							</div>
 						</div>
 					)}
 					{error && (
@@ -4074,6 +4151,247 @@ function ErpnextField({
 				}}
 			/>
 		</label>
+	);
+}
+
+
+type DoctypeStatus =
+	| "idle" | "queued" | "uploading" | "running"
+	| "success" | "partial" | "skipped" | "error";
+
+type DoctypeState = {
+	doctype: string;
+	expected: number;
+	status: DoctypeStatus;
+	imported: number;
+	failed: number;
+	warnings: string[];
+	errors: string[];
+	detail: string;
+};
+
+
+function deriveDoctypeStates(
+	events: ErpnextEvent[],
+	expected: Record<string, number>,
+): DoctypeState[] {
+	const map = new Map<string, DoctypeState>();
+	for (const dt of Object.keys(expected)) {
+		map.set(dt, {
+			doctype: dt, expected: expected[dt],
+			status: "idle", imported: 0, failed: 0,
+			warnings: [], errors: [], detail: "",
+		});
+	}
+	for (const ev of events) {
+		const dt = (ev.doctype as string | undefined) ?? "";
+		if (!dt) continue;
+		const s = map.get(dt) ?? {
+			doctype: dt, expected: 0, status: "idle" as DoctypeStatus,
+			imported: 0, failed: 0, warnings: [], errors: [], detail: "",
+		};
+		switch (ev.event) {
+			case "uploading":
+				s.status = "uploading";
+				s.detail = (ev.stage as string) ?? "uploading";
+				break;
+			case "queued":
+				s.status = "queued";
+				s.detail = "queued in Frappe";
+				break;
+			case "polling": {
+				s.status = "running";
+				s.imported = (ev.imported as number) ?? s.imported;
+				s.failed = (ev.failed as number) ?? s.failed;
+				const status = (ev.status as string | undefined) ?? "in progress";
+				s.detail = status.toLowerCase();
+				if (Array.isArray(ev.warnings)) s.warnings = ev.warnings as string[];
+				break;
+			}
+			case "done": {
+				const finalStatus = (ev.status as string | undefined) ?? "success";
+				s.status = finalStatus === "success" ? "success" : "partial";
+				s.imported = (ev.imported as number) ?? s.imported;
+				s.failed = (ev.failed as number) ?? s.failed;
+				if (Array.isArray(ev.warnings)) s.warnings = ev.warnings as string[];
+				if (Array.isArray(ev.errors)) s.errors = ev.errors as string[];
+				s.detail = finalStatus;
+				break;
+			}
+			case "skipped":
+				s.status = "skipped";
+				s.detail = (ev.reason as string) ?? "skipped";
+				if (typeof ev.imported === "number") s.imported = ev.imported as number;
+				break;
+			case "error":
+				s.status = "error";
+				s.detail = (ev.message as string) ?? "failed";
+				break;
+		}
+		map.set(dt, s);
+	}
+	return Array.from(map.values());
+}
+
+
+const STATUS_COLOR: Record<DoctypeStatus, string> = {
+	idle:      "var(--lg-ink-mute)",
+	queued:    "var(--lg-amber)",
+	uploading: "var(--lg-amber)",
+	running:   "var(--lg-cyan)",
+	success:   "var(--lg-green)",
+	partial:   "var(--lg-amber)",
+	skipped:   "var(--lg-ink-dim)",
+	error:     "var(--lg-coral)",
+};
+
+
+function DoctypeRow({
+	state,
+	picked,
+	idle,
+	onToggle,
+}: {
+	state: DoctypeState;
+	picked: boolean;
+	idle: boolean;
+	onToggle: () => void;
+}) {
+	const color = STATUS_COLOR[state.status];
+	const isActive = state.status === "uploading" || state.status === "queued"
+		|| state.status === "running";
+	const dimmed = idle && !picked;
+	const pct = state.expected > 0
+		? Math.min(100, (state.imported / state.expected) * 100)
+		: state.status === "success" || state.status === "partial" ? 100 : 0;
+
+	return (
+		<div
+			onClick={idle ? onToggle : undefined}
+			style={{
+				border: `1px solid ${idle && picked ? "var(--lg-amber)" : "var(--lg-border)"}`,
+				background: isActive
+					? "rgba(80,180,220,0.05)"
+					: state.status === "success"
+					? "rgba(140,200,120,0.05)"
+					: state.status === "error"
+					? "rgba(220,90,90,0.05)"
+					: "transparent",
+				padding: "8px 10px",
+				display: "flex",
+				flexDirection: "column",
+				gap: 6,
+				cursor: idle ? "pointer" : "default",
+				opacity: dimmed ? 0.5 : 1,
+				animation: "rl-row-in .2s ease-out both",
+			}}
+		>
+			<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+				{idle ? (
+					<span
+						style={{
+							display: "inline-flex",
+							alignItems: "center",
+							justifyContent: "center",
+							width: 12,
+							height: 12,
+							border: "1px solid var(--lg-amber)",
+							background: picked ? "var(--lg-amber)" : "transparent",
+							color: "#0a0410",
+							flexShrink: 0,
+						}}
+					>
+						{picked && <ICheck size={6} />}
+					</span>
+				) : (
+					<span
+						style={{
+							display: "inline-block",
+							width: 8, height: 8,
+							borderRadius: "50%",
+							background: color,
+							animation: isActive ? "rl-pulse 1.1s ease-in-out infinite" : "none",
+							flexShrink: 0,
+						}}
+					/>
+				)}
+				<span
+					className="pixel"
+					style={{
+						fontSize: 11,
+						color: "var(--lg-ink)",
+						letterSpacing: "0.05em",
+						flex: 1,
+					}}
+				>
+					{state.doctype.toUpperCase()}
+				</span>
+				<span
+					className="mono"
+					style={{ fontSize: 10, color, fontVariantNumeric: "tabular-nums" }}
+				>
+					{state.status === "idle"
+						? `${state.expected.toLocaleString()} rows`
+						: state.expected > 0
+						? `${state.imported}/${state.expected}`
+						: state.imported > 0
+						? `${state.imported}`
+						: state.detail}
+					{state.failed > 0 && (
+						<span style={{ color: "var(--lg-coral)" }}>
+							{" "}· {state.failed} failed
+						</span>
+					)}
+				</span>
+			</div>
+			{!idle && (
+				<div
+					style={{
+						height: 6,
+						background: "var(--lg-bg-2)",
+						border: "1px solid var(--lg-border)",
+						position: "relative",
+						overflow: "hidden",
+					}}
+				>
+					<div
+						style={{
+							width: `${pct}%`,
+							height: "100%",
+							background: isActive
+								? `repeating-linear-gradient(45deg, ${color}, ${color} 6px, rgba(255,255,255,0.15) 6px, rgba(255,255,255,0.15) 12px)`
+								: color,
+							backgroundSize: "24px 24px",
+							animation: isActive ? "rl-stripe-march .8s linear infinite" : "none",
+							transition: "width .25s ease-out",
+						}}
+					/>
+				</div>
+			)}
+			{!idle && state.detail && state.status !== "running" && (
+				<span
+					className="mono"
+					style={{ fontSize: 9, color: "var(--lg-ink-dim)", letterSpacing: "0.05em" }}
+				>
+					{state.detail}
+				</span>
+			)}
+			{state.warnings.slice(0, 3).map((w, i) => (
+				<span key={`w${i}`} style={{ color: "var(--lg-amber)", fontSize: 9, paddingLeft: 16 }}>
+					⚠ {w}
+				</span>
+			))}
+			{state.errors.slice(0, 3).map((e, i) => (
+				<span key={`e${i}`} style={{ color: "var(--lg-coral)", fontSize: 9, paddingLeft: 16 }}>
+					✗ {e}
+				</span>
+			))}
+			{(state.warnings.length > 3 || state.errors.length > 3) && (
+				<span style={{ color: "var(--lg-ink-mute)", fontSize: 9, paddingLeft: 16 }}>
+					+ {(state.warnings.length + state.errors.length) - 3} more
+				</span>
+			)}
+		</div>
 	);
 }
 

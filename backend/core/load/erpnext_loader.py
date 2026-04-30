@@ -63,12 +63,17 @@ def run_live_import(
     output_dir: str, client: ErpnextClient, company: str,
     already_imported: dict[str, dict] | None = None,
     on_file_imported: Any = None,
+    selected_doctypes: list[str] | None = None,
 ) -> Iterator[dict]:
     """Yield progress events while pushing every CSV in `output_dir`.
 
     `already_imported` maps file_name → record from a previous successful
     run; matching files are skipped so re-runs don't replay finished
     imports. Pass an empty dict (or None) to force a full re-upload.
+
+    `selected_doctypes` constrains the run to a subset (matched by the
+    target doctype, not file name — so all chunks of a chunked doctype
+    move together). None means send everything.
 
     `on_file_imported(file_name, doctype, imported_count)` is called
     after each fully-successful file so the caller can persist the
@@ -79,6 +84,7 @@ def run_live_import(
         yield {"event": "error", "message": "no CSV files in output dir — run transform first"}
         return
     already = already_imported or {}
+    selection = set(selected_doctypes) if selected_doctypes is not None else None
 
     yield {"event": "stage", "name": "preflight",
            "doctypes": DOCTYPES_NEEDING_IMPORT_PERM}
@@ -106,6 +112,12 @@ def run_live_import(
         if not doctype:
             yield {"event": "skipped", "file": fname, "reason": f"unknown doctype slug: {slug}"}
             summary.append({"file": fname, "status": "skipped"})
+            continue
+
+        if selection is not None and doctype not in selection:
+            yield {"event": "skipped", "file": fname, "doctype": doctype,
+                   "reason": "deselected"}
+            summary.append({"file": fname, "doctype": doctype, "status": "skipped"})
             continue
 
         prior = already.get(fname)

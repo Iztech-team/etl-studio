@@ -656,6 +656,14 @@ dialog.rl-col-dialog::backdrop {
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.35; }
 }
+@keyframes rl-stripe-march {
+  0%   { background-position: 0 0; }
+  100% { background-position: 24px 0; }
+}
+@keyframes rl-row-in {
+  from { opacity: 0; transform: translateX(-4px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
 @keyframes rl-amber-glow {
   0%, 100% { box-shadow: 2px 2px 0 var(--lg-amber-dim), 0 0 0 rgba(176,102,255,0); }
   50%      { box-shadow: 2px 2px 0 var(--lg-amber-dim), 0 0 12px rgba(176,102,255,0.45); }

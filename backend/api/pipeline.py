@@ -323,6 +323,7 @@ class ErpnextLoadRequest(BaseModel):
     api_secret: str
     company: Optional[str] = None
     force_reupload: bool = False
+    selected_doctypes: Optional[List[str]] = None
 
 
 @router.get("/erpnext-credentials/{project_id}")
@@ -392,6 +393,7 @@ async def load_erpnext(session_id: str, body: ErpnextLoadRequest):
                 out_dir, client, company or "",
                 already_imported=already,
                 on_file_imported=on_done,
+                selected_doctypes=body.selected_doctypes,
             ):
                 last_event = ev
                 yield _sse(ev)
