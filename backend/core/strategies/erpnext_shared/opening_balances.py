@@ -148,14 +148,30 @@ def emit_outstanding_cheques(
 ) -> None:
     """One JE per uncleared incoming cheque, posted to cheques_account.
 
-    Filter: incoming (CLASS=1), not cleared (REALCDATE=sentinel), not
-    bounced (CHEQUEBACK=0). DEBIT cheques_account, CREDIT Temporary
-    Opening — no party link; the customer's GL was already decremented
-    when the cheque was received in legacy.
+    Filter: incoming (CLASS=1) AND its latest CHEQUELEDGERT row points at
+    an account whose ACCCLASST.CLASSID ∈ {11, 14} — meaning the cheque
+    is still in hand (CLASS=14, صندوق الشيكات) or sent for collection
+    but not yet cleared (CLASS=11, برسم التحصيل). Anything that's
+    landed on a bank current account, customer / supplier, cash box,
+    expense, etc. is treated as already-settled and skipped.
+
+    Why not CHEQUET.REALCDATE alone? Legacy users routinely never
+    update REALCDATE when the bank clears the cheque, so a sentinel-
+    empty REALCDATE means 'unknown' not 'actually outstanding'. The
+    LEDGER, by contrast, gets a row whenever the cheque physically
+    moves between accounts, so its tail tells us where the cheque
+    really is right now.
+
+    DEBIT cheques_account, CREDIT Temporary Opening — no party link;
+    the customer's GL was already decremented in legacy when the
+    cheque was received.
     """
     temp_opening = ctx.with_abbr("Temporary Opening")
+    latest_acct_per_cheque = _build_latest_cheque_account(ctx)
     for cheque in ctx.iter_streamed("CHEQUET"):
-        if not _is_outstanding_incoming_cheque(cheque):
+        if not _is_outstanding_incoming_cheque(
+            cheque, latest_acct_per_cheque, ctx.accounts_by_id,
+        ):
             continue
         amount_default = _cheque_amount_default(cheque, fx_rates)
         if abs(amount_default) < BALANCE_THRESHOLD:
@@ -211,15 +227,50 @@ def emit_outstanding_cheques(
         ctx.result.bump("opening_cheques_emitted")
 
 
-def _is_outstanding_incoming_cheque(cheque: dict) -> bool:
-    realcdate = clean_str(cheque.get("REALCDATE"))
-    if realcdate and not realcdate.startswith(SENTINEL_DATE):
-        return False
-    if clean_str(cheque.get("CHEQUEBACK")) == "1":
-        return False
+# Legacy ACCCLASST.CLASSIDs used for cheque-holding accounts. A cheque
+# whose latest CHEQUELEDGERT row sits on an account in one of these
+# classes is genuinely still outstanding from the company's books.
+CHEQUE_HOLDING_CLASSES = {
+    "14",  # حساب صندوق الشيكات — physical cheque box (in hand)
+    "11",  # حساب برسم التحصيل — sent to bank for collection, not yet cleared
+}
+
+
+def _is_outstanding_incoming_cheque(
+    cheque: dict,
+    latest_acct_per_cheque: dict[str, str],
+    accounts_by_id: dict[str, dict],
+) -> bool:
     if clean_str(cheque.get("CLASS")) != "1":
         return False
-    return True
+    cheque_id = clean_str(cheque.get("CHEQUEID"))
+    latest_acct = latest_acct_per_cheque.get(cheque_id)
+    if not latest_acct or latest_acct == "0":
+        return False
+    account_class = clean_str(accounts_by_id.get(latest_acct, {}).get("CLASS"))
+    return account_class in CHEQUE_HOLDING_CLASSES
+
+
+def _build_latest_cheque_account(ctx: Context) -> dict[str, str]:
+    """Map CHEQUEID → CURRACCOUNT of its highest-SERIAL ledger row.
+
+    CHEQUELEDGERT records each movement of a cheque between accounts;
+    the latest row tells us where the cheque is right now. Used by
+    the outstanding-cheque filter — see _is_outstanding_incoming_cheque.
+    """
+    latest: dict[str, tuple[int, str]] = {}
+    for row in ctx.table("CHEQUELEDGERT"):
+        cheque_id = clean_str(row.get("CHEQUEID"))
+        if not cheque_id:
+            continue
+        try:
+            serial = int(clean_str(row.get("SERIAL")) or "0")
+        except ValueError:
+            continue
+        curr = clean_str(row.get("CURRACCOUNT"))
+        if cheque_id not in latest or serial > latest[cheque_id][0]:
+            latest[cheque_id] = (serial, curr)
+    return {cheque_id: acc for cheque_id, (_, acc) in latest.items()}
 
 
 def _cheque_amount_default(cheque: dict, fx_rates: dict[str, float]) -> float:
