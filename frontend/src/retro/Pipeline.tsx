@@ -3790,7 +3790,7 @@ function ErpnextLiveExport({
 	projectId: string | null;
 	onDone: () => void;
 }) {
-	const { transformResult } = usePipelineCtx();
+	const { transformResult, setTransformResult } = usePipelineCtx();
 	const expectedCounts = transformResult?.output_doctypes ?? {};
 	const allDoctypes = useMemo(
 		() => Object.keys(expectedCounts).sort(),
@@ -3805,6 +3805,7 @@ function ErpnextLiveExport({
 	const [running, setRunning] = useState(false);
 	const [events, setEvents] = useState<ErpnextEvent[]>([]);
 	const [error, setError] = useState<string | null>(null);
+	const [loadingDoctypes, setLoadingDoctypes] = useState(false);
 	const [selectedDoctypes, setSelectedDoctypes] = useState<Set<string>>(
 		() => new Set(allDoctypes),
 	);
@@ -3828,6 +3829,28 @@ function ErpnextLiveExport({
 			})
 			.catch(() => {});
 	}, [projectId]);
+
+	// Doctype list is derived from transformResult.output_doctypes. On a
+	// freshly-reopened project the transformResult is null until the user
+	// triggers it; do that lazily here so the selection panel populates
+	// without making the user visit the Transform stage first.
+	useEffect(() => {
+		if (!sessionId) return;
+		if (transformResult) return;
+		let cancelled = false;
+		setLoadingDoctypes(true);
+		fetch(`/api/transform/${sessionId}`)
+			.then((r) => (r.ok ? r.json() : null))
+			.then((data) => {
+				if (cancelled || !data) return;
+				setTransformResult(data);
+			})
+			.catch(() => {})
+			.finally(() => {
+				if (!cancelled) setLoadingDoctypes(false);
+			});
+		return () => { cancelled = true; };
+	}, [sessionId, transformResult, setTransformResult]);
 
 	const send = async () => {
 		if (!sessionId || !url || !apiKey || !apiSecret) return;
@@ -3998,6 +4021,34 @@ function ErpnextLiveExport({
 						/>
 						<span>Re-upload everything</span>
 					</label>
+					{loadingDoctypes && allDoctypes.length === 0 && (
+						<div
+							className="mono"
+							style={{
+								borderTop: "1px solid var(--lg-border)",
+								paddingTop: 12,
+								marginTop: 4,
+								fontSize: 11,
+								color: "var(--lg-ink-dim)",
+							}}
+						>
+							Loading doctypes from transform…
+						</div>
+					)}
+					{!loadingDoctypes && allDoctypes.length === 0 && (
+						<div
+							className="mono"
+							style={{
+								borderTop: "1px solid var(--lg-border)",
+								paddingTop: 12,
+								marginTop: 4,
+								fontSize: 11,
+								color: "var(--lg-amber)",
+							}}
+						>
+							No doctypes available — go back to Transform and run a strategy first.
+						</div>
+					)}
 					{allDoctypes.length > 0 && (
 						<div
 							style={{
