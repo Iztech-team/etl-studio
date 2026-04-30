@@ -322,6 +322,7 @@ class ErpnextLoadRequest(BaseModel):
     api_key: str
     api_secret: str
     company: Optional[str] = None
+    company_abbr: Optional[str] = None
     force_reupload: bool = False
     selected_doctypes: Optional[List[str]] = None
 
@@ -347,14 +348,28 @@ async def load_erpnext(session_id: str, body: ErpnextLoadRequest):
     if not await session_store.exists(session_id):
         raise HTTPException(404, "Session not found")
     s = await session_store.require(session_id)
-    # Lazy re-transform on resume: project state intentionally doesn't
-    # persist the heavy `transformed` dict; recompute from raw + config.
+    # Apply any company / abbr override from the load form. If the user
+    # picks different values than what transform last ran with, drop the
+    # cached output and let _ensure_transformed re-run with the new
+    # values — otherwise the CSVs still have the old company baked in.
+    cfg = s.get("strategy_config") or {}
+    if body.company and body.company != cfg.get("company_name"):
+        cfg["company_name"] = body.company
+        s["transformed"] = None
+    if body.company_abbr and body.company_abbr != cfg.get("company_abbr"):
+        cfg["company_abbr"] = body.company_abbr
+        s["transformed"] = None
+    s["strategy_config"] = cfg
+
+    # Lazy re-transform on resume / after a config override: project
+    # state intentionally doesn't persist the heavy `transformed` dict.
     if "transformed" not in s or not s["transformed"]:
         await _ensure_transformed(session_id)
     project_id = s.get("project_id")
     if project_id:
         save_erpnext_credentials(
-            project_id, body.url, body.api_key, body.api_secret, body.company,
+            project_id, body.url, body.api_key, body.api_secret,
+            body.company, body.company_abbr,
         )
 
     out_dir = (

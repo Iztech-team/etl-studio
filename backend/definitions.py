@@ -59,28 +59,30 @@ CREATE_INDEX_AUDIT_EVENTS_RUN = (
 
 CREATE_ERPNEXT_CREDS_TABLE = """
     CREATE TABLE IF NOT EXISTS erpnext_credentials (
-        project_id  TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
-        url         TEXT NOT NULL,
-        api_key     TEXT NOT NULL,
-        api_secret  TEXT NOT NULL,
-        company     TEXT,
-        updated_at  TEXT NOT NULL
+        project_id    TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+        url           TEXT NOT NULL,
+        api_key       TEXT NOT NULL,
+        api_secret    TEXT NOT NULL,
+        company       TEXT,
+        company_abbr  TEXT,
+        updated_at    TEXT NOT NULL
     )
 """
 
 UPSERT_ERPNEXT_CREDS = """
-    INSERT INTO erpnext_credentials (project_id, url, api_key, api_secret, company, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO erpnext_credentials (project_id, url, api_key, api_secret, company, company_abbr, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(project_id) DO UPDATE SET
         url = excluded.url,
         api_key = excluded.api_key,
         api_secret = excluded.api_secret,
         company = excluded.company,
+        company_abbr = excluded.company_abbr,
         updated_at = excluded.updated_at
 """
 
 GET_ERPNEXT_CREDS = """
-    SELECT url, api_key, api_secret, company, updated_at
+    SELECT url, api_key, api_secret, company, company_abbr, updated_at
     FROM erpnext_credentials WHERE project_id = ?
 """
 

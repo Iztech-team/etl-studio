@@ -63,14 +63,25 @@ def init_db() -> None:
         conn.execute(CREATE_INDEX_PIPELINE_RUNS_PROJECT)
         conn.execute(CREATE_INDEX_AUDIT_EVENTS_PROJECT)
         conn.execute(CREATE_INDEX_AUDIT_EVENTS_RUN)
+        # Migration: company_abbr was added to erpnext_credentials after
+        # the original schema; ALTER ignores 'duplicate column' so first
+        # run on an existing DB still works.
+        try:
+            conn.execute("ALTER TABLE erpnext_credentials ADD COLUMN company_abbr TEXT")
+        except sqlite3.OperationalError:
+            pass
 
 
 def save_erpnext_credentials(
-    project_id: str, url: str, api_key: str, api_secret: str, company: str | None,
+    project_id: str, url: str, api_key: str, api_secret: str,
+    company: str | None, company_abbr: str | None = None,
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
     with _get_conn() as conn:
-        conn.execute(UPSERT_ERPNEXT_CREDS, (project_id, url, api_key, api_secret, company, now))
+        conn.execute(
+            UPSERT_ERPNEXT_CREDS,
+            (project_id, url, api_key, api_secret, company, company_abbr, now),
+        )
 
 
 def get_erpnext_credentials(project_id: str) -> dict | None:

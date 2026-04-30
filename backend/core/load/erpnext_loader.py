@@ -12,6 +12,8 @@ Stops on first failure. Yields events (suitable for SSE streaming):
 """
 from __future__ import annotations
 
+import csv
+import io
 import json
 import os
 import time
@@ -164,9 +166,18 @@ def _import_via_data_import(
     so the user sees Frappe's own status (Queued / In Progress / Success)
     in near-real-time instead of one batched 'done' at the end."""
     fname = os.path.basename(path)
-    yield {"event": "uploading", "stage": "upload"}
     with open(path, "rb") as fh:
         content = fh.read()
+
+    if doctype == "Item Price":
+        existing_items = client.list_doctype_names("Item")
+        content, dropped = _filter_csv_by_column(content, "item_code", existing_items)
+        if dropped:
+            yield {"event": "filtering",
+                   "message": f"dropped {dropped} Item Price rows referencing items not in ERPnext",
+                   "filtered": dropped}
+
+    yield {"event": "uploading", "stage": "upload"}
     file_url = client.upload_file(fname, content, content_type="text/csv")
     if not file_url:
         raise ErpnextError("upload_file returned no file_url")
@@ -238,6 +249,54 @@ def _poll_data_import_streaming(
         if warnings:
             err = f"{err} | warnings: {' | '.join(warnings)[:500]}"
         raise ErpnextError(f"Data Import {name} failed: {err}")
+
+
+def _filter_csv_by_column(
+    content: bytes, column: str, valid_values: set[str],
+) -> tuple[bytes, int]:
+    """Drop rows whose `column` value isn't in `valid_values`.
+
+    Frappe Data Import CSVs have a parent header row plus optional
+    continuation rows for child tables; continuation rows leave the
+    parent column blank. We only filter rows that have a non-empty
+    value in `column` — the leading row of each parent record.
+    """
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return content, 0
+    reader = csv.reader(io.StringIO(text))
+    rows = list(reader)
+    if not rows:
+        return content, 0
+    header = rows[0]
+    if column not in header:
+        return content, 0
+    idx = header.index(column)
+    out: list[list[str]] = [header]
+    dropped = 0
+    keep_current = True
+    for row in rows[1:]:
+        if len(row) <= idx:
+            if keep_current:
+                out.append(row)
+            continue
+        cell = row[idx].strip()
+        if cell:
+            keep_current = cell in valid_values
+            if keep_current:
+                out.append(row)
+            else:
+                dropped += 1
+        else:
+            if keep_current:
+                out.append(row)
+    if dropped == 0:
+        return content, 0
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerows(out)
+    return buf.getvalue().encode("utf-8"), dropped
 
 
 def _parse_warnings(raw: Any) -> list[str]:

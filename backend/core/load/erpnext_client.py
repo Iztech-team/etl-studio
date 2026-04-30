@@ -152,6 +152,38 @@ class ErpnextClient:
         resp = self.get("/api/method/frappe.client.get_count", params=params)
         return int((resp or {}).get("message") or 0)
 
+    def list_doctype_names(self, doctype: str, page_size: int = 5000) -> set[str]:
+        """Return every existing record's `name` for a doctype.
+
+        Frappe paginates `/api/resource/{Doctype}` at ~1k rows per page on
+        most installs (configurable via System Settings). Walks pages
+        until it gets a short one. Used by the loader to filter outgoing
+        CSVs against records that actually exist in the target site
+        (e.g. Item Price CSV → drop rows whose item_code isn't an Item).
+        """
+        out: set[str] = set()
+        start = 0
+        while True:
+            resp = self.get(
+                f"/api/resource/{requests.utils.quote(doctype, safe=' ')}",
+                params={
+                    "fields": json.dumps(["name"]),
+                    "limit_start": start,
+                    "limit_page_length": page_size,
+                },
+            )
+            rows = (resp or {}).get("data") or []
+            if not rows:
+                break
+            for r in rows:
+                n = r.get("name")
+                if n:
+                    out.add(n)
+            if len(rows) < page_size:
+                break
+            start += page_size
+        return out
+
     def list_companies(self) -> list[str]:
         resp = self.get(
             "/api/resource/Company",

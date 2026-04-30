@@ -3802,6 +3802,7 @@ function ErpnextLiveExport({
 	const [apiKey, setApiKey] = useState("");
 	const [apiSecret, setApiSecret] = useState("");
 	const [company, setCompany] = useState("");
+	const [companyAbbr, setCompanyAbbr] = useState("");
 	const [forceReupload, setForceReupload] = useState(false);
 	const [running, setRunning] = useState(false);
 	const [events, setEvents] = useState<ErpnextEvent[]>([]);
@@ -3830,6 +3831,7 @@ function ErpnextLiveExport({
 				setApiKey(c.api_key ?? "");
 				setApiSecret(c.api_secret ?? "");
 				setCompany(c.company ?? "");
+				setCompanyAbbr(c.company_abbr ?? "");
 			})
 			.catch(() => {});
 		fetch(`/api/erpnext-imports/${projectId}`)
@@ -3844,6 +3846,25 @@ function ErpnextLiveExport({
 			})
 			.catch(() => {});
 	}, [projectId]);
+
+	// Seed company / abbr from the session's transform-stage strategy
+	// config so the user doesn't have to retype what they already picked.
+	// Saved erpnext credentials win (set above) — this only fills blanks.
+	useEffect(() => {
+		if (!sessionId) return;
+		fetch(`/api/strategies/${sessionId}`)
+			.then((r) => r.json())
+			.then((d) => {
+				const cfg = (d?.config ?? {}) as Record<string, unknown>;
+				if (typeof cfg.company_name === "string") {
+					setCompany((prev) => prev || (cfg.company_name as string));
+				}
+				if (typeof cfg.company_abbr === "string") {
+					setCompanyAbbr((prev) => prev || (cfg.company_abbr as string));
+				}
+			})
+			.catch(() => {});
+	}, [sessionId]);
 
 	// Doctype list is derived from transformResult.output_doctypes. On a
 	// freshly-reopened project the transformResult is null until the user
@@ -3879,7 +3900,8 @@ function ErpnextLiveExport({
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
-					url, api_key: apiKey, api_secret: apiSecret, company,
+					url, api_key: apiKey, api_secret: apiSecret,
+					company, company_abbr: companyAbbr,
 					force_reupload: forceReupload,
 					selected_doctypes: allDoctypes.length > 0
 						? Array.from(selectedDoctypes)
@@ -4033,6 +4055,13 @@ function ErpnextLiveExport({
 						value={company}
 						onChange={setCompany}
 						placeholder="Al Arabi"
+						disabled={running}
+					/>
+					<ErpnextField
+						label="ABBREVIATION"
+						value={companyAbbr}
+						onChange={setCompanyAbbr}
+						placeholder="ALA"
 						disabled={running}
 					/>
 					<label
