@@ -4060,16 +4060,21 @@ function EventRow({ ev }: { ev: ErpnextEvent }) {
 	const file = (ev.file as string | undefined) ?? "";
 	const doctype = (ev.doctype as string | undefined) ?? "";
 	const stage = (ev.stage as string | undefined) ?? "";
+	const status = (ev.status as string | undefined) ?? "";
 	const message = (ev.message as string | undefined) ?? "";
 	const reason = (ev.reason as string | undefined) ?? "";
 	const imported = (ev.imported as number | undefined) ?? null;
 	const failed = (ev.failed as number | undefined) ?? null;
+	const warnings = (ev.warnings as string[] | undefined) ?? [];
+	const errors = (ev.errors as string[] | undefined) ?? [];
 
 	const palette: Record<string, string> = {
 		begin: "var(--lg-cyan)",
 		stage: "var(--lg-cyan)",
 		preflight: "var(--lg-ink-mute)",
 		uploading: "var(--lg-amber)",
+		queued: "var(--lg-amber)",
+		polling: "var(--lg-cyan)",
 		done: "var(--lg-green)",
 		skipped: "var(--lg-amber)",
 		error: "var(--lg-coral)",
@@ -4078,30 +4083,38 @@ function EventRow({ ev }: { ev: ErpnextEvent }) {
 	const color = palette[ev.event] ?? "var(--lg-ink-mute)";
 
 	let label = ev.event.toUpperCase();
+	if (ev.event === "polling" && status) label = status.toUpperCase();
 	if (file) label += ` · ${file}`;
 	else if (stage) label += ` · ${stage}`;
 	else if (doctype) label += ` · ${doctype}`;
 
-	let detail = "";
+	const parts: string[] = [];
 	if (imported !== null) {
-		detail = `${imported} imported${failed ? `, ${failed} failed` : ""}`;
-	} else if (reason) {
-		detail = reason;
-	} else if (message) {
-		detail = message;
+		parts.push(`${imported} imported${failed ? `, ${failed} failed` : ""}`);
 	}
+	if (reason) parts.push(reason);
+	else if (message) parts.push(message);
 
 	return (
-		<div
-			className="mono"
-			style={{ fontSize: 10, display: "flex", gap: 8, lineHeight: 1.6 }}
-		>
-			<span className="pixel" style={{ color, letterSpacing: "0.1em", flexShrink: 0 }}>
-				{label}
-			</span>
-			{detail && (
-				<span style={{ color: "var(--lg-ink-dim)" }}>— {detail}</span>
-			)}
+		<div className="mono" style={{ fontSize: 10, display: "flex", flexDirection: "column", gap: 2, lineHeight: 1.6 }}>
+			<div style={{ display: "flex", gap: 8 }}>
+				<span className="pixel" style={{ color, letterSpacing: "0.1em", flexShrink: 0 }}>
+					{label}
+				</span>
+				{parts.length > 0 && (
+					<span style={{ color: "var(--lg-ink-dim)" }}>— {parts.join(" · ")}</span>
+				)}
+			</div>
+			{warnings.map((w, i) => (
+				<div key={`w${i}`} style={{ color: "var(--lg-amber)", fontSize: 9, paddingLeft: 16 }}>
+					⚠ {w}
+				</div>
+			))}
+			{errors.map((e, i) => (
+				<div key={`e${i}`} style={{ color: "var(--lg-coral)", fontSize: 9, paddingLeft: 16 }}>
+					✗ {e}
+				</div>
+			))}
 		</div>
 	);
 }

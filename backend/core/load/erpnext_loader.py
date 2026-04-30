@@ -12,11 +12,10 @@ Stops on first failure. Yields events (suitable for SSE streaming):
 """
 from __future__ import annotations
 
-import csv
-import io
+import json
 import os
 import time
-from typing import Any, Iterable, Iterator
+from typing import Any, Iterator
 
 from core.load.erpnext_client import ErpnextClient, ErpnextError, parse_import_log
 
@@ -56,7 +55,7 @@ DOCTYPES_NEEDING_IMPORT_PERM = sorted(set(SLUG_TO_DOCTYPE.values()) - {"Account"
 # download the CSV and run it manually.
 SKIP_VIA_API = {"stock_reconciliation"}
 
-POLL_INTERVAL_SEC = 2.0
+POLL_INTERVAL_SEC = 1.0
 POLL_TIMEOUT_SEC = 600
 
 
@@ -97,75 +96,136 @@ def run_live_import(
             summary.append({"file": fname, "status": "skipped"})
             continue
 
-        yield {"event": "uploading", "file": fname, "doctype": doctype}
         path = os.path.join(output_dir, fname)
+        result: dict = {}
         try:
-            if slug == "account":
-                result = _import_coa(client, path, company)
-            else:
-                result = _import_via_data_import(client, path, doctype)
+            handler = _import_coa if slug == "account" else _import_via_data_import
+            for ev in handler(client, path, doctype, company):
+                ev = {"file": fname, "doctype": doctype, **ev}
+                if ev.get("event") == "done":
+                    result = ev
+                yield ev
         except ErpnextError as e:
-            yield {"event": "error", "file": fname, "doctype": doctype, "message": str(e),
-                   "payload": e.payload}
+            yield {"event": "error", "file": fname, "doctype": doctype,
+                   "message": str(e), "payload": e.payload}
             summary.append({"file": fname, "status": "error", "error": str(e)})
             return
 
-        result["file"] = fname
-        result["doctype"] = doctype
-        yield {"event": "done", **result}
-        summary.append({"file": fname, "status": "done", **result})
+        summary.append({"file": fname, **result})
 
     counts = _verify_counts(client, summary)
     yield {"event": "complete", "summary": summary, "verification": counts}
 
 
-# -- per-file handlers --------------------------------------------------------
+# -- per-file handlers (generators yielding progress events) -----------------
 
 def _import_via_data_import(
-    client: ErpnextClient, path: str, doctype: str,
-) -> dict:
+    client: ErpnextClient, path: str, doctype: str, company: str,
+) -> Iterator[dict]:
+    """Upload, queue, then poll Frappe Data Import. Yields progress events
+    so the user sees Frappe's own status (Queued / In Progress / Success)
+    in near-real-time instead of one batched 'done' at the end."""
     fname = os.path.basename(path)
+    yield {"event": "uploading", "stage": "upload"}
     with open(path, "rb") as fh:
         content = fh.read()
     file_url = client.upload_file(fname, content, content_type="text/csv")
     if not file_url:
         raise ErpnextError("upload_file returned no file_url")
 
+    yield {"event": "uploading", "stage": "create_data_import"}
     name = client.create_data_import(doctype, file_url)
     if not name:
         raise ErpnextError("create_data_import returned no name")
 
     client.start_data_import(name)
-    return _poll_data_import(client, name)
+    yield {"event": "queued", "data_import": name}
+    yield from _poll_data_import_streaming(client, name)
 
 
-def _poll_data_import(client: ErpnextClient, name: str) -> dict:
+def _poll_data_import_streaming(
+    client: ErpnextClient, name: str,
+) -> Iterator[dict]:
+    """Poll Frappe until the Data Import finishes. Yields one event per
+    poll showing current status + parsed row counts + any template
+    warnings, then a final 'done' or raises ErpnextError on failure."""
     deadline = time.monotonic() + POLL_TIMEOUT_SEC
+    last_status = ""
+    last_progress = (-1, -1)
     while True:
         if time.monotonic() > deadline:
             raise ErpnextError(f"Data Import {name} timed out after {POLL_TIMEOUT_SEC}s")
         time.sleep(POLL_INTERVAL_SEC)
         d = client.get_data_import_status(name)
         status = d.get("status") or "Pending"
-        if status in {"Pending", "In Progress", "Queued", "Started"}:
-            continue
         log = list(parse_import_log(d.get("import_log") or ""))
         successes = sum(1 for r in log if r.get("success"))
         failures = sum(1 for r in log if not r.get("success"))
+        warnings = _parse_warnings(d.get("template_warnings"))
+
+        terminal = status in {"Success", "Partial Success", "Error"}
+        progress_changed = (successes, failures) != last_progress
+        status_changed = status != last_status
+        if status_changed or progress_changed or terminal:
+            ev: dict = {"event": "polling", "status": status,
+                        "imported": successes, "failed": failures,
+                        "data_import": name}
+            if warnings:
+                ev["warnings"] = warnings
+            yield ev
+            last_status = status
+            last_progress = (successes, failures)
+
+        if not terminal:
+            continue
+
+        errors = [_log_error(r) for r in log if not r.get("success")][:10]
         if status == "Success":
-            return {"status": "success", "imported": successes, "failed": 0,
-                    "data_import": name}
+            yield {"event": "done", "status": "success",
+                   "imported": successes, "failed": 0,
+                   "data_import": name, "warnings": warnings}
+            return
         if status == "Partial Success":
-            return {"status": "partial", "imported": successes, "failed": failures,
-                    "data_import": name,
-                    "errors": [_log_error(r) for r in log if not r.get("success")][:10]}
-        # Error
-        if not log:
-            errs = client.get_data_import_error_log(name)
-            err = errs[0]["error"] if errs else d.get("failure_message") or "Data Import failed"
+            yield {"event": "done", "status": "partial",
+                   "imported": successes, "failed": failures,
+                   "data_import": name, "errors": errors, "warnings": warnings}
+            return
+        # Status == "Error"
+        if errors:
+            err = "; ".join(errors)[:1000]
         else:
-            err = "; ".join(_log_error(r) for r in log if not r.get("success"))[:1000]
+            log_rows = client.get_data_import_error_log(name)
+            err = (log_rows[0]["error"] if log_rows
+                   else d.get("failure_message") or "Data Import failed")
+        if warnings:
+            err = f"{err} | warnings: {' | '.join(warnings)[:500]}"
         raise ErpnextError(f"Data Import {name} failed: {err}")
+
+
+def _parse_warnings(raw: Any) -> list[str]:
+    """`template_warnings` arrives as a JSON string of objects with
+    'message' (plus 'row', 'col', 'type'). Render to a flat list."""
+    if not raw:
+        return []
+    try:
+        items = json.loads(raw) if isinstance(raw, str) else raw
+    except (ValueError, TypeError):
+        return [str(raw)[:200]]
+    out: list[str] = []
+    for item in items if isinstance(items, list) else []:
+        if isinstance(item, dict):
+            msg = item.get("message") or ""
+            row = item.get("row")
+            col = item.get("col") or item.get("column")
+            prefix = ""
+            if row:
+                prefix += f"row {row}"
+            if col:
+                prefix += f" col {col}" if prefix else f"col {col}"
+            out.append(f"{prefix}: {msg}" if prefix else str(msg))
+        else:
+            out.append(str(item))
+    return out
 
 
 def _log_error(row: dict) -> str:
@@ -176,21 +236,29 @@ def _log_error(row: dict) -> str:
     return f"row {rn}: failed"
 
 
-def _import_coa(client: ErpnextClient, path: str, company: str) -> dict:
+def _import_coa(
+    client: ErpnextClient, path: str, doctype: str, company: str,
+) -> Iterator[dict]:
+    """Chart of Accounts importer is a one-shot synchronous method —
+    no polling, but we still yield begin/done events for consistent
+    UX with the Data Import handler."""
     if not company:
         raise ErpnextError("Chart of Accounts importer requires a company name")
+    yield {"event": "uploading", "stage": "upload"}
     with open(path, "rb") as fh:
         content = fh.read()
     file_url = client.upload_file(os.path.basename(path), content, content_type="text/csv")
+    yield {"event": "uploading", "stage": "import_coa"}
     resp = client.import_chart_of_accounts(file_url, company)
     msg = (resp or {}).get("message") or {}
     imported = len(msg.get("imported") or [])
     failed = len(msg.get("failed_to_import") or [])
-    out: dict = {"status": "success" if failed == 0 else "partial",
+    out: dict = {"event": "done",
+                 "status": "success" if failed == 0 else "partial",
                  "imported": imported, "failed": failed}
     if failed:
         out["errors"] = (msg.get("failed_to_import") or [])[:10]
-    return out
+    yield out
 
 
 # -- verification -------------------------------------------------------------
