@@ -20,6 +20,7 @@ class TransformResponse(BaseModel):
     output_doctypes: Dict[str, int] = {}
     audit_report: Optional[Dict[str, Any]] = None
     setup_checklist_md: Optional[str] = None
+    bucket_coverage_md: Optional[str] = None
 
 
 class CounterReset(BaseModel):

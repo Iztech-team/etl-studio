@@ -86,6 +86,7 @@ def write_frappe_csvs(
     output_dir: str,
     audit_report: dict | None = None,
     checklist_md: str | None = None,
+    bucket_coverage_md: str | None = None,
     include_legacy_fields: bool = True,
     staging_dir: str | None = None,
 ) -> list[str]:
@@ -111,7 +112,9 @@ def write_frappe_csvs(
             continue
         cleaned = _strip_legacy(records) if not include_legacy_fields else records
         written.extend(_write_one_doctype(doctype, cleaned, output_dir))
-    written.extend(_write_audit_artifacts(output_dir, audit_report, checklist_md))
+    written.extend(_write_audit_artifacts(
+        output_dir, audit_report, checklist_md, bucket_coverage_md,
+    ))
     written.sort()
     return written
 
@@ -428,6 +431,7 @@ def _write_audit_artifacts(
     output_dir: str,
     audit_report: dict | None,
     checklist_md: str | None,
+    bucket_coverage_md: str | None = None,
 ) -> list[str]:
     out: list[str] = []
     if audit_report:
@@ -439,6 +443,11 @@ def _write_audit_artifacts(
         path = os.path.join(output_dir, "99_migration_setup_checklist.md")
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(checklist_md)
+        out.append(os.path.basename(path))
+    if bucket_coverage_md:
+        path = os.path.join(output_dir, "99_native_bucket_coverage.md")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(bucket_coverage_md)
         out.append(os.path.basename(path))
     return out
 

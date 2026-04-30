@@ -75,10 +75,7 @@ def _strategy_result(
     total = sum(counts.values())
     audit_rows = out.output_tables.get("__audit_report__") or []
     checklist_rows = out.output_tables.get("__migration_setup_checklist__") or []
-    # In disk mode we don't surface real doctype data through `tables`
-    # (it lives on disk via staging_dir); pass an empty dict but keep
-    # output_doctypes and the staging_dir on the result so the writer
-    # can find the JSONL files later.
+    coverage_rows = out.output_tables.get("__native_bucket_coverage__") or []
     return _result_shape(
         tables={} if staging_dir else {
             k: v for k, v in out.output_tables.items() if not k.startswith("__")
@@ -93,6 +90,8 @@ def _strategy_result(
         audit_report=audit_rows[0] if audit_rows else None,
         setup_checklist_md=(checklist_rows[0] or {}).get("content")
                            if checklist_rows else None,
+        bucket_coverage_md=(coverage_rows[0] or {}).get("content")
+                           if coverage_rows else None,
         output_doctypes=counts,
         staging_dir=staging_dir,
     )
@@ -109,6 +108,7 @@ def _result_shape(
     strategy_label: Optional[str] = None,
     audit_report: Optional[Dict[str, Any]] = None,
     setup_checklist_md: Optional[str] = None,
+    bucket_coverage_md: Optional[str] = None,
     output_doctypes: Optional[Dict[str, int]] = None,
     staging_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -134,6 +134,7 @@ def _result_shape(
         "output_doctypes": counts,
         "audit_report": audit_report,
         "setup_checklist_md": setup_checklist_md,
+        "bucket_coverage_md": bucket_coverage_md,
         "staging_dir": staging_dir,
     }
 
@@ -248,6 +249,7 @@ def _response_payload(result: Dict[str, Any]) -> Dict[str, Any]:
         "warnings", "preview",
         "strategy_name", "strategy_label", "strategy_stats",
         "output_doctypes", "audit_report", "setup_checklist_md",
+        "bucket_coverage_md",
     }
     return {k: v for k, v in result.items() if k in keep}
 
@@ -332,6 +334,7 @@ def _run_frappe_writer(session: Dict[str, Any], out_dir: str) -> Dict[str, Any]:
     tables = transformed.get("tables") or {}
     audit_report = transformed.get("audit_report")
     checklist_md = transformed.get("setup_checklist_md")
+    bucket_coverage_md = transformed.get("bucket_coverage_md")
     staging_dir = transformed.get("staging_dir")
     config = session.get("strategy_config") or {}
     include_legacy = bool(config.get("include_legacy_fields", True))
@@ -339,6 +342,7 @@ def _run_frappe_writer(session: Dict[str, Any], out_dir: str) -> Dict[str, Any]:
         tables, out_dir,
         audit_report=audit_report,
         checklist_md=checklist_md,
+        bucket_coverage_md=bucket_coverage_md,
         include_legacy_fields=include_legacy,
         staging_dir=staging_dir,
     )
