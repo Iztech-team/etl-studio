@@ -19,24 +19,13 @@ Three load-bearing decisions live here:
 from typing import Iterable
 
 from core.strategies.erpnext_shared.common import (
+    ROOT_TYPE_BY_ID,
     clean_str,
     currency_iso,
     pick,
+    walk_to_root,
 )
 from core.strategies.erpnext_shared.context import Context
-
-# 6 real roots + the ACCOUNTID=0 placeholder. Maps ACCOUNTID → (root_type,
-# report_type). The Arabic names live in ACCOUNTT.NAME so we don't repeat
-# them here.
-ROOT_TYPE_BY_ID: dict[str, tuple[str, str]] = {
-    "0": ("Asset", "Balance Sheet"),     # غير محدد (placeholder)
-    "1": ("Asset", "Balance Sheet"),     # الموجودات
-    "2": ("Liability", "Balance Sheet"), # المطلوبات
-    "3": ("Equity", "Balance Sheet"),    # راس المال
-    "4": ("Expense", "Profit and Loss"), # المشتريات والمصاريف
-    "5": ("Income", "Profit and Loss"),  # الايرادات
-    "6": ("Asset", "Balance Sheet"),     # الذمم (memo / receivables)
-}
 
 # Per-leaf account_type derived from ACCCLASST.CLASSID. Optional but lets
 # ERPnext recognize Cash / Bank / Tax / Stock accounts and do the right
@@ -164,25 +153,9 @@ def _root_id_for_each(ctx: Context) -> dict[str, str]:
     """
     out: dict[str, str] = {}
     by_id = ctx.accounts_by_id
-    for aid, row in by_id.items():
-        out[aid] = _walk_to_root(aid, by_id)
+    for aid in by_id:
+        out[aid] = walk_to_root(aid, by_id)
     return out
-
-
-def _walk_to_root(account_id: str, by_id: dict) -> str:
-    cur = account_id
-    seen: set[str] = set()
-    for _ in range(20):  # depth-cap; legacy ALEVEL maxes at 4
-        if not cur or cur in seen:
-            break
-        seen.add(cur)
-        if cur in ROOT_TYPE_BY_ID:
-            return cur
-        father = clean_str((by_id.get(cur) or {}).get("FATHERID"))
-        if not father or father == cur:
-            break
-        cur = father
-    return account_id  # fallback to self if no root found
 
 
 # -- Emission -----------------------------------------------------------------

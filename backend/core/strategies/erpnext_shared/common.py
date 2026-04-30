@@ -267,3 +267,37 @@ def account_full_name(ctx, account_id) -> str:
         return ""
     name = pick(row, "NAME", "NAMEE", "NAMEH")
     return ctx.with_abbr(name) if name else ""
+
+
+# -- legacy tree walk (shared: mirror emits the tree, native classifies) ------
+
+# Map from legacy ROOT ACCOUNTID → ERPnext (root_type, report_type). These are
+# the 6 hand-curated Al Arabi roots plus the ACCOUNTID=0 placeholder (treated
+# as Asset). Used both to build the mirror CoA and to classify legacy accounts
+# into ERPnext buckets in native.
+ROOT_TYPE_BY_ID: dict[str, tuple[str, str]] = {
+    "0": ("Asset", "Balance Sheet"),     # غير محدد (placeholder)
+    "1": ("Asset", "Balance Sheet"),     # الموجودات
+    "2": ("Liability", "Balance Sheet"), # المطلوبات
+    "3": ("Equity", "Balance Sheet"),    # راس المال
+    "4": ("Expense", "Profit and Loss"), # المشتريات والمصاريف
+    "5": ("Income", "Profit and Loss"),  # الايرادات
+    "6": ("Asset", "Balance Sheet"),     # الذمم (memo / receivables)
+}
+
+
+def walk_to_root(account_id: str, by_id: dict) -> str:
+    """Walk FATHERID up to find an ACCOUNTT row's root ACCOUNTID."""
+    cur = clean_str(account_id)
+    seen: set[str] = set()
+    for _ in range(20):
+        if not cur or cur in seen:
+            break
+        seen.add(cur)
+        if cur in ROOT_TYPE_BY_ID:
+            return cur
+        father = clean_str((by_id.get(cur) or {}).get("FATHERID"))
+        if not father or father == cur:
+            break
+        cur = father
+    return clean_str(account_id)
