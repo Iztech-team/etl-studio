@@ -331,6 +331,17 @@ async def get_erpnext_creds(project_id: str):
     return {"credentials": get_erpnext_credentials(project_id)}
 
 
+@router.get("/erpnext-imports/{project_id}")
+async def get_erpnext_imports(project_id: str):
+    """Return per-file records of previously successful imports.
+
+    Frontend uses this to mark doctype cards with an 'already imported'
+    badge so the user knows which files would be auto-skipped on the
+    next run (unless they tick `Re-upload everything`).
+    """
+    return {"imports": list_erpnext_imports(project_id)}
+
+
 @router.post("/load-erpnext/{session_id}")
 async def load_erpnext(session_id: str, body: ErpnextLoadRequest):
     if not await session_store.exists(session_id):

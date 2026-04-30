@@ -3809,6 +3809,9 @@ function ErpnextLiveExport({
 	const [selectedDoctypes, setSelectedDoctypes] = useState<Set<string>>(
 		() => new Set(allDoctypes),
 	);
+	const [importedDoctypes, setImportedDoctypes] = useState<Set<string>>(
+		() => new Set(),
+	);
 	const abortRef = useRef<AbortController | null>(null);
 
 	useEffect(() => {
@@ -3826,6 +3829,17 @@ function ErpnextLiveExport({
 				setApiKey(c.api_key ?? "");
 				setApiSecret(c.api_secret ?? "");
 				setCompany(c.company ?? "");
+			})
+			.catch(() => {});
+		fetch(`/api/erpnext-imports/${projectId}`)
+			.then((r) => r.json())
+			.then((d) => {
+				const records = (d?.imports ?? {}) as Record<
+					string, { doctype: string; imported_count: number; completed_at: string }
+				>;
+				setImportedDoctypes(
+					new Set(Object.values(records).map((r) => r.doctype)),
+				);
 			})
 			.catch(() => {});
 	}, [projectId]);
@@ -3905,6 +3919,25 @@ function ErpnextLiveExport({
 	};
 
 	const cancel = () => abortRef.current?.abort();
+	const reset = () => {
+		setEvents([]);
+		setError(null);
+		// Refresh the already-imported set since a successful run may
+		// have just added entries to it.
+		if (projectId) {
+			fetch(`/api/erpnext-imports/${projectId}`)
+				.then((r) => r.json())
+				.then((d) => {
+					const records = (d?.imports ?? {}) as Record<
+						string, { doctype: string; imported_count: number; completed_at: string }
+					>;
+					setImportedDoctypes(
+						new Set(Object.values(records).map((r) => r.doctype)),
+					);
+				})
+				.catch(() => {});
+		}
+	};
 	const toggleDoctype = (dt: string) =>
 		setSelectedDoctypes((prev) => {
 			const next = new Set(prev);
@@ -4105,6 +4138,9 @@ function ErpnextLiveExport({
 										state={s}
 										picked={selectedDoctypes.has(s.doctype)}
 										idle={idle}
+										previouslyImported={
+											idle && !forceReupload && importedDoctypes.has(s.doctype)
+										}
 										onToggle={() => toggleDoctype(s.doctype)}
 									/>
 								))}
@@ -4137,23 +4173,44 @@ function ErpnextLiveExport({
 					</div>
 				</div>
 
-				{!complete ? (
-					<button
-						className={`btn btn-primary ${!running ? "pulse" : ""}`}
-						onClick={running ? cancel : send}
-						disabled={!sessionId || (!running && (!url || !apiKey || !apiSecret))}
-						style={{ fontSize: 13, padding: "12px 14px", justifyContent: "center" }}
-					>
-						{running ? "CANCEL" : "▶ SEND TO ERPNEXT"}
-					</button>
-				) : (
+				{running ? (
 					<button
 						className="btn btn-primary"
-						onClick={onDone}
+						onClick={cancel}
 						style={{ fontSize: 13, padding: "12px 14px", justifyContent: "center" }}
 					>
-						DONE · BACK TO PROJECTS
+						CANCEL
 					</button>
+				) : events.length === 0 ? (
+					<button
+						className={`btn btn-primary ${!running ? "pulse" : ""}`}
+						onClick={send}
+						disabled={
+							!sessionId
+							|| !url || !apiKey || !apiSecret
+							|| (allDoctypes.length > 0 && selectedDoctypes.size === 0)
+						}
+						style={{ fontSize: 13, padding: "12px 14px", justifyContent: "center" }}
+					>
+						▶ SEND TO ERPNEXT
+					</button>
+				) : (
+					<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+						<button
+							className="btn btn-ghost"
+							onClick={reset}
+							style={{ fontSize: 11, padding: "10px 14px", justifyContent: "center" }}
+						>
+							RESET — PICK AGAIN
+						</button>
+						<button
+							className="btn btn-primary"
+							onClick={onDone}
+							style={{ fontSize: 13, padding: "12px 14px", justifyContent: "center" }}
+						>
+							{complete ? "DONE · BACK TO PROJECTS" : "BACK TO PROJECTS"}
+						</button>
+					</div>
 				)}
 			</div>
 		</div>
@@ -4301,11 +4358,13 @@ function DoctypeRow({
 	state,
 	picked,
 	idle,
+	previouslyImported,
 	onToggle,
 }: {
 	state: DoctypeState;
 	picked: boolean;
 	idle: boolean;
+	previouslyImported: boolean;
 	onToggle: () => void;
 }) {
 	const color = STATUS_COLOR[state.status];
@@ -4377,6 +4436,22 @@ function DoctypeRow({
 				>
 					{state.doctype.toUpperCase()}
 				</span>
+				{previouslyImported && (
+					<span
+						className="mono"
+						title="A previous run already imported this doctype — it will be auto-skipped unless 'Re-upload everything' is checked."
+						style={{
+							fontSize: 9,
+							color: "var(--lg-green)",
+							border: "1px solid var(--lg-green)",
+							padding: "1px 6px",
+							letterSpacing: "0.1em",
+							flexShrink: 0,
+						}}
+					>
+						✓ ALREADY IMPORTED
+					</span>
+				)}
 				<span
 					className="mono"
 					style={{ fontSize: 10, color, fontVariantNumeric: "tabular-nums" }}
