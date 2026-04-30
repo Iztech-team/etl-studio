@@ -2702,6 +2702,11 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 	const [running, setRunning] = useState(false);
 	const [runErr, setRunErr] = useState<string | null>(null);
 	const [result, setResult] = useState<TransformResult | null>(transformResult ?? null);
+	// Strategy is only "equipped" once the user fills out config in the modal
+	// and confirms — that's when pickedName + config get committed. Until
+	// then we hold a draft so cancel doesn't clobber the active equip.
+	const [configModalFor, setConfigModalFor] = useState<string | null>(null);
+	const [draftConfig, setDraftConfig] = useState<Record<string, unknown>>({});
 
 	useEffect(() => {
 		let cancelled = false;
@@ -2713,10 +2718,6 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 				if (cancelled) return;
 				const list = (json.strategies ?? []) as StrategyDescriptor[];
 				setStrategies(list);
-				if (list.length > 0 && !pickedName) {
-					setPickedName(list[0].name);
-					setConfig(smartDefaults(list[0].config_schema, projectName));
-				}
 			} catch (e) {
 				if (!cancelled) setLoadErr(e instanceof Error ? e.message : "load failed");
 			}
@@ -2725,18 +2726,36 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 		return () => {
 			cancelled = true;
 		};
-		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
-
-	useEffect(() => {
-		if (!pickedName || !strategies) return;
-		const s = strategies.find((x) => x.name === pickedName);
-		if (s) setConfig((prev) => ({ ...smartDefaults(s.config_schema, projectName), ...prev }));
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [pickedName, strategies]);
 
 	const picked = strategies?.find((s) => s.name === pickedName) ?? null;
 	const missingFields = picked ? requiredMissing(picked.config_schema, config) : [];
+
+	const openConfigModal = (name: string) => {
+		const s = strategies?.find((x) => x.name === name);
+		if (!s) return;
+		// Re-editing the equipped strategy keeps the existing config; picking
+		// a fresh one starts from smartDefaults so the user doesn't lose
+		// values they just set on a different strategy mid-flow.
+		setDraftConfig(
+			pickedName === name
+				? config
+				: smartDefaults(s.config_schema, projectName),
+		);
+		setConfigModalFor(name);
+	};
+
+	const equipStrategy = () => {
+		if (!configModalFor) return;
+		setPickedName(configModalFor);
+		setConfig(draftConfig);
+		setConfigModalFor(null);
+	};
+
+	const cancelConfigModal = () => setConfigModalFor(null);
+
+	const modalStrategy =
+		(configModalFor && strategies?.find((s) => s.name === configModalFor)) || null;
 
 	const runTransform = async () => {
 		if (!uploadResult?.sessionId || !pickedName) return;
@@ -2809,25 +2828,29 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 					<StrategyPicker
 						strategies={strategies}
 						pickedName={pickedName}
-						onPick={setPickedName}
+						onPick={openConfigModal}
 					/>
-					{picked && (
-						<StrategyConfigForm
-							schema={picked.config_schema}
-							value={config}
-							onChange={setConfig}
-						/>
-					)}
 					{runErr && <RlErrorPanel message={runErr} />}
 					{running && <TransformRunningPanel />}
 					<TransformActions
-						disabled={running || !uploadResult?.sessionId || missingFields.length > 0}
+						disabled={running || !uploadResult?.sessionId || !pickedName || missingFields.length > 0}
 						running={running}
 						missingFields={missingFields}
 						onRun={runTransform}
 						picked={picked}
+						onEditConfig={pickedName ? () => openConfigModal(pickedName) : undefined}
 					/>
 				</>
+			)}
+
+			{modalStrategy && (
+				<StrategyConfigModal
+					strategy={modalStrategy}
+					config={draftConfig}
+					onChange={setDraftConfig}
+					onEquip={equipStrategy}
+					onCancel={cancelConfigModal}
+				/>
 			)}
 		</div>
 	);
@@ -3257,12 +3280,14 @@ function TransformActions({
 	missingFields,
 	onRun,
 	picked,
+	onEditConfig,
 }: {
 	disabled: boolean;
 	running: boolean;
 	missingFields: string[];
 	onRun: () => void;
 	picked: StrategyDescriptor | null;
+	onEditConfig?: () => void;
 }) {
 	const stats = picked?.stats ?? {};
 	const summary = picked
@@ -3288,10 +3313,10 @@ function TransformActions({
 		>
 			<div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
 				<div className="pixel" style={{ fontSize: 9, color: "var(--lg-ink-mute)", letterSpacing: "0.15em" }}>
-					SELECTED:
+					EQUIPPED:
 				</div>
 				<div className="mono" style={{ fontSize: 12, color: "var(--lg-ink)" }}>
-					{summary}
+					{picked ? summary : "— pick a strategy above —"}
 				</div>
 				{missingFields.length > 0 && (
 					<div className="mono" style={{ fontSize: 10, color: "var(--lg-coral)" }}>
@@ -3299,14 +3324,166 @@ function TransformActions({
 					</div>
 				)}
 			</div>
-			<button
-				className={`btn btn-primary ${!disabled ? "pulse" : ""}`}
-				disabled={disabled}
-				onClick={onRun}
-				style={{ fontSize: 12, padding: "12px 24px" }}
+			<div style={{ display: "flex", gap: 8 }}>
+				{picked && onEditConfig && (
+					<button
+						className="btn btn-ghost"
+						onClick={onEditConfig}
+						style={{ fontSize: 11, padding: "12px 16px" }}
+					>
+						EDIT CONFIG
+					</button>
+				)}
+				<button
+					className={`btn btn-primary ${!disabled ? "pulse" : ""}`}
+					disabled={disabled}
+					onClick={onRun}
+					style={{ fontSize: 12, padding: "12px 24px" }}
+				>
+					{running ? "TRANSFORMING…" : "▶ TRANSFORM"}
+				</button>
+			</div>
+		</div>
+	);
+}
+
+
+function StrategyConfigModal({
+	strategy,
+	config,
+	onChange,
+	onEquip,
+	onCancel,
+}: {
+	strategy: StrategyDescriptor;
+	config: Record<string, unknown>;
+	onChange: (next: Record<string, unknown>) => void;
+	onEquip: () => void;
+	onCancel: () => void;
+}) {
+	const missing = requiredMissing(strategy.config_schema, config);
+	const hasFields = Object.keys(strategy.config_schema).length > 0;
+
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") onCancel();
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [onCancel]);
+
+	return (
+		<div
+			style={{
+				position: "fixed",
+				inset: 0,
+				zIndex: 9999,
+				background: "rgba(0,0,0,0.75)",
+				display: "flex",
+				alignItems: "center",
+				justifyContent: "center",
+				padding: 24,
+			}}
+			onClick={onCancel}
+		>
+			<div
+				style={{
+					background: "var(--lg-bg)",
+					border: "2px solid var(--lg-magenta)",
+					width: 640,
+					maxWidth: "92vw",
+					maxHeight: "90vh",
+					display: "flex",
+					flexDirection: "column",
+				}}
+				onClick={(e) => e.stopPropagation()}
 			>
-				{running ? "TRANSFORMING…" : "▶ TRANSFORM"}
-			</button>
+				<div
+					style={{
+						display: "flex",
+						alignItems: "center",
+						justifyContent: "space-between",
+						padding: "10px 14px",
+						borderBottom: "1px solid var(--lg-border)",
+						background: "var(--lg-bg-2)",
+					}}
+				>
+					<div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+						<span
+							className="pixel"
+							style={{
+								fontSize: 11,
+								color: "var(--lg-magenta)",
+								letterSpacing: "0.1em",
+							}}
+						>
+							▣ EQUIP STRATEGY · {strategy.label.toUpperCase()}
+						</span>
+						<span
+							className="mono"
+							style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}
+						>
+							{strategy.description}
+						</span>
+					</div>
+					<button
+						className="btn btn-ghost"
+						style={{ padding: "2px 6px", fontSize: 10 }}
+						onClick={onCancel}
+					>
+						<IX size={10} />
+					</button>
+				</div>
+
+				<div style={{ padding: "16px 14px", overflowY: "auto" }}>
+					{hasFields ? (
+						<StrategyConfigForm
+							schema={strategy.config_schema}
+							value={config}
+							onChange={onChange}
+						/>
+					) : (
+						<div
+							className="mono"
+							style={{ fontSize: 11, color: "var(--lg-ink-dim)" }}
+						>
+							This strategy has no configuration. Click EQUIP to confirm.
+						</div>
+					)}
+				</div>
+
+				<div
+					style={{
+						display: "flex",
+						alignItems: "center",
+						justifyContent: "space-between",
+						gap: 8,
+						padding: "12px 14px",
+						borderTop: "1px solid var(--lg-border)",
+					}}
+				>
+					<div className="mono" style={{ fontSize: 10, color: "var(--lg-coral)" }}>
+						{missing.length > 0 ? `Missing: ${missing.join(", ")}` : ""}
+					</div>
+					<div style={{ display: "flex", gap: 8 }}>
+						<button
+							className="btn btn-ghost"
+							style={{ padding: "8px 16px", fontSize: 11 }}
+							onClick={onCancel}
+						>
+							CANCEL
+						</button>
+						<button
+							className="btn btn-primary"
+							style={{ padding: "8px 18px", fontSize: 11 }}
+							onClick={onEquip}
+							disabled={missing.length > 0}
+						>
+							▶ EQUIP
+						</button>
+					</div>
+				</div>
+			</div>
 		</div>
 	);
 }
@@ -3551,10 +3728,23 @@ function requiredMissing(
 
 function RlExport({ onDone }: { onDone: () => void }) {
 	const { projectId, uploadResult, transformResult, loadResult, setLoadResult } = usePipelineCtx();
-	const usedStrategy = !!transformResult?.strategy_name;
+	// `transformResult` alone is enough to know a strategy ran — every
+	// transform in the current pipeline is a strategy-driven one. Falling
+	// back to `strategy_name` was unreliable because older persisted
+	// project state didn't always round-trip that field, and the Frappe
+	// CSV option would silently disappear.
+	const usedStrategy = !!transformResult;
 	const [fmt, setFmt] = useState(usedStrategy ? "frappe" : "json");
 	const [running, setRunning] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+
+	// On entry, drop any persisted loadResult so the user doesn't see
+	// stale output files from a previous run when reopening a project.
+	// They'll click EXPORT to regenerate against the current session.
+	useEffect(() => {
+		setLoadResult(null);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
 
 	const excluded = useMemo(
 		() => new Set(uploadResult?.excludedTables ?? []),
