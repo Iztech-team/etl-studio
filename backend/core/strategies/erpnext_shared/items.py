@@ -50,9 +50,19 @@ def emit_items(ctx: Context) -> None:
 
 def emit_item_prices(ctx: Context) -> None:
     # Build CATID → stock_uom lookup once so each price row can carry the
-    # correct uom (Item Price.uom is required on v16).
+    # correct uom (Item Price.uom is required on v16). The uom map's
+    # keys also tell us which items the strategy actually knows about,
+    # so we drop prices that reference deleted / unknown items —
+    # otherwise Frappe rejects the row with 'Value ALA-176 missing for
+    # Item' on import.
     item_uom_by_catid = _index_item_uoms(ctx)
+    deleted = _deleted_catids(ctx)
+    valid_catids = set(item_uom_by_catid.keys()) - deleted
     for row in ctx.table("CATPRICET"):
+        catid = clean_str(row.get("CATID"))
+        if not catid or catid not in valid_catids:
+            ctx.result.bump("item_prices_skipped_missing_item")
+            continue
         _emit_item_price(ctx, row, item_uom_by_catid)
 
 

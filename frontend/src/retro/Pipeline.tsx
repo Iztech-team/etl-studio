@@ -7,6 +7,7 @@ import {
 	useRef,
 	useState,
 	type ChangeEvent,
+	type CSSProperties,
 	type DragEvent,
 	type ReactNode,
 } from "react";
@@ -4347,11 +4348,46 @@ const STATUS_COLOR: Record<DoctypeStatus, string> = {
 	queued:    "var(--lg-amber)",
 	uploading: "var(--lg-amber)",
 	running:   "var(--lg-cyan)",
-	success:   "var(--lg-green)",
+	success:   "var(--lg-magenta)",
 	partial:   "var(--lg-amber)",
 	skipped:   "var(--lg-ink-dim)",
 	error:     "var(--lg-coral)",
 };
+
+
+function barFill(state: DoctypeState, color: string): CSSProperties {
+	const pct = state.expected > 0
+		? Math.min(100, (state.imported / state.expected) * 100)
+		: 0;
+	const isActive = state.status === "uploading" || state.status === "queued"
+		|| state.status === "running";
+
+	if (state.status === "success") {
+		return { width: "100%", background: color };
+	}
+	if (state.status === "skipped") {
+		return { width: "100%", background: color, opacity: 0.5 };
+	}
+	if (state.status === "error") {
+		return { width: "100%", background: color };
+	}
+	if (state.status === "partial") {
+		return {
+			width: `${Math.max(pct, 5)}%`,
+			background: color,
+		};
+	}
+	if (isActive) {
+		return {
+			width: `${Math.max(pct, 8)}%`,
+			background: `repeating-linear-gradient(45deg, ${color}, ${color} 6px, rgba(255,255,255,0.18) 6px, rgba(255,255,255,0.18) 12px)`,
+			backgroundSize: "24px 24px",
+			animation: "rl-stripe-march .8s linear infinite",
+		};
+	}
+	// idle
+	return { width: "0%", background: color };
+}
 
 
 function DoctypeRow({
@@ -4371,9 +4407,7 @@ function DoctypeRow({
 	const isActive = state.status === "uploading" || state.status === "queued"
 		|| state.status === "running";
 	const dimmed = idle && !picked;
-	const pct = state.expected > 0
-		? Math.min(100, (state.imported / state.expected) * 100)
-		: state.status === "success" || state.status === "partial" ? 100 : 0;
+	const fill = barFill(state, color);
 
 	return (
 		<div
@@ -4482,14 +4516,9 @@ function DoctypeRow({
 				>
 					<div
 						style={{
-							width: `${pct}%`,
 							height: "100%",
-							background: isActive
-								? `repeating-linear-gradient(45deg, ${color}, ${color} 6px, rgba(255,255,255,0.15) 6px, rgba(255,255,255,0.15) 12px)`
-								: color,
-							backgroundSize: "24px 24px",
-							animation: isActive ? "rl-stripe-march .8s linear infinite" : "none",
 							transition: "width .25s ease-out",
+							...fill,
 						}}
 					/>
 				</div>

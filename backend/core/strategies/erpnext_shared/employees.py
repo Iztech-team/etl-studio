@@ -6,6 +6,8 @@ the 1899-12-30 sentinel for unknown dates so we fall back to defensible
 defaults rather than skip the row.
 """
 
+from datetime import date, timedelta
+
 from core.strategies.erpnext_shared.common import (
     clean_str,
     employee_id,
@@ -37,6 +39,7 @@ def _emit_employee(ctx: Context, row: dict) -> None:
         return
     is_working = is_truthy(row.get("ISWORKING"))
     join_date = _join_date(ctx, row)
+    status = "Active" if is_working else "Left"
     payload = {
         "name": employee_id(empid),
         "employee_number": empid,
@@ -46,8 +49,8 @@ def _emit_employee(ctx: Context, row: dict) -> None:
         "gender": _gender(row),
         "date_of_birth": parse_date(row.get("BIRTH")) or DEFAULT_DOB,
         "date_of_joining": join_date,
-        "relieving_date": "",
-        "status": "Active" if is_working else "Left",
+        "relieving_date": _relieving_date(row, status, join_date),
+        "status": status,
         "salary_currency": ctx.config.default_currency,
         "ctc": parse_decimal(row.get("SALARY")),
         "attendance_device_id": clean_str(row.get("CARDID")),
@@ -57,6 +60,34 @@ def _emit_employee(ctx: Context, row: dict) -> None:
     }
     ctx.result.emit("Employee", payload)
     ctx.result.bump("employees_emitted")
+
+
+def _relieving_date(row: dict, status: str, join_date: str) -> str:
+    """ERPnext requires relieving_date when status is Left, and rejects
+    rows where relieving_date <= date_of_joining. Fill with the legacy
+    end date if it's valid; otherwise fall back to join_date + 1 day."""
+    if status != "Left":
+        return ""
+    candidates = (
+        parse_date(row.get("ENDDATE"))
+        or parse_date(row.get("LEAVEDATE"))
+        or parse_date(row.get("LASTWORKDATE"))
+        or parse_date(row.get("CHANGEDATE_DATA"))
+    )
+    fallback = _day_after(join_date)
+    if not candidates:
+        return fallback
+    if candidates <= join_date:
+        return fallback
+    return candidates
+
+
+def _day_after(iso_date: str) -> str:
+    try:
+        d = date.fromisoformat(iso_date)
+    except ValueError:
+        return iso_date
+    return (d + timedelta(days=1)).isoformat()
 
 
 def _employee_name(ctx: Context, row: dict) -> str:
