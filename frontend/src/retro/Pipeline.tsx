@@ -4068,6 +4068,8 @@ function EventRow({ ev }: { ev: ErpnextEvent }) {
 	const palette: Record<string, string> = {
 		begin: "var(--lg-cyan)",
 		stage: "var(--lg-cyan)",
+		preflight: "var(--lg-ink-mute)",
+		uploading: "var(--lg-amber)",
 		done: "var(--lg-green)",
 		skipped: "var(--lg-amber)",
 		error: "var(--lg-coral)",

@@ -46,10 +46,11 @@ SLUG_TO_DOCTYPE: dict[str, str] = {
     "stock_reconciliation": "Stock Reconciliation",
 }
 
-# Doctypes that need pre-flight allow_import + permission setup. Account
-# uses the dedicated CoA importer so doesn't require the doctype-level
-# import flag; same for Stock Reconciliation if/when we wire direct submit.
-DOCTYPES_NEEDING_IMPORT_FLAG = sorted(set(SLUG_TO_DOCTYPE.values()) - {"Account"})
+# Doctypes we'll try to ensure have import permission. The
+# `allow_import=1` flag is already set on standard ERPnext doctypes —
+# trying to PUT it via the API requires developer mode and fails on
+# production sites, so we skip it. We only nudge Custom DocPerm.
+DOCTYPES_NEEDING_IMPORT_PERM = sorted(set(SLUG_TO_DOCTYPE.values()) - {"Account"})
 
 # Filenames we don't yet support over the live API. Operator can still
 # download the CSV and run it manually.
@@ -68,12 +69,18 @@ def run_live_import(
         yield {"event": "error", "message": "no CSV files in output dir — run transform first"}
         return
 
-    yield {"event": "stage", "name": "preflight", "files": files}
-    try:
-        _preflight(client)
-    except ErpnextError as e:
-        yield {"event": "error", "stage": "preflight", "message": str(e)}
-        return
+    yield {"event": "stage", "name": "preflight",
+           "doctypes": DOCTYPES_NEEDING_IMPORT_PERM}
+    for doctype in DOCTYPES_NEEDING_IMPORT_PERM:
+        try:
+            client.grant_import_perm(doctype)
+            yield {"event": "preflight", "doctype": doctype, "status": "ok"}
+        except ErpnextError as e:
+            # Non-fatal — most standard doctypes already have the right
+            # perms. We surface the failure and let the actual import
+            # call fail loudly if perms really are the blocker.
+            yield {"event": "preflight", "doctype": doctype,
+                   "status": "warning", "message": str(e)}
 
     summary: list[dict] = []
     for fname in files:
@@ -90,6 +97,7 @@ def run_live_import(
             summary.append({"file": fname, "status": "skipped"})
             continue
 
+        yield {"event": "uploading", "file": fname, "doctype": doctype}
         path = os.path.join(output_dir, fname)
         try:
             if slug == "account":
@@ -109,15 +117,6 @@ def run_live_import(
 
     counts = _verify_counts(client, summary)
     yield {"event": "complete", "summary": summary, "verification": counts}
-
-
-# -- preflight ----------------------------------------------------------------
-
-def _preflight(client: ErpnextClient) -> None:
-    """Enable allow_import + grant import perms on every doctype we'll send."""
-    for doctype in DOCTYPES_NEEDING_IMPORT_FLAG:
-        client.enable_doctype_import(doctype)
-        client.grant_import_perm(doctype)
 
 
 # -- per-file handlers --------------------------------------------------------

@@ -367,6 +367,11 @@ async def load_erpnext(session_id: str, body: ErpnextLoadRequest):
     run = create_pipeline_run(project_id, "load") if project_id else None
 
     def stream():
+        # Some intermediaries (nginx, vite proxy) hold ~4KB of bytes
+        # before flushing. Send a comment line of padding plus the
+        # X-Accel-Buffering header so the first real events reach the
+        # browser as soon as we yield them.
+        yield ":" + (" " * 2048) + "\n\n"
         yield _sse({"event": "begin", "company": company})
         last_event: Dict[str, Any] = {}
         try:
@@ -387,7 +392,15 @@ async def load_erpnext(session_id: str, body: ErpnextLoadRequest):
                     rows = sum(int(e.get("imported") or 0) for e in summary)
                 finish_pipeline_run(run["id"], status, rows, note)
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 def _sse(event: Dict[str, Any]) -> str:
