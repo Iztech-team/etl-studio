@@ -6,6 +6,7 @@ import { RlDock } from "./Topbar";
 import { RlProjects } from "./Projects";
 import { RlPipeline } from "./Pipeline";
 import { RlPromptModal } from "./PromptModal";
+import { ErrorBoundary } from "./ErrorBoundary";
 
 type PageId = "projects";
 
@@ -602,8 +603,10 @@ function Shell() {
 
 export function RetroApp() {
 	return (
-		<AuthProvider>
-			<Shell />
-		</AuthProvider>
+		<ErrorBoundary>
+			<AuthProvider>
+				<Shell />
+			</AuthProvider>
+		</ErrorBoundary>
 	);
 }

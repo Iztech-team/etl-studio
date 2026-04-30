@@ -113,6 +113,19 @@ export const IStar = ({ size = 12 }: IconProps) => (
 	</PX>
 );
 
+export const IKeyboard = ({ size = 12 }: IconProps) => (
+	<PX size={size}>
+		<rect x="1" y="2" width="10" height="8" />
+		<rect x="2" y="3" width="8" height="6" fill="var(--lg-bg-1)" />
+		<rect x="3" y="4" width="1" height="1" fill="currentColor" />
+		<rect x="5" y="4" width="1" height="1" fill="currentColor" />
+		<rect x="7" y="4" width="1" height="1" fill="currentColor" />
+		<rect x="3" y="6" width="1" height="1" fill="currentColor" />
+		<rect x="5" y="6" width="2" height="1" fill="currentColor" />
+		<rect x="8" y="6" width="1" height="1" fill="currentColor" />
+	</PX>
+);
+
 export const IDot = ({
 	size = 8,
 	c = "currentColor",

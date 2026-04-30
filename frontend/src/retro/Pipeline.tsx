@@ -16,6 +16,7 @@ import { RlTopbar } from "./Topbar";
 import { RlPromptModal } from "./PromptModal";
 import { RlAchievement } from "./XPBar";
 import { useGlobalKeys, useKeyboardGrid } from "./keyboard";
+import { CheatSheet } from "./CheatSheet";
 
 // ---------- types ----------
 
@@ -1939,6 +1940,32 @@ function TablePreviewModal({
 
 // ---------- extract ----------
 
+const EXTRACT_KEYS = [
+	{
+		title: "NAVIGATION",
+		bindings: [
+			{ keys: ["j", "↓"], label: "next table" },
+			{ keys: ["k", "↑"], label: "prev table" },
+			{ keys: ["/"], label: "focus search" },
+		],
+	},
+	{
+		title: "SELECTION",
+		bindings: [
+			{ keys: ["Space", "d"], label: "toggle table" },
+			{ keys: ["a"], label: "toggle all / filtered" },
+			{ keys: ["e"], label: "deselect empty" },
+		],
+	},
+	{
+		title: "ACTIONS",
+		bindings: [
+			{ keys: ["p"], label: "preview focused table" },
+			{ keys: ["Enter"], label: "proceed to transform" },
+		],
+	},
+];
+
 function RlExtract({ onNext }: { onNext: () => void }) {
 	const {
 		uploadResult,
@@ -1952,6 +1979,8 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 	const [error, setError] = useState<string | null>(null);
 	const [search, setSearch] = useState("");
 	const [focusIdx, setFocusIdx] = useState(0);
+	const searchRef = useRef<HTMLInputElement>(null);
+	const proceedRef = useRef<() => void>(() => {});
 
 	const tables = uploadResult?.tables ?? [];
 	const schema = uploadResult?.schema ?? {};
@@ -2047,11 +2076,23 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 					e.preventDefault();
 					toggleAllTables();
 					break;
+				case "/":
+					e.preventDefault();
+					searchRef.current?.focus();
+					break;
+				case "enter": {
+					const count = rows.filter((r) => picked[r.n]).length;
+					if (count > 0 && !saving) {
+						e.preventDefault();
+						proceedRef.current();
+					}
+					break;
+				}
 			}
 		};
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [focusIdx, filtered, rows, uploadResult?.sessionId]);
+	}, [focusIdx, filtered, rows, picked, saving, uploadResult?.sessionId]);
 
 	const pickedCount = rows.filter((r) => picked[r.n]).length;
 	const pickedRowCount = rows.reduce(
@@ -2132,6 +2173,7 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 			setSaving(false);
 		}
 	};
+	proceedRef.current = proceed;
 
 	return (
 		<div
@@ -2160,10 +2202,12 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 					</span>
 					<div style={{ flex: 1 }} />
 					<input
+						ref={searchRef}
 						className="input"
-						placeholder="Search…"
+						placeholder="Search… [/]"
 						value={search}
 						onChange={(e) => setSearch(e.target.value)}
+						onKeyDown={(e) => { if (e.key === "Escape") { e.currentTarget.blur(); setSearch(""); } }}
 						style={{
 							fontSize: 10,
 							padding: "3px 8px",
@@ -2383,13 +2427,16 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 						{error}
 					</div>
 				)}
-				<button
-					className="btn btn-primary"
-					onClick={proceed}
-					disabled={pickedCount === 0 || saving}
-				>
-					{saving ? "SAVING…" : "CONTINUE TO TRANSFORM"} <IArrow size={10} />
-				</button>
+				<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+					<CheatSheet groups={EXTRACT_KEYS} />
+					<button
+						className="btn btn-primary"
+						onClick={proceed}
+						disabled={pickedCount === 0 || saving}
+					>
+						{saving ? "SAVING…" : "CONTINUE TO TRANSFORM"} <IArrow size={10} />
+					</button>
+				</div>
 			</div>
 		</div>
 	);
@@ -2606,6 +2653,44 @@ function RlTableSidebar({
 //   2) edit config (form derived from the strategy's config_schema)
 //   3) save to /api/strategies/{sid}; trigger /api/transform/{sid}
 //   4) show preservation audit + per-doctype counts
+
+const TRANSFORM_KEYS = [
+	{
+		title: "COLUMN LIST",
+		bindings: [
+			{ keys: ["j", "↓"], label: "next column" },
+			{ keys: ["k", "↑"], label: "prev column" },
+			{ keys: ["d"], label: "toggle drop" },
+			{ keys: ["c"], label: "toggle cast" },
+			{ keys: ["r"], label: "rename column" },
+			{ keys: ["Alt+r"], label: "rename table" },
+		],
+	},
+	{
+		title: "TABLE SIDEBAR",
+		bindings: [
+			{ keys: ["Tab"], label: "next table" },
+			{ keys: ["Shift+Tab"], label: "prev table" },
+			{ keys: ["Shift+H"], label: "focus sidebar" },
+			{ keys: ["Shift+L"], label: "focus columns" },
+		],
+	},
+	{
+		title: "TRANSFORM CARDS",
+		bindings: [
+			{ keys: ["t"], label: "add transform" },
+			{ keys: ["j", "k"], label: "navigate cards" },
+			{ keys: ["Enter"], label: "edit focused card" },
+			{ keys: ["Del", "⌫"], label: "remove focused card" },
+		],
+	},
+	{
+		title: "ACTIONS",
+		bindings: [
+			{ keys: ["Ctrl+s"], label: "run transform / proceed" },
+		],
+	},
+];
 
 function RlTransform({ onNext }: { onNext: () => void }) {
 	const { uploadResult, transformResult, setTransformResult, projectId, projectName } =
