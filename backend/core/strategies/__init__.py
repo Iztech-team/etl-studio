@@ -1,10 +1,12 @@
 from typing import Any
 
 from core.strategies.base import StrategyResult, TransformStrategy
-from core.strategies.erpnext import ErpnextStrategy
+from core.strategies.erpnext_mirror import ErpnextMirrorStrategy
+from core.strategies.erpnext_native import ErpnextNativeStrategy
 
 _STRATEGIES: dict[str, type[TransformStrategy]] = {
-    ErpnextStrategy.name: ErpnextStrategy,
+    ErpnextMirrorStrategy.name: ErpnextMirrorStrategy,
+    ErpnextNativeStrategy.name: ErpnextNativeStrategy,
 }
 
 

@@ -10,7 +10,7 @@ from core.strategies import (
     default_strategy_name,
     get_strategy,
 )
-from core.strategies.erpnext.writer import write_frappe_csvs
+from core.strategies.erpnext_shared.writer import write_frappe_csvs
 from helpers import (
     _auto_save,
     _excluded_set,
