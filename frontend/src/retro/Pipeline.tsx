@@ -3804,7 +3804,13 @@ function ErpnextLiveExport({
 	const [company, setCompany] = useState("");
 	const [companyAbbr, setCompanyAbbr] = useState("");
 	const [forceReupload, setForceReupload] = useState(false);
-	const [haltOnError, setHaltOnError] = useState(false);
+	const [autoContinue, setAutoContinue] = useState(false);
+	const [skipFiles, setSkipFiles] = useState<Set<string>>(() => new Set());
+	const [haltedFile, setHaltedFile] = useState<{
+		file: string;
+		doctype: string;
+		reason: string;
+	} | null>(null);
 	const [running, setRunning] = useState(false);
 	const [events, setEvents] = useState<ErpnextEvent[]>([]);
 	const [error, setError] = useState<string | null>(null);
@@ -3889,11 +3895,19 @@ function ErpnextLiveExport({
 		return () => { cancelled = true; };
 	}, [sessionId, transformResult, setTransformResult]);
 
-	const send = async () => {
+	const send = async (extraSkips: string[] = []) => {
 		if (!sessionId || !url || !apiKey || !apiSecret) return;
+		const isResume = extraSkips.length > 0;
 		setRunning(true);
 		setError(null);
-		setEvents([]);
+		setHaltedFile(null);
+		if (!isResume) {
+			setEvents([]);
+			setSkipFiles(new Set());
+		}
+		const skipsForThisRun = isResume
+			? Array.from(new Set([...skipFiles, ...extraSkips]))
+			: [];
 		const ctl = new AbortController();
 		abortRef.current = ctl;
 		try {
@@ -3903,11 +3917,12 @@ function ErpnextLiveExport({
 				body: JSON.stringify({
 					url, api_key: apiKey, api_secret: apiSecret,
 					company, company_abbr: companyAbbr,
-					force_reupload: forceReupload,
-					halt_on_error: haltOnError,
+					force_reupload: forceReupload && !isResume,
+					halt_on_failure: !autoContinue,
 					selected_doctypes: allDoctypes.length > 0
 						? Array.from(selectedDoctypes)
 						: null,
+					skip_files: skipsForThisRun.length > 0 ? skipsForThisRun : null,
 				}),
 				signal: ctl.signal,
 			});
@@ -3930,6 +3945,13 @@ function ErpnextLiveExport({
 					try {
 						const ev = JSON.parse(chunk.slice(6)) as ErpnextEvent;
 						setEvents((prev) => [...prev, ev]);
+						if (ev.event === "halted") {
+							setHaltedFile({
+								file: String(ev.file ?? ""),
+								doctype: String(ev.doctype ?? ""),
+								reason: String(ev.reason ?? "failure"),
+							});
+						}
 					} catch {}
 				}
 			}
@@ -3944,9 +3966,16 @@ function ErpnextLiveExport({
 	};
 
 	const cancel = () => abortRef.current?.abort();
+	const continueFromHalt = () => {
+		if (!haltedFile) return;
+		setSkipFiles((prev) => new Set([...prev, haltedFile.file]));
+		send([haltedFile.file]);
+	};
 	const reset = () => {
 		setEvents([]);
 		setError(null);
+		setHaltedFile(null);
+		setSkipFiles(new Set());
 		// Refresh the already-imported set since a successful run may
 		// have just added entries to it.
 		if (projectId) {
@@ -4096,15 +4125,15 @@ function ErpnextLiveExport({
 							color: "var(--lg-ink)",
 							cursor: running ? "not-allowed" : "pointer",
 						}}
-						title="Stop the run on the first file that errors. Off = log the error and continue with the rest of the doctypes (recommended for re-runs that hit duplicate-row errors)."
+						title="By default the loader pauses on any partial / failed file and waits for you to click CONTINUE. Tick this to plough through automatically, logging errors as they happen."
 					>
 						<input
 							type="checkbox"
-							checked={haltOnError}
-							onChange={(e) => setHaltOnError(e.target.checked)}
+							checked={autoContinue}
+							onChange={(e) => setAutoContinue(e.target.checked)}
 							disabled={running}
 						/>
-						<span>Stop on first error</span>
+						<span>Auto-continue past failures</span>
 					</label>
 					{loadingDoctypes && allDoctypes.length === 0 && (
 						<div
@@ -4236,7 +4265,7 @@ function ErpnextLiveExport({
 				) : events.length === 0 ? (
 					<button
 						className={`btn btn-primary ${!running ? "pulse" : ""}`}
-						onClick={send}
+						onClick={() => send()}
 						disabled={
 							!sessionId
 							|| !url || !apiKey || !apiSecret
@@ -4246,6 +4275,37 @@ function ErpnextLiveExport({
 					>
 						▶ SEND TO ERPNEXT
 					</button>
+				) : haltedFile ? (
+					<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+						<div
+							className="mono"
+							style={{
+								fontSize: 10,
+								color: "var(--lg-amber)",
+								padding: "8px 10px",
+								border: "1px solid var(--lg-amber)",
+								background: "rgba(199,155,0,0.08)",
+								lineHeight: 1.5,
+							}}
+						>
+							{"▼ "}HALTED on {haltedFile.doctype || haltedFile.file} ({haltedFile.reason}).
+							Click CONTINUE to skip this file and resume from the next one.
+						</div>
+						<button
+							className="btn btn-primary pulse"
+							onClick={continueFromHalt}
+							style={{ fontSize: 13, padding: "12px 14px", justifyContent: "center" }}
+						>
+							▶ CONTINUE — SKIP &amp; RESUME
+						</button>
+						<button
+							className="btn btn-ghost"
+							onClick={reset}
+							style={{ fontSize: 11, padding: "10px 14px", justifyContent: "center" }}
+						>
+							RESET — PICK AGAIN
+						</button>
+					</div>
 				) : (
 					<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
 						<button
@@ -4379,9 +4439,14 @@ function deriveDoctypeStates(
 				break;
 			}
 			case "skipped":
-				s.status = "skipped";
-				s.detail = (ev.reason as string) ?? "skipped";
-				if (typeof ev.imported === "number") s.imported = ev.imported as number;
+				// Don't overwrite a previously-resolved status — a
+				// follow-up run that user-skips this file shouldn't
+				// erase the original partial / error display.
+				if (s.status === "idle") {
+					s.status = "skipped";
+					s.detail = (ev.reason as string) ?? "skipped";
+					if (typeof ev.imported === "number") s.imported = ev.imported as number;
+				}
 				break;
 			case "error":
 				s.status = "error";

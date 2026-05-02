@@ -70,7 +70,8 @@ def run_live_import(
     already_imported: dict[str, dict] | None = None,
     on_file_imported: Any = None,
     selected_doctypes: list[str] | None = None,
-    halt_on_error: bool = False,
+    halt_on_failure: bool = True,
+    skip_files: list[str] | None = None,
 ) -> Iterator[dict]:
     """Yield progress events while pushing every CSV in `output_dir`.
 
@@ -92,6 +93,7 @@ def run_live_import(
         return
     already = already_imported or {}
     selection = set(selected_doctypes) if selected_doctypes is not None else None
+    manual_skips = set(skip_files or [])
 
     yield {"event": "stage", "name": "preflight",
            "doctypes": DOCTYPES_NEEDING_IMPORT_PERM}
@@ -133,6 +135,12 @@ def run_live_import(
             summary.append({"file": fname, "doctype": doctype, "status": "skipped"})
             continue
 
+        if fname in manual_skips:
+            yield {"event": "skipped", "file": fname, "doctype": doctype,
+                   "reason": "user clicked CONTINUE past this on a previous attempt"}
+            summary.append({"file": fname, "doctype": doctype, "status": "skipped"})
+            continue
+
         prior = already.get(fname)
         if prior:
             yield {"event": "skipped", "file": fname, "doctype": doctype,
@@ -155,13 +163,16 @@ def run_live_import(
             yield {"event": "error", "file": fname, "doctype": doctype,
                    "message": str(e), "payload": e.payload}
             summary.append({"file": fname, "status": "error", "error": str(e)})
-            if halt_on_error:
+            if halt_on_failure:
+                # Frontend resumes by re-issuing the request with this
+                # file added to skip_files; that re-run will see the
+                # successful files in already_imported (skip), the
+                # halted file in manual_skips (skip with explicit
+                # 'user clicked CONTINUE' reason), and pick up from
+                # the next one in dependency order.
+                yield {"event": "halted", "file": fname, "doctype": doctype,
+                       "reason": "error", "message": str(e)}
                 return
-            # Default: continue with the next file so the user sees
-            # every doctype's outcome in one run. Common case: a
-            # re-upload after partial success returns Error because
-            # every row is a duplicate of an already-imported record;
-            # halting there would block correct files further down.
             continue
 
         summary.append({"file": fname, **result})
@@ -170,6 +181,16 @@ def run_live_import(
         # want a retry on the next run, so we don't mark it complete.
         if on_file_imported and result.get("status") == "success":
             on_file_imported(fname, doctype, int(result.get("imported") or 0))
+
+        # Halt on partial success too — the operator may want to fix
+        # the failed rows and decide explicitly whether to skip this
+        # file or include it in a retry.
+        if halt_on_failure and result.get("status") == "partial":
+            yield {"event": "halted", "file": fname, "doctype": doctype,
+                   "reason": "partial",
+                   "imported": int(result.get("imported") or 0),
+                   "failed": int(result.get("failed") or 0)}
+            return
 
     counts = _verify_counts(client, summary)
     yield {"event": "complete", "summary": summary, "verification": counts}
