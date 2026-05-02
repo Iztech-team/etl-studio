@@ -31,6 +31,7 @@ SLUG_TO_DOCTYPE: dict[str, str] = {
     "item_group": "Item Group",
     "brand": "Brand",
     "bank": "Bank",
+    "account": "Account",       # uses import_coa, see _import_coa branch below
     "bank_account": "Bank Account",
     "customer": "Customer",
     "supplier": "Supplier",
