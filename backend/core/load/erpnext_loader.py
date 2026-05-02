@@ -70,6 +70,7 @@ def run_live_import(
     already_imported: dict[str, dict] | None = None,
     on_file_imported: Any = None,
     selected_doctypes: list[str] | None = None,
+    halt_on_error: bool = False,
 ) -> Iterator[dict]:
     """Yield progress events while pushing every CSV in `output_dir`.
 
@@ -154,7 +155,14 @@ def run_live_import(
             yield {"event": "error", "file": fname, "doctype": doctype,
                    "message": str(e), "payload": e.payload}
             summary.append({"file": fname, "status": "error", "error": str(e)})
-            return
+            if halt_on_error:
+                return
+            # Default: continue with the next file so the user sees
+            # every doctype's outcome in one run. Common case: a
+            # re-upload after partial success returns Error because
+            # every row is a duplicate of an already-imported record;
+            # halting there would block correct files further down.
+            continue
 
         summary.append({"file": fname, **result})
         # Only persist a 'this file is done' record when Frappe reports

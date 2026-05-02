@@ -324,6 +324,7 @@ class ErpnextLoadRequest(BaseModel):
     company: Optional[str] = None
     company_abbr: Optional[str] = None
     force_reupload: bool = False
+    halt_on_error: bool = False
     selected_doctypes: Optional[List[str]] = None
 
 
@@ -433,6 +434,7 @@ async def load_erpnext(session_id: str, body: ErpnextLoadRequest):
                 already_imported=already,
                 on_file_imported=on_done,
                 selected_doctypes=body.selected_doctypes,
+                halt_on_error=body.halt_on_error,
             ):
                 last_event = ev
                 yield _sse(ev)

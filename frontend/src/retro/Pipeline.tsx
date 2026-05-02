@@ -3804,6 +3804,7 @@ function ErpnextLiveExport({
 	const [company, setCompany] = useState("");
 	const [companyAbbr, setCompanyAbbr] = useState("");
 	const [forceReupload, setForceReupload] = useState(false);
+	const [haltOnError, setHaltOnError] = useState(false);
 	const [running, setRunning] = useState(false);
 	const [events, setEvents] = useState<ErpnextEvent[]>([]);
 	const [error, setError] = useState<string | null>(null);
@@ -3903,6 +3904,7 @@ function ErpnextLiveExport({
 					url, api_key: apiKey, api_secret: apiSecret,
 					company, company_abbr: companyAbbr,
 					force_reupload: forceReupload,
+					halt_on_error: haltOnError,
 					selected_doctypes: allDoctypes.length > 0
 						? Array.from(selectedDoctypes)
 						: null,
@@ -4083,6 +4085,26 @@ function ErpnextLiveExport({
 							disabled={running}
 						/>
 						<span>Re-upload everything</span>
+					</label>
+					<label
+						className="mono"
+						style={{
+							display: "flex",
+							alignItems: "center",
+							gap: 10,
+							fontSize: 11,
+							color: "var(--lg-ink)",
+							cursor: running ? "not-allowed" : "pointer",
+						}}
+						title="Stop the run on the first file that errors. Off = log the error and continue with the rest of the doctypes (recommended for re-runs that hit duplicate-row errors)."
+					>
+						<input
+							type="checkbox"
+							checked={haltOnError}
+							onChange={(e) => setHaltOnError(e.target.checked)}
+							disabled={running}
+						/>
+						<span>Stop on first error</span>
 					</label>
 					{loadingDoctypes && allDoctypes.length === 0 && (
 						<div
