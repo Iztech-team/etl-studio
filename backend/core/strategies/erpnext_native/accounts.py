@@ -71,9 +71,15 @@ def _emit_bank_gl_leaves(ctx: Context) -> None:
             name = pick(row, "NAME", "NAMEE", "NAMEH")
             if not name:
                 continue
+            abbr = clean_str(ctx.config.company_abbr)
+            parts = [leaf_id, name]
+            if abbr and abbr not in parts[-1]:
+                parts.append(abbr)
+            autoname = " - ".join(parts)
             ctx.result.emit("Account", {
-                "name": ctx.with_abbr(name),
+                "name": autoname,
                 "account_name": name,
+                "account_number": leaf_id,
                 "company": ctx.config.company_name,
                 "parent_account": parent,
                 "is_group": 0,

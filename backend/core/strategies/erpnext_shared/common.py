@@ -261,12 +261,26 @@ def group_by(rows: Iterable[dict], key: str) -> dict[str, list[dict]]:
 # -- account name resolution (shared between strategies) ----------------------
 
 def account_full_name(ctx, account_id) -> str:
-    """Return the autonamed Account form '{name} - {abbr}' for an ACCOUNTID."""
-    row = ctx.accounts_by_id.get(clean_str(account_id))
+    """Return the autonamed Account form for a legacy ACCOUNTID.
+
+    Matches Frappe's get_autoname_with_number(): when account_number is
+    set, the autoname is '{number} - {name} - {abbr}'. We always pass
+    the legacy ACCOUNTID as the account_number on emit, so this is the
+    correct form to use for any cross-document link (Bank Account.account,
+    JE.accounts.account, etc).
+    """
+    aid = clean_str(account_id)
+    row = ctx.accounts_by_id.get(aid)
     if not row:
         return ""
-    name = pick(row, "NAME", "NAMEE", "NAMEH")
-    return ctx.with_abbr(name) if name else ""
+    name = clean_str(pick(row, "NAME", "NAMEE", "NAMEH"))
+    if not name:
+        return ""
+    parts = [aid, name] if aid else [name]
+    suffix = clean_str(ctx.config.company_abbr)
+    if suffix and suffix not in parts[-1]:
+        parts.append(suffix)
+    return " - ".join(parts)
 
 
 # -- legacy tree walk (shared: mirror emits the tree, native classifies) ------

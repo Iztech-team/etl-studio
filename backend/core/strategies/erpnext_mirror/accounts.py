@@ -177,9 +177,17 @@ def _emit_account(
     root_type, report_type = ROOT_TYPE_BY_ID.get(
         root_id, ("Asset", "Balance Sheet"),
     )
+    # account_number = legacy ACCOUNTID gives Frappe a stable ASCII
+    # prefix in the autoname ('{number} - {name} - {abbr}'). Without
+    # it, accounts whose name carries Arabic text + special chars
+    # (e.g. backslash separators in 'صندوق نقدي\شيكل') hit a
+    # validate_link_and_fetch lookup mismatch — search finds the
+    # account but validator can't match by name. The numeric prefix
+    # sidesteps that entirely.
     payload = {
-        "name": ctx.with_abbr(name),
+        "name": _autoname_with_number(account_id, name, ctx.config.company_abbr),
         "account_name": name,
+        "account_number": account_id,
         "company": ctx.config.company_name,
         "parent_account": _parent_account_name(ctx, row, is_root),
         "is_group": 1 if account_id in parent_ids else 0,
@@ -205,7 +213,22 @@ def _parent_account_name(ctx: Context, row: dict, is_root: bool) -> str:
     if not parent:
         return ""
     parent_name = pick(parent, "NAME", "NAMEE", "NAMEH")
-    return ctx.with_abbr(parent_name) if parent_name else ""
+    if not parent_name:
+        return ""
+    return _autoname_with_number(parent_id, parent_name, ctx.config.company_abbr)
+
+
+def _autoname_with_number(account_id: str, name: str, abbr: str) -> str:
+    """Mirror of erpnext.accounts.utils.get_autoname_with_number — when an
+    account_number is present, the autoname becomes
+    '{number} - {name} - {abbr}'. We construct cross-references to the
+    same shape so Bank Account / JE links validate correctly."""
+    parts = [clean_str(account_id), clean_str(name)]
+    parts = [p for p in parts if p]
+    suffix = clean_str(abbr)
+    if suffix and suffix not in parts[-1]:
+        parts.append(suffix)
+    return " - ".join(parts)
 
 
 def _account_type_for(row: dict, is_group: int) -> str:

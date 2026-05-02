@@ -234,15 +234,25 @@ COA_HEADERS = [
 
 def _write_coa_importer_csv(records: list[dict], output_dir: str) -> list[str]:
     path = os.path.join(output_dir, "10_account.csv")
+    # Build a child→parent_number map from the parent_account references
+    # (which carry the parent's number-prefixed autoname). The CoA
+    # Importer uses Account Number to disambiguate when multiple
+    # accounts share the same name in different branches.
+    parent_number_by_name = {
+        r.get("account_name") or "": r.get("account_number") or ""
+        for r in records
+    }
     with open(path, "w", encoding="utf-8", newline="") as fh:
         writer = csv.writer(fh, quoting=csv.QUOTE_ALL)
         writer.writerow(COA_HEADERS)
         for r in records:
+            parent_short = _coa_parent_short_name(r)
+            parent_number = _coa_parent_number(r, parent_number_by_name)
             writer.writerow([
                 r.get("account_name", ""),
-                _coa_parent_short_name(r),
-                "",  # Account Number — legacy doesn't carry this
-                "",  # Parent Account Number — same
+                parent_short,
+                r.get("account_number", "") or "",
+                parent_number,
                 1 if r.get("is_group") else 0,
                 r.get("account_type", "") or "",
                 r.get("root_type", "") or "",
@@ -253,11 +263,33 @@ def _write_coa_importer_csv(records: list[dict], output_dir: str) -> list[str]:
 
 def _coa_parent_short_name(record: dict) -> str:
     """Account.parent_account in our records is the autonamed form
-    'X - {abbr}'; the CoA Importer wants the short name 'X'."""
+    '{number} - X - {abbr}' (or 'X - {abbr}' for legacy unknown rows).
+    The CoA Importer wants the short name 'X' alone."""
     parent = record.get("parent_account") or ""
-    if " - " in parent:
-        return parent.rsplit(" - ", 1)[0]
-    return parent
+    if not parent:
+        return ""
+    parts = parent.split(" - ")
+    # Strip leading numeric prefix (account_number) if present
+    if len(parts) >= 3 and parts[0].isdigit():
+        parts = parts[1:]
+    # Strip trailing company abbr
+    if len(parts) >= 2:
+        parts = parts[:-1]
+    return " - ".join(parts) if parts else parent
+
+
+def _coa_parent_number(record: dict, by_name: dict[str, str]) -> str:
+    """Resolve a record's parent's Account Number for the CoA Importer's
+    disambiguation column. We have the parent's autoname like
+    '{number} - X - {abbr}' on parent_account; pull the number out."""
+    parent = record.get("parent_account") or ""
+    if not parent:
+        return ""
+    head = parent.split(" - ", 1)[0]
+    if head.isdigit():
+        return head
+    short = _coa_parent_short_name(record)
+    return by_name.get(short, "")
 
 
 def _write_split_streams(
