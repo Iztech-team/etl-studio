@@ -319,6 +319,11 @@ def _emit_one_bank_account(
         ctx.result.bump("bank_accounts_skipped_duplicate")
         return
     seen_labels.add(label)
+    # `account_currency` is intentionally NOT emitted: in v16 it's a
+    # read-only fetched field on Bank Account that mirrors the linked
+    # Account's currency. Frappe Data Import warns 'cannot match
+    # column account_currency' if we send it, even though the value
+    # would be correct.
     payload = {
         "name": label,
         "account_name": label,
@@ -334,8 +339,6 @@ def _emit_one_bank_account(
         "legacy_bankaccid": clean_str(row.get("BANKACCID")),
         "legacy_gl_acctid": legacy_gl_acctid,
     }
-    if currency:
-        payload["account_currency"] = currency
     ctx.result.emit("Bank Account", payload)
     ctx.result.bump("bank_accounts_emitted")
 

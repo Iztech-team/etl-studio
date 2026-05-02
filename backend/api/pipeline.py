@@ -352,14 +352,23 @@ async def load_erpnext(session_id: str, body: ErpnextLoadRequest):
     # picks different values than what transform last ran with, drop the
     # cached output and let _ensure_transformed re-run with the new
     # values — otherwise the CSVs still have the old company baked in.
+    # Also wipe the import history: previously-imported records still
+    # carry the OLD abbr suffix in their autonamed `name`, so the new
+    # CSVs (which reference the new abbr) won't link up. A full
+    # re-upload after a company change keeps everything consistent.
     cfg = s.get("strategy_config") or {}
+    config_changed = False
     if body.company and body.company != cfg.get("company_name"):
         cfg["company_name"] = body.company
         s["transformed"] = None
+        config_changed = True
     if body.company_abbr and body.company_abbr != cfg.get("company_abbr"):
         cfg["company_abbr"] = body.company_abbr
         s["transformed"] = None
+        config_changed = True
     s["strategy_config"] = cfg
+    if config_changed and s.get("project_id"):
+        clear_erpnext_imports(s["project_id"])
 
     # Lazy re-transform on resume / after a config override: project
     # state intentionally doesn't persist the heavy `transformed` dict.
