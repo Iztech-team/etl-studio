@@ -403,6 +403,7 @@ async def load_erpnext(session_id: str, body: ErpnextLoadRequest):
     )
 
     company = body.company or (s.get("strategy_config") or {}).get("company_name")
+    company_abbr = body.company_abbr or (s.get("strategy_config") or {}).get("company_abbr") or ""
     opening_date = (s.get("strategy_config") or {}).get("opening_date") or ""
     client = ErpnextClient(body.url, body.api_key, body.api_secret)
     run = create_pipeline_run(project_id, "load") if project_id else None
@@ -428,6 +429,7 @@ async def load_erpnext(session_id: str, body: ErpnextLoadRequest):
             for ev in run_live_import(
                 out_dir, client, company or "",
                 opening_date=opening_date,
+                company_abbr=company_abbr,
                 already_imported=already,
                 on_file_imported=on_done,
                 selected_doctypes=body.selected_doctypes,

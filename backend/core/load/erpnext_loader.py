@@ -18,6 +18,7 @@ import json
 import os
 import time
 from typing import Any, Iterator
+from urllib.parse import quote as _urlquote
 
 from core.load.erpnext_client import ErpnextClient, ErpnextError, parse_import_log
 
@@ -65,6 +66,7 @@ POLL_TIMEOUT_SEC = 600
 def run_live_import(
     output_dir: str, client: ErpnextClient, company: str,
     opening_date: str = "",
+    company_abbr: str = "",
     already_imported: dict[str, dict] | None = None,
     on_file_imported: Any = None,
     selected_doctypes: list[str] | None = None,
@@ -103,8 +105,11 @@ def run_live_import(
             yield {"event": "preflight", "doctype": doctype,
                    "status": "warning", "message": str(e)}
 
-    if opening_date and _will_send_journal_entries(files, selected_doctypes):
-        yield from _ensure_fiscal_year(client, opening_date)
+    if _will_send_journal_entries(files, selected_doctypes):
+        if opening_date:
+            yield from _ensure_fiscal_year(client, opening_date)
+        if company:
+            yield from _ensure_round_off_account(client, company, company_abbr)
 
     summary: list[dict] = []
     for fname in files:
@@ -246,6 +251,16 @@ def _poll_data_import_streaming(
                    "data_import": name, "warnings": warnings}
             return
         if status == "Partial Success":
+            # Frappe occasionally marks Partial Success even when every
+            # row inserted (e.g. a row produced a warning the importer
+            # treats as 'not a clean success'). If our parsed log shows
+            # zero actual failures, surface as success — otherwise the
+            # UI flags a 'partial' run that wasn't really partial.
+            if failures == 0:
+                yield {"event": "done", "status": "success",
+                       "imported": successes, "failed": 0,
+                       "data_import": name, "warnings": warnings}
+                return
             yield {"event": "done", "status": "partial",
                    "imported": successes, "failed": failures,
                    "data_import": name, "errors": errors, "warnings": warnings}
@@ -276,6 +291,47 @@ def _will_send_journal_entries(
         if selection is None or dt in selection:
             return True
     return False
+
+
+def _ensure_round_off_account(
+    client: ErpnextClient, company: str, abbr: str,
+) -> Iterator[dict]:
+    """Frappe rejects JEs with sub-unit rounding differences when the
+    Company doesn't have `round_off_account` set. The default CoA
+    creates 'Round Off - {abbr}' but doesn't auto-wire it to Company.
+    Best-effort: GET the Company, if round_off_account is empty try
+    to set it to the standard leaf. Failures are non-fatal — JEs
+    with no rounding diff still post fine."""
+    candidate = f"Round Off - {abbr}".strip(" -")
+    try:
+        resp = client.get(
+            f"/api/resource/Company/{_urlquote(company, safe='')}"
+        )
+    except ErpnextError as e:
+        yield {"event": "preflight", "stage": "round_off",
+               "status": "warning", "message": f"company lookup failed: {e}"}
+        return
+    current = ((resp or {}).get("data") or {}).get("round_off_account")
+    if current:
+        yield {"event": "preflight", "stage": "round_off",
+               "status": "ok", "account": current}
+        return
+    if not abbr:
+        yield {"event": "preflight", "stage": "round_off",
+               "status": "warning",
+               "message": "company has no round_off_account; abbr unknown so can't auto-set"}
+        return
+    try:
+        client.put(
+            f"/api/resource/Company/{_urlquote(company, safe='')}",
+            {"round_off_account": candidate},
+        )
+        yield {"event": "preflight", "stage": "round_off",
+               "status": "set", "account": candidate}
+    except ErpnextError as e:
+        yield {"event": "preflight", "stage": "round_off",
+               "status": "warning",
+               "message": f"could not set round_off_account on Company: {e}"}
 
 
 def _ensure_fiscal_year(
