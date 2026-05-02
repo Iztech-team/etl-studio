@@ -34,6 +34,9 @@ class ProjectResponse(BaseModel):
     phase: str
     created_at: str
     updated_at: str
+    last_run_status: Optional[str] = None
+    last_run_note: Optional[str] = None
+    last_run_phase: Optional[str] = None
 
 
 class ProjectListResponse(BaseModel):

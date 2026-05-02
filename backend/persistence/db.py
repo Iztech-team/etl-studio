@@ -196,13 +196,38 @@ def create_project(name: str, username: str) -> dict:
 
 def list_projects(username: str) -> list[dict]:
     with _get_conn() as conn:
-        return [dict(r) for r in conn.execute(LIST_PROJECTS_BY_USER, (username,)).fetchall()]
+        rows = [dict(r) for r in conn.execute(LIST_PROJECTS_BY_USER, (username,)).fetchall()]
+        for row in rows:
+            row.update(_latest_pipeline_run(conn, row["id"]))
+        return rows
 
 
 def get_project(project_id: str) -> dict | None:
     with _get_conn() as conn:
         row = conn.execute(GET_PROJECT, (project_id,)).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        out = dict(row)
+        out.update(_latest_pipeline_run(conn, project_id))
+        return out
+
+
+def _latest_pipeline_run(conn: sqlite3.Connection, project_id: str) -> dict:
+    """Last-known pipeline run status / note for a project. Used by the
+    project list to flag cards that ended their most recent run in error
+    so the UI can surface a 'BUG' state on the card."""
+    row = conn.execute(
+        "SELECT status, note, phase FROM pipeline_runs "
+        "WHERE project_id = ? ORDER BY started_at DESC, id DESC LIMIT 1",
+        (project_id,),
+    ).fetchone()
+    if not row:
+        return {"last_run_status": None, "last_run_note": None, "last_run_phase": None}
+    return {
+        "last_run_status": row["status"],
+        "last_run_note": row["note"],
+        "last_run_phase": row["phase"],
+    }
 
 
 def update_project_phase(project_id: str, phase: str) -> None:
