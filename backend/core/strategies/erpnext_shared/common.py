@@ -113,6 +113,33 @@ def pick(row: dict, *fields: str) -> str:
     return ""
 
 
+_BACKSLASH_HIERARCHY = re.compile(r"\s*\\\s*")
+_WHITESPACE_RUN = re.compile(r"\s+")
+
+
+def safe_account_name(raw: Any) -> str:
+    """Normalize a legacy account NAME for Frappe-safe autonames.
+
+    Legacy ALArabi uses '\\' as an inline hierarchy separator on leaf
+    names — e.g. 'صندوق الشيكات\\شيكل' = 'cheque box \\ shekel'.
+    Frappe v15+ has a confirmed query-builder bug where
+    frappe.db.count() / validate_link_and_fetch can't match a docname
+    that contains '\\' inside an Arabic string. The link picker in
+    the desk thus shows the account in search results but silently
+    drops the selection because the validator returns {} (verified
+    empirically — accounts without '\\' validate fine on the same
+    dataset). Replacing '\\' with ' - ' preserves the hierarchy
+    visually, dodges the encoding round-trip, and keeps the name
+    URL-safe in every other context.
+    """
+    s = clean_str(raw)
+    if not s:
+        return ""
+    s = _BACKSLASH_HIERARCHY.sub(" - ", s)
+    s = _WHITESPACE_RUN.sub(" ", s)
+    return s.strip()
+
+
 _PHONE_RUN = re.compile(r"\+?[0-9][0-9 \-]*")
 
 
@@ -264,16 +291,16 @@ def account_full_name(ctx, account_id) -> str:
     """Return the autonamed Account form for a legacy ACCOUNTID.
 
     Matches Frappe's get_autoname_with_number(): when account_number is
-    set, the autoname is '{number} - {name} - {abbr}'. We always pass
-    the legacy ACCOUNTID as the account_number on emit, so this is the
-    correct form to use for any cross-document link (Bank Account.account,
-    JE.accounts.account, etc).
+    set, the autoname is '{number} - {name} - {abbr}'. The name part is
+    normalised via safe_account_name() to swap the legacy '\\'
+    hierarchy separator for ' - ' so Frappe's validate_link_and_fetch
+    can match against the stored row.
     """
     aid = clean_str(account_id)
     row = ctx.accounts_by_id.get(aid)
     if not row:
         return ""
-    name = clean_str(pick(row, "NAME", "NAMEE", "NAMEH"))
+    name = safe_account_name(pick(row, "NAME", "NAMEE", "NAMEH"))
     if not name:
         return ""
     parts = [aid, name] if aid else [name]

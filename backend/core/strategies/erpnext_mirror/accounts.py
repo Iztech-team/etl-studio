@@ -24,6 +24,7 @@ from core.strategies.erpnext_shared.common import (
     clean_str,
     currency_iso,
     pick,
+    safe_account_name,
     walk_to_root,
 )
 from core.strategies.erpnext_shared.context import Context
@@ -168,7 +169,7 @@ def _emit_account(
     root_for: dict[str, str],
 ) -> None:
     account_id = clean_str(row.get("ACCOUNTID"))
-    name = pick(row, "NAME", "NAMEE", "NAMEH")
+    name = safe_account_name(pick(row, "NAME", "NAMEE", "NAMEH"))
     if not name:
         ctx.result.warn("Account", "missing NAME", legacy_acctid=account_id)
         return
@@ -212,7 +213,7 @@ def _parent_account_name(ctx: Context, row: dict, is_root: bool) -> str:
     parent = ctx.accounts_by_id.get(parent_id)
     if not parent:
         return ""
-    parent_name = pick(parent, "NAME", "NAMEE", "NAMEH")
+    parent_name = safe_account_name(pick(parent, "NAME", "NAMEE", "NAMEH"))
     if not parent_name:
         return ""
     return _autoname_with_number(parent_id, parent_name, ctx.config.company_abbr)

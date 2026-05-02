@@ -16,6 +16,7 @@ from core.strategies.erpnext_shared.common import (
     clean_str,
     currency_iso,
     pick,
+    safe_account_name,
 )
 from core.strategies.erpnext_shared.context import Context
 
@@ -68,7 +69,7 @@ def _emit_bank_gl_leaves(ctx: Context) -> None:
                 continue
             seen.add(leaf_id)
             row = ctx.accounts_by_id.get(leaf_id, {})
-            name = pick(row, "NAME", "NAMEE", "NAMEH")
+            name = safe_account_name(pick(row, "NAME", "NAMEE", "NAMEH"))
             if not name:
                 continue
             abbr = clean_str(ctx.config.company_abbr)
