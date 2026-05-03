@@ -186,16 +186,14 @@ def emit_outstanding_cheques(
         original_remark = _cheque_original_remark(cheque)
         abs_amt = round(abs(amount_default), 2)
 
-        # Link the cheque to its source party (customer or supplier).
-        # CHEQUET stores routing as SOURCE/DEST/FIRST account IDs and
-        # these get rewritten as the cheque physically moves between
-        # accounts, so DEST/SOURCE flip depending on the cheque's
-        # current location. FIRSTACCOUNTID preserves the original
-        # booking account = the party. Fall back to other fields in
-        # case of legacy data inconsistencies.
-        party_type, party = _resolve_cheque_party(cheque, party_by_account)
-
-        # Build the cheques account line with party info if available.
+        # NOTE: ERPnext restricts party_type/party to Receivable/Payable
+        # accounts only — "Cheques in Hand" is a Cash account so we
+        # cannot tag it with the source customer/supplier. The customer
+        # name is preserved in user_remark below for traceability, and
+        # the legacy CHEQUEID is stored on the JE for back-reference.
+        # We can't credit the Customer side either (would double-decrement
+        # — legacy already reduced the customer balance when the cheque
+        # was received). Temporary Opening (Equity) stays as the counter.
         cheques_line: dict[str, Any] = {
             "account": cheques_account,
             "account_currency": DEFAULT_CURRENCY,
@@ -203,9 +201,12 @@ def emit_outstanding_cheques(
             "debit_in_account_currency": abs_amt,
             "credit_in_account_currency": 0,
         }
-        if party_type and party:
-            cheques_line["party_type"] = party_type
-            cheques_line["party"] = party
+
+        # Resolve the party purely for the user_remark (which we always
+        # build) — surface the customer code alongside the owner name
+        # so accountants can find the customer record by ID.
+        party_type, party = _resolve_cheque_party(cheque, party_by_account)
+        party_hint = f" — party: {party_type}/{party}" if party_type and party else ""
 
         ctx.result.emit("Journal Entry", {
             "name": f"OPN-CHQ-{cheque_id}",
@@ -222,7 +223,7 @@ def emit_outstanding_cheques(
             "posting_date": ctx.config.opening_date,
             "user_remark": (
                 f"Outstanding cheque #{cheque_no} from {owner}, "
-                f"due {cheque_date}, bank {bank}{original_remark}"
+                f"due {cheque_date}, bank {bank}{party_hint}{original_remark}"
             ),
             "docstatus": 1,
             "accounts": [
