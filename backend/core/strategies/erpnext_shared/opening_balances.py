@@ -186,10 +186,14 @@ def emit_outstanding_cheques(
         original_remark = _cheque_original_remark(cheque)
         abs_amt = round(abs(amount_default), 2)
 
-        # Link the cheque to its source party (customer or supplier) by
-        # looking up the destination account in the party master.
-        dest_account = clean_str(cheque.get("DESTACCOUNTID"))
-        party_type, party = party_by_account.get(dest_account, (None, None))
+        # Link the cheque to its source party (customer or supplier).
+        # CHEQUET stores routing as SOURCE/DEST/FIRST account IDs and
+        # these get rewritten as the cheque physically moves between
+        # accounts, so DEST/SOURCE flip depending on the cheque's
+        # current location. FIRSTACCOUNTID preserves the original
+        # booking account = the party. Fall back to other fields in
+        # case of legacy data inconsistencies.
+        party_type, party = _resolve_cheque_party(cheque, party_by_account)
 
         # Build the cheques account line with party info if available.
         cheques_line: dict[str, Any] = {
@@ -284,6 +288,33 @@ def _build_latest_cheque_account(ctx: Context) -> dict[str, str]:
         if cheque_id not in latest or serial > latest[cheque_id][0]:
             latest[cheque_id] = (serial, curr)
     return {cheque_id: acc for cheque_id, (_, acc) in latest.items()}
+
+
+def _resolve_cheque_party(
+    cheque: dict, party_by_account: dict[str, tuple[str, str]],
+) -> tuple[str | None, str | None]:
+    """Find the customer/supplier this cheque is linked to.
+
+    CHEQUET has 5 account-id fields (FIRST, FIRSTDEST, SOURCE, DEST,
+    ACCOUNTID). FIRST is the original booking account — for incoming
+    cheques that's always the customer. The current SOURCE/DEST flip
+    as the cheque physically moves between accounts (customer →
+    cheque box → bank), so they're unreliable for party identification.
+
+    Try each candidate in order; return the first one that matches a
+    party-bearing account. Returns (None, None) if nothing matches.
+    """
+    candidates = (
+        clean_str(cheque.get("FIRSTACCOUNTID")),
+        clean_str(cheque.get("ACCOUNTID")),
+        clean_str(cheque.get("SOURCEACCOUNTID")),
+        clean_str(cheque.get("DESTACCOUNTID")),
+        clean_str(cheque.get("FIRSTDESTACCOUNTID")),
+    )
+    for acc in candidates:
+        if acc and acc in party_by_account:
+            return party_by_account[acc]
+    return None, None
 
 
 def _build_party_account_map(ctx: Context) -> dict[str, tuple[str, str]]:
