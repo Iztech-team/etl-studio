@@ -19,10 +19,15 @@ router = APIRouter()
 SKIP_EAGER_LOAD = {
     # Tables large enough that materializing as Python list[dict] is
     # the dominant RSS allocator. Strategy reads them via
-    # Context.iter_streamed() row-by-row instead.
+    # Context.iter_streamed() row-by-row instead, or are not currently
+    # used by any migration strategy.
     "CATEGORYT",         # item master, ~19K rows × ~100 fields → 600MB+
     "CATESINVDOCT",      # sales invoice headers, ~146K × wide rows
-    "CATESINVDOCDETT",   # sales invoice lines, ~1M+ rows
+    "CATESINVDOCDETT",   # sales invoice lines, 256MB on disk
+    "CATLEDGERT",        # inventory costing ledger, 447MB on disk — not used by strategies
+    "LEDGERT",           # GL ledger, 147MB on disk — not used by strategies
+    "CATEPINVDOCDETT",   # purchase invoice lines, 3.3MB on disk
+    "CATESRETINVDOCDETT",# sales return invoice lines, 1.9MB on disk
 }
 
 

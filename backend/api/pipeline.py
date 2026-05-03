@@ -172,8 +172,8 @@ def _run_transform(s: Dict[str, Any], session_id: Optional[str] = None) -> Dict[
         table_loader=loader,
     )
     # Source tables can be freed now that the strategy has consumed them
-    # — they're still on disk via the JSONL extract cache and lazy-load
-    # if the user re-runs transform. Frees ~1-3GB of RSS for big imports.
+    # — they're still on disk and lazy-load if the user re-runs transform.
+    # Frees ~1-3GB of RSS for big imports.
     raw = s.get("raw") or {}
     if isinstance(raw.get("tables"), dict):
         for tname in list(raw["tables"].keys()):
