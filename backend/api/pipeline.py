@@ -161,10 +161,10 @@ def _resolve_strategy(s: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
     return name, config
 
 
-def _run_transform(s: Dict[str, Any]) -> Dict[str, Any]:
+def _run_transform(s: Dict[str, Any], session_id: Optional[str] = None) -> Dict[str, Any]:
     legacy = _legacy_tables(s)
     name, config = _resolve_strategy(s)
-    staging_dir = _transform_staging_dir(s)
+    staging_dir = _transform_staging_dir(s, session_id)
     loader = _make_table_loader(s)
     result = _strategy_result(
         legacy, name, config,
@@ -181,13 +181,25 @@ def _run_transform(s: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def _transform_staging_dir(s: Dict[str, Any]) -> Optional[str]:
-    """Per-session/project dir where strategy emits stream as JSONL."""
+def _transform_staging_dir(s: Dict[str, Any], session_id: Optional[str] = None) -> Optional[str]:
+    """Per-session/project dir where strategy emits stream as JSONL.
+
+    Uses disk-streaming mode for large datasets to avoid memory exhaustion.
+    For project sessions: {project_dir}/_transform_out
+    For guest sessions: {OUTPUT_DIR}/{session_id}/_transform_out
+    """
     project_id = s.get("project_id")
+
     if project_id:
         from persistence.project_state import project_dir
-        return os.path.join(project_dir(project_id), "_transform_out")
-    return None
+        staging_dir = os.path.join(project_dir(project_id), "_transform_out")
+    elif session_id:
+        staging_dir = os.path.join(OUTPUT_DIR, session_id, "_transform_out")
+    else:
+        return None
+
+    os.makedirs(staging_dir, exist_ok=True)
+    return staging_dir
 
 
 def _make_table_loader(s: Dict[str, Any]):
@@ -223,7 +235,7 @@ async def _ensure_transformed(session_id: str) -> None:
     if "transformed" in s and s["transformed"]:
         return
     _ensure_rows_loaded(s)
-    s["transformed"] = _run_transform(s)
+    s["transformed"] = _run_transform(s, session_id)
 
 
 @router.get("/transform/{session_id}", response_model=TransformResponse)
@@ -236,7 +248,7 @@ async def transform(session_id: str):
     audit_trail = s.get("audit_trail")
 
     _ensure_rows_loaded(s)
-    result = _run_transform(s)
+    result = _run_transform(s, session_id)
     s["transformed"] = result
     s["fk_edges"] = []
     await _auto_save(session_id, "transform")
