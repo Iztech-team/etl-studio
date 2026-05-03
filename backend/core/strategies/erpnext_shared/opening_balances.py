@@ -162,12 +162,13 @@ def emit_outstanding_cheques(
     moves between accounts, so its tail tells us where the cheque
     really is right now.
 
-    DEBIT cheques_account, CREDIT Temporary Opening — no party link;
-    the customer's GL was already decremented in legacy when the
-    cheque was received.
+    Each cheque JE line is tagged with party_type (Customer/Supplier)
+    and party (ID) by looking up the cheque's destination account in
+    the customer/supplier master. This ties each cheque to its source.
     """
     temp_opening = ctx.with_abbr("Temporary Opening")
     latest_acct_per_cheque = _build_latest_cheque_account(ctx)
+    party_by_account = _build_party_account_map(ctx)
     for cheque in ctx.iter_streamed("CHEQUET"):
         if not _is_outstanding_incoming_cheque(
             cheque, latest_acct_per_cheque, ctx.accounts_by_id,
@@ -184,6 +185,24 @@ def emit_outstanding_cheques(
         bank = _cheque_bank_name(ctx, cheque)
         original_remark = _cheque_original_remark(cheque)
         abs_amt = round(abs(amount_default), 2)
+
+        # Link the cheque to its source party (customer or supplier) by
+        # looking up the destination account in the party master.
+        dest_account = clean_str(cheque.get("DESTACCOUNTID"))
+        party_type, party = party_by_account.get(dest_account, (None, None))
+
+        # Build the cheques account line with party info if available.
+        cheques_line: dict[str, Any] = {
+            "account": cheques_account,
+            "account_currency": DEFAULT_CURRENCY,
+            "exchange_rate": 1.0,
+            "debit_in_account_currency": abs_amt,
+            "credit_in_account_currency": 0,
+        }
+        if party_type and party:
+            cheques_line["party_type"] = party_type
+            cheques_line["party"] = party
+
         ctx.result.emit("Journal Entry", {
             "name": f"OPN-CHQ-{cheque_id}",
             "voucher_type": "Opening Entry",
@@ -203,13 +222,7 @@ def emit_outstanding_cheques(
             ),
             "docstatus": 1,
             "accounts": [
-                {
-                    "account": cheques_account,
-                    "account_currency": DEFAULT_CURRENCY,
-                    "exchange_rate": 1.0,
-                    "debit_in_account_currency": abs_amt,
-                    "credit_in_account_currency": 0,
-                },
+                cheques_line,
                 {
                     "account": temp_opening,
                     "account_currency": DEFAULT_CURRENCY,
@@ -271,6 +284,33 @@ def _build_latest_cheque_account(ctx: Context) -> dict[str, str]:
         if cheque_id not in latest or serial > latest[cheque_id][0]:
             latest[cheque_id] = (serial, curr)
     return {cheque_id: acc for cheque_id, (_, acc) in latest.items()}
+
+
+def _build_party_account_map(ctx: Context) -> dict[str, tuple[str, str]]:
+    """Build a map from legacy account ID → (party_type, party_id) for
+    all customers and suppliers. Used to tag cheque JE lines with their
+    source party.
+
+    Returns: {account_id: (party_type, party_id), ...}
+    where party_type is "Customer" or "Supplier" and party_id is the
+    customer/supplier code."""
+    out: dict[str, tuple[str, str]] = {}
+
+    # Map customer accounts
+    for row in ctx.table("CUSTT"):
+        account = clean_str(row.get("ACCOUNT"))
+        custid = clean_str(row.get("CUSTID"))
+        if account and custid:
+            out[account] = ("Customer", custid)
+
+    # Map supplier accounts
+    for row in ctx.table("SUPPLIERT"):
+        account = clean_str(row.get("ACCOUNT"))
+        suppid = clean_str(row.get("SUPPID"))
+        if account and suppid:
+            out[account] = ("Supplier", suppid)
+
+    return out
 
 
 def _cheque_amount_default(cheque: dict, fx_rates: dict[str, float]) -> float:

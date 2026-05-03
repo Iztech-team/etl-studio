@@ -4376,7 +4376,7 @@ function ErpnextField({
 
 
 type DoctypeStatus =
-	| "idle" | "queued" | "uploading" | "running"
+	| "idle" | "settling" | "queued" | "uploading" | "running"
 	| "success" | "partial" | "skipped" | "error";
 
 type DoctypeState = {
@@ -4411,6 +4411,17 @@ function deriveDoctypeStates(
 			imported: 0, failed: 0, warnings: [], errors: [], detail: "",
 		};
 		switch (ev.event) {
+			case "settling":
+				// Backend sleeps a few seconds between files so Frappe can
+				// commit the previous import before this one reads it.
+				// Stamp the next doctype row with a 'settling' state so
+				// the user sees we're not hung — just waiting.
+				if (s.status === "idle") {
+					s.status = "settling";
+					const delay = (ev.delay as number | undefined) ?? 0;
+					s.detail = delay > 0 ? `settling ${delay}s…` : "settling…";
+				}
+				break;
 			case "uploading":
 				s.status = "uploading";
 				s.detail = (ev.stage as string) ?? "uploading";
@@ -4461,6 +4472,7 @@ function deriveDoctypeStates(
 
 const STATUS_COLOR: Record<DoctypeStatus, string> = {
 	idle:      "var(--lg-ink-mute)",
+	settling:  "var(--lg-ink-dim)",
 	queued:    "var(--lg-amber)",
 	uploading: "var(--lg-amber)",
 	running:   "var(--lg-cyan)",
@@ -4491,6 +4503,15 @@ function barFill(state: DoctypeState, color: string): CSSProperties {
 		return {
 			width: `${Math.max(pct, 5)}%`,
 			background: color,
+		};
+	}
+	if (state.status === "settling") {
+		// Slim, dim, slow-pulsing bar — distinct from the active stripe-march.
+		return {
+			width: "12%",
+			background: color,
+			opacity: 0.6,
+			animation: "rl-bug-glow 1.4s ease-in-out infinite",
 		};
 	}
 	if (isActive) {
@@ -4608,6 +4629,8 @@ function DoctypeRow({
 				>
 					{state.status === "idle"
 						? `${state.expected.toLocaleString()} rows`
+						: state.status === "settling"
+						? state.detail
 						: state.expected > 0
 						? `${state.imported}/${state.expected}`
 						: state.imported > 0
@@ -4683,6 +4706,7 @@ function EventRow({ ev }: { ev: ErpnextEvent }) {
 		begin: "var(--lg-cyan)",
 		stage: "var(--lg-cyan)",
 		preflight: "var(--lg-ink-mute)",
+		settling: "var(--lg-ink-dim)",
 		uploading: "var(--lg-amber)",
 		queued: "var(--lg-amber)",
 		polling: "var(--lg-cyan)",

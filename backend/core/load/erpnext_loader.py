@@ -57,10 +57,15 @@ DOCTYPES_NEEDING_IMPORT_PERM = sorted(set(SLUG_TO_DOCTYPE.values()) - {"Account"
 
 # Filenames we don't yet support over the live API. Operator can still
 # download the CSV and run it manually.
-SKIP_VIA_API = {"stock_reconciliation"}
+SKIP_VIA_API = set()
 
 POLL_INTERVAL_SEC = 1.0
 POLL_TIMEOUT_SEC = 600
+# Frappe Data Import commits the last batch asynchronously; the very
+# next file (e.g. Item Price right after Item) can race the commit and
+# see "missing for Item" against rows we just inserted. A small settle
+# pause before the next file gives Frappe time to flush.
+SETTLE_DELAY_SEC = 3.0
 
 
 def run_live_import(
@@ -99,6 +104,14 @@ def run_live_import(
            "doctypes": DOCTYPES_NEEDING_IMPORT_PERM}
     for doctype in DOCTYPES_NEEDING_IMPORT_PERM:
         try:
+            # DocType-level allow_import flag (may require developer mode)
+            client.enable_doctype_import(doctype)
+        except ErpnextError as e:
+            yield {"event": "preflight", "doctype": doctype,
+                   "status": "warning",
+                   "message": f"could not enable DocType.allow_import (may need developer mode): {e}"}
+        try:
+            # Role-level permission (always works in any mode)
             client.grant_import_perm(doctype)
             yield {"event": "preflight", "doctype": doctype, "status": "ok"}
         except ErpnextError as e:
@@ -115,6 +128,7 @@ def run_live_import(
             yield from _ensure_round_off_account(client, company, company_abbr)
 
     summary: list[dict] = []
+    just_uploaded = False
     for fname in files:
         slug = _slug_from_filename(fname)
         if slug in SKIP_VIA_API:
@@ -150,6 +164,12 @@ def run_live_import(
                             "imported": prior["imported_count"]})
             continue
 
+        if just_uploaded:
+            yield {"event": "settling", "delay": SETTLE_DELAY_SEC,
+                   "doctype": doctype, "file": fname}
+            time.sleep(SETTLE_DELAY_SEC)
+            just_uploaded = False
+
         path = os.path.join(output_dir, fname)
         result: dict = {}
         try:
@@ -176,6 +196,7 @@ def run_live_import(
             continue
 
         summary.append({"file": fname, **result})
+        just_uploaded = True
         # Only persist a 'this file is done' record when Frappe reports
         # a fully successful import. Partial Success means the user will
         # want a retry on the next run, so we don't mark it complete.
@@ -325,13 +346,14 @@ def _will_send_journal_entries(
 def _ensure_round_off_account(
     client: ErpnextClient, company: str, abbr: str,
 ) -> Iterator[dict]:
-    """Frappe rejects JEs with sub-unit rounding differences when the
-    Company doesn't have `round_off_account` set. The default CoA
-    creates 'Round Off - {abbr}' but doesn't auto-wire it to Company.
-    Best-effort: GET the Company, if round_off_account is empty try
-    to set it to the standard leaf. Failures are non-fatal — JEs
-    with no rounding diff still post fine."""
-    candidate = f"Round Off - {abbr}".strip(" -")
+    """ERPnext v16 needs two round-off accounts on Company:
+    - round_off_account: general ledger rounding
+    - round_off_for_opening: opening journal entry rounding
+    Both need to be set to the same Account with account_type='Round Off'.
+    Resolve the actual account by type lookup (Mirror autonames it
+    '{ACCOUNTID} - {NAME} - {abbr}', Native uses default CoA's
+    'Round Off - {abbr}') instead of guessing. Failures are non-fatal:
+    JEs with no rounding diff still post fine."""
     try:
         resp = client.get(
             f"/api/resource/Company/{_urlquote(company, safe='')}"
@@ -340,27 +362,67 @@ def _ensure_round_off_account(
         yield {"event": "preflight", "stage": "round_off",
                "status": "warning", "message": f"company lookup failed: {e}"}
         return
-    current = ((resp or {}).get("data") or {}).get("round_off_account")
-    if current:
+    company_data = (resp or {}).get("data") or {}
+    round_off = company_data.get("round_off_account")
+    round_off_opening = company_data.get("round_off_for_opening")
+
+    if round_off and round_off_opening:
         yield {"event": "preflight", "stage": "round_off",
-               "status": "ok", "account": current}
+               "status": "ok", "account": round_off}
         return
-    if not abbr:
+
+    candidate = _find_round_off_account(client, company)
+    if not candidate and abbr:
+        candidate = f"Round Off - {abbr}".strip(" -")
+    if not candidate:
         yield {"event": "preflight", "stage": "round_off",
                "status": "warning",
-               "message": "company has no round_off_account; abbr unknown so can't auto-set"}
+               "message": "no Account with account_type='Round Off' found and no abbr to fall back on"}
         return
+
     try:
-        client.put(
-            f"/api/resource/Company/{_urlquote(company, safe='')}",
-            {"round_off_account": candidate},
-        )
+        payload = {}
+        if not round_off:
+            payload["round_off_account"] = candidate
+        if not round_off_opening:
+            payload["round_off_for_opening"] = candidate
+        if payload:
+            client.put(
+                f"/api/resource/Company/{_urlquote(company, safe='')}",
+                payload,
+            )
         yield {"event": "preflight", "stage": "round_off",
                "status": "set", "account": candidate}
     except ErpnextError as e:
         yield {"event": "preflight", "stage": "round_off",
                "status": "warning",
-               "message": f"could not set round_off_account on Company: {e}"}
+               "message": f"could not set round_off accounts to {candidate!r}: {e}"}
+
+
+def _find_round_off_account(client: ErpnextClient, company: str) -> str:
+    """Query for an Account with account_type='Round Off' under this
+    company. Returns the account's name, or empty string if none found
+    or the lookup fails."""
+    try:
+        resp = client.get(
+            "/api/method/frappe.client.get_list",
+            params={
+                "doctype": "Account",
+                "filters": json.dumps([
+                    ["company", "=", company],
+                    ["account_type", "=", "Round Off"],
+                    ["disabled", "=", 0],
+                ]),
+                "fields": json.dumps(["name"]),
+                "limit_page_length": 1,
+            },
+        )
+    except ErpnextError:
+        return ""
+    rows = (resp or {}).get("message") or []
+    if not rows:
+        return ""
+    return rows[0].get("name") or ""
 
 
 def _ensure_fiscal_year(
