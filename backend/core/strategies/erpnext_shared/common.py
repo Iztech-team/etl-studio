@@ -113,29 +113,28 @@ def pick(row: dict, *fields: str) -> str:
     return ""
 
 
-_BACKSLASH_HIERARCHY = re.compile(r"\s*\\\s*")
+_HIERARCHY_SEPARATOR = re.compile(r"\s*[\\\/]\s*")
 _WHITESPACE_RUN = re.compile(r"\s+")
 
 
 def safe_account_name(raw: Any) -> str:
     """Normalize a legacy account NAME for Frappe-safe autonames.
 
-    Legacy ALArabi uses '\\' as an inline hierarchy separator on leaf
-    names — e.g. 'صندوق الشيكات\\شيكل' = 'cheque box \\ shekel'.
-    Frappe v15+ has a confirmed query-builder bug where
-    frappe.db.count() / validate_link_and_fetch can't match a docname
-    that contains '\\' inside an Arabic string. The link picker in
-    the desk thus shows the account in search results but silently
-    drops the selection because the validator returns {} (verified
-    empirically — accounts without '\\' validate fine on the same
-    dataset). Replacing '\\' with ' - ' preserves the hierarchy
-    visually, dodges the encoding round-trip, and keeps the name
+    Legacy ALArabi uses '\\' or '/' as an inline hierarchy separator on leaf
+    names — e.g. 'صندوق الشيكات\\شيكل' = 'cheque box \\ shekel' or
+    'محمد أبو جانتي / موظف' = 'Mohamed Abu Janti / Employee'.
+    Frappe v15+ has a confirmed query-builder bug where frappe.db.count() /
+    validate_link_and_fetch can't match a docname containing '\\' inside an
+    Arabic string. The link picker shows the account in search results but
+    silently drops the selection because the validator returns {} (verified
+    empirically). Replacing both '\\' and '/' with ' - ' preserves the
+    hierarchy visually, dodges the encoding round-trip, and keeps the name
     URL-safe in every other context.
     """
     s = clean_str(raw)
     if not s:
         return ""
-    s = _BACKSLASH_HIERARCHY.sub(" - ", s)
+    s = _HIERARCHY_SEPARATOR.sub(" - ", s)
     s = _WHITESPACE_RUN.sub(" ", s)
     return s.strip()
 
