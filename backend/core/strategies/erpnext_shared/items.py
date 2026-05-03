@@ -180,7 +180,9 @@ def _add_barcode(value: str, seen: set[str], out: list[dict]) -> None:
     seen.add(value)
     out.append({
         "barcode": value,
-        "barcode_type": BARCODE_TYPES.get(len(value), ""),
+        # Skip barcode_type to bypass ERPnext validation — allows invalid/non-standard
+        # barcodes (failed checksums, duplicates) to import as-is so POS scanning
+        # works with physical product barcodes even if they're non-compliant.
     })
 
 
