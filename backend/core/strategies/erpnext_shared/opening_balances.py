@@ -327,19 +327,20 @@ def _build_party_account_map(ctx: Context) -> dict[str, tuple[str, str]]:
     customer/supplier code."""
     out: dict[str, tuple[str, str]] = {}
 
-    # Map customer accounts
+    # Map customer accounts. The party value must match the Customer
+    # doctype's `name` field (primary key) — which we encode as
+    # 'CUST-{custid}' in parties.py. Same for suppliers.
     for row in ctx.table("CUSTT"):
         account = clean_str(row.get("ACCOUNT"))
         custid = clean_str(row.get("CUSTID"))
         if account and custid:
-            out[account] = ("Customer", custid)
+            out[account] = ("Customer", customer_id(custid))
 
-    # Map supplier accounts
     for row in ctx.table("SUPPLIERT"):
         account = clean_str(row.get("ACCOUNT"))
         suppid = clean_str(row.get("SUPPID"))
         if account and suppid:
-            out[account] = ("Supplier", suppid)
+            out[account] = ("Supplier", supplier_id(suppid))
 
     return out
 

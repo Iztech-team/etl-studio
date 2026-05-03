@@ -372,12 +372,29 @@ def _ensure_round_off_account(
         return
 
     candidate = _find_round_off_account(client, company)
+    fallback_used = False
     if not candidate and abbr:
         candidate = f"Round Off - {abbr}".strip(" -")
+        fallback_used = True
     if not candidate:
         yield {"event": "preflight", "stage": "round_off",
                "status": "warning",
-               "message": "no Account with account_type='Round Off' found and no abbr to fall back on"}
+               "message": "no Account with account_type='Round Off' found and no abbr to fall back on; "
+                          "manually set Company → Round Off Account before importing JEs"}
+        return
+
+    # Verify the candidate account actually exists before PUTing it as a
+    # link. Otherwise Frappe accepts the PUT but JE imports fail later
+    # with "Please mention 'Round Off Account'" because the link is dead.
+    if not _account_exists(client, candidate):
+        hint = (
+            f"fallback candidate {candidate!r} doesn't exist; "
+            f"manually set Company → Round Off Account to a valid account"
+            if fallback_used else
+            f"resolved candidate {candidate!r} from account_type lookup but it doesn't exist"
+        )
+        yield {"event": "preflight", "stage": "round_off",
+               "status": "warning", "message": hint}
         return
 
     try:
@@ -392,11 +409,29 @@ def _ensure_round_off_account(
                 payload,
             )
         yield {"event": "preflight", "stage": "round_off",
-               "status": "set", "account": candidate}
+               "status": "set", "account": candidate,
+               "fields": list(payload.keys())}
     except ErpnextError as e:
         yield {"event": "preflight", "stage": "round_off",
                "status": "warning",
                "message": f"could not set round_off accounts to {candidate!r}: {e}"}
+
+
+def _account_exists(client: ErpnextClient, account_name: str) -> bool:
+    """Probe whether an Account with this name exists. Used to verify
+    the round_off candidate before linking it on Company."""
+    try:
+        resp = client.get(
+            "/api/method/frappe.client.get_value",
+            params={
+                "doctype": "Account",
+                "filters": json.dumps({"name": account_name}),
+                "fieldname": "name",
+            },
+        )
+    except ErpnextError:
+        return False
+    return bool((resp or {}).get("message") or {})
 
 
 def _find_round_off_account(client: ErpnextClient, company: str) -> str:
