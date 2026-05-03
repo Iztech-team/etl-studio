@@ -169,7 +169,8 @@ def _emit_account(
     root_for: dict[str, str],
 ) -> None:
     account_id = clean_str(row.get("ACCOUNTID"))
-    name = safe_account_name(pick(row, "NAME", "NAMEE", "NAMEH"))
+    raw_name = pick(row, "NAME", "NAMEE", "NAMEH")
+    name = safe_account_name(raw_name)
     if not name:
         ctx.result.warn("Account", "missing NAME", legacy_acctid=account_id)
         return
@@ -181,10 +182,11 @@ def _emit_account(
     # account_number = legacy ACCOUNTID gives Frappe a stable ASCII
     # prefix in the autoname ('{number} - {name} - {abbr}'). Without
     # it, accounts whose name carries Arabic text + special chars
-    # (e.g. backslash separators in 'صندوق نقدي\شيكل') hit a
+    # (e.g. backslash/slash separators in 'صندوق نقدي\شيكل') hit a
     # validate_link_and_fetch lookup mismatch — search finds the
     # account but validator can't match by name. The numeric prefix
-    # sidesteps that entirely.
+    # sidesteps that entirely. Name must use safe_account_name() to
+    # normalize separators so Bank Account and JE links can find it.
     payload = {
         "name": _autoname_with_number(account_id, name, ctx.config.company_abbr),
         "account_name": name,
