@@ -103,7 +103,7 @@ def _stock_line(
     if not catid:
         return None
     qty = parse_decimal(row.get("STARTQTY"))
-    if qty == 0:
+    if qty <= 0:
         return None
     rate = cost_by_catid.get(catid, 0.0)
     return {
