@@ -71,7 +71,7 @@ def _stock_reco_payload(
         "set_posting_time": 1,
         "company": ctx.config.company_name,
         "set_warehouse": warehouse,
-        "expense_account": ctx.with_abbr("Stock Adjustment"),
+        "expense_account": ctx.with_abbr("Temporary Opening"),
         "docstatus": 1,
         "items": items,
         "legacy_storeid": store_id,
