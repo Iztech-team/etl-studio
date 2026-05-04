@@ -1,6 +1,7 @@
 import re
 from typing import Any, Dict, List
 
+
 class SQLParser:
     """Parse INSERT statements from a SQL dump into row dicts."""
 
@@ -69,8 +70,6 @@ class SQLParser:
 
         return tables
 
-
-
     # ------------------------------------------------------------------
     @staticmethod
     def _split_values(raw: str) -> List[str]:
@@ -113,4 +112,3 @@ class SQLParser:
         except ValueError:
             pass
         return val
-

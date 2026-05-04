@@ -9,6 +9,7 @@ Bank-class accounts are emitted individually (one JE per legacy bank GL
 leaf) so each bank account in ERPnext has its own opening balance and
 appears correctly in Bank Reconciliation. Everything else aggregates.
 """
+
 from typing import Any
 
 from core.strategies.erpnext_native.account_mapping import (
@@ -51,11 +52,19 @@ def emit_opening_balances(ctx: Context) -> None:
     bank_gl_to_label = bank_gl_to_bank_account(ctx)
 
     emit_party_balances(
-        ctx, "customer", fx_rates, customer_index, parent_ids,
+        ctx,
+        "customer",
+        fx_rates,
+        customer_index,
+        parent_ids,
         party_account=ctx.with_abbr("Debtors"),
     )
     emit_party_balances(
-        ctx, "supplier", fx_rates, supplier_index, parent_ids,
+        ctx,
+        "supplier",
+        fx_rates,
+        supplier_index,
+        parent_ids,
         party_account=ctx.with_abbr("Creditors"),
     )
     _emit_bank_balances(ctx, fx_rates, parent_ids, bank_gl_to_label)
@@ -64,6 +73,7 @@ def emit_opening_balances(ctx: Context) -> None:
 
 
 # -- Bank-class GL balances (one JE per leaf, like mirror) --------------------
+
 
 def _emit_bank_balances(
     ctx: Context,
@@ -95,27 +105,32 @@ def _emit_bank_balances(
         gl_account = account_full_name(ctx, account_id)
         if not gl_account:
             ctx.result.warn(
-                "OpeningBalance", "missing GL account name",
+                "OpeningBalance",
+                "missing GL account name",
                 legacy_acctid=account_id,
             )
             continue
         original_remark = (
             f" (originally {balance:.2f} {account_ccy} @ {rate})"
-            if account_ccy != DEFAULT_CURRENCY else ""
+            if account_ccy != DEFAULT_CURRENCY
+            else ""
         )
-        ctx.result.emit("Journal Entry", _build_bank_je(
-            ctx,
-            name=f"OPN-BANK-{account_id}",
-            account=gl_account,
-            balance=balance,
-            company_amount=company_amt,
-            account_currency=account_ccy,
-            exchange_rate=rate,
-            original_remark=original_remark,
-            account_name=pick(row, "NAME", "NAMEE", "NAMEH"),
-            legacy_acctid=account_id,
-            bank_account=bank_gl_to_label.get(account_id),
-        ))
+        ctx.result.emit(
+            "Journal Entry",
+            _build_bank_je(
+                ctx,
+                name=f"OPN-BANK-{account_id}",
+                account=gl_account,
+                balance=balance,
+                company_amount=company_amt,
+                account_currency=account_ccy,
+                exchange_rate=rate,
+                original_remark=original_remark,
+                account_name=pick(row, "NAME", "NAMEE", "NAMEH"),
+                legacy_acctid=account_id,
+                bank_account=bank_gl_to_label.get(account_id),
+            ),
+        )
         ctx.result.bump("opening_bank_balances_emitted")
 
 
@@ -139,11 +154,15 @@ def _build_bank_je(
         main_line["bank_account"] = bank_account
     counter_line: dict[str, Any] = {"account": ctx.with_abbr("Temporary Opening")}
     set_je_pair(
-        main_line, counter_line, abs_amt,
+        main_line,
+        counter_line,
+        abs_amt,
         company_amount=abs_company,
         debit_main=balance > 0,
-        main_currency=account_currency, main_rate=exchange_rate,
-        counter_currency=DEFAULT_CURRENCY, counter_rate=1.0,
+        main_currency=account_currency,
+        main_rate=exchange_rate,
+        counter_currency=DEFAULT_CURRENCY,
+        counter_rate=1.0,
     )
     return {
         "name": name,
@@ -163,6 +182,7 @@ def _build_bank_je(
 
 
 # -- Bucketed GL balances (one JE per bucket, summed across legacy leaves) ----
+
 
 def _emit_bucketed_gl_balances(
     ctx: Context,
@@ -193,26 +213,36 @@ def _emit_bucketed_gl_balances(
         company_amt = balance * rate
         if abs(company_amt) < BALANCE_THRESHOLD:
             continue
-        agg = aggregates.setdefault(bucket, {
-            "balance": 0.0,
-            "accounts": [],
-        })
+        agg = aggregates.setdefault(
+            bucket,
+            {
+                "balance": 0.0,
+                "accounts": [],
+            },
+        )
         agg["balance"] += company_amt
-        agg["accounts"].append({
-            "id": account_id,
-            "name": pick(row, "NAME", "NAMEE", "NAMEH"),
-            "balance": company_amt,
-        })
+        agg["accounts"].append(
+            {
+                "id": account_id,
+                "name": pick(row, "NAME", "NAMEE", "NAMEH"),
+                "balance": company_amt,
+            }
+        )
 
     for bucket, data in aggregates.items():
         balance = data["balance"]
         if abs(balance) < BALANCE_THRESHOLD:
             ctx.result.bump("opening_bucket_balances_skipped_zero")
             continue
-        ctx.result.emit("Journal Entry", _build_bucket_je(
-            ctx, bucket=bucket, balance=balance,
-            legacy_ids=[a["id"] for a in data["accounts"]],
-        ))
+        ctx.result.emit(
+            "Journal Entry",
+            _build_bucket_je(
+                ctx,
+                bucket=bucket,
+                balance=balance,
+                legacy_ids=[a["id"] for a in data["accounts"]],
+            ),
+        )
         ctx.result.bump("opening_bucket_balances_emitted")
 
     _emit_bucket_coverage_report(ctx, aggregates)
@@ -229,11 +259,15 @@ def _build_bucket_je(
     main_line: dict[str, Any] = {"account": ctx.with_abbr(bucket)}
     counter_line: dict[str, Any] = {"account": ctx.with_abbr("Temporary Opening")}
     set_je_pair(
-        main_line, counter_line, abs_amt,
+        main_line,
+        counter_line,
+        abs_amt,
         company_amount=abs_amt,
         debit_main=balance > 0,
-        main_currency=DEFAULT_CURRENCY, main_rate=1.0,
-        counter_currency=DEFAULT_CURRENCY, counter_rate=1.0,
+        main_currency=DEFAULT_CURRENCY,
+        main_rate=1.0,
+        counter_currency=DEFAULT_CURRENCY,
+        counter_rate=1.0,
     )
     legacy_summary = ",".join(legacy_ids[:20])
     if len(legacy_ids) > 20:
@@ -258,7 +292,8 @@ def _build_bucket_je(
 
 
 def _emit_bucket_coverage_report(
-    ctx: Context, aggregates: dict[str, dict[str, Any]],
+    ctx: Context,
+    aggregates: dict[str, dict[str, Any]],
 ) -> None:
     """Markdown report listing every legacy account → bucket assignment.
 
@@ -267,16 +302,21 @@ def _emit_bucket_coverage_report(
     them for clusters and tell us what NAME regex to add.
     """
     md = _build_coverage_markdown(aggregates)
-    ctx.result.output_tables["__native_bucket_coverage__"] = [{
-        "filename": "99_native_bucket_coverage.md",
-        "content": md,
-    }]
+    ctx.result.output_tables["__native_bucket_coverage__"] = [
+        {
+            "filename": "99_native_bucket_coverage.md",
+            "content": md,
+        }
+    ]
 
 
 def _build_coverage_markdown(aggregates: dict[str, dict[str, Any]]) -> str:
     fallback_buckets = {
-        "Miscellaneous Expenses", "Sales",
-        "Earnest Money", "Accrued Expenses", "Capital Stock",
+        "Miscellaneous Expenses",
+        "Sales",
+        "Earnest Money",
+        "Accrued Expenses",
+        "Capital Stock",
     }
     total_accounts = sum(len(d["accounts"]) for d in aggregates.values())
     grand_total = sum(d["balance"] for d in aggregates.values())

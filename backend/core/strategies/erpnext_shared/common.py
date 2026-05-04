@@ -4,6 +4,7 @@ No I/O, no state. Each function is a small, named operation that the
 domain modules compose. Anything stateful (lookups, config, result
 accumulator) lives on Context (see context.py).
 """
+
 import re
 from typing import Any, Iterable
 
@@ -22,10 +23,26 @@ DEFAULT_CURRENCY = "ILS"
 # Subset of ERPnext v16's 239 built-in UOMs that we actually map onto.
 # (Verified from frappe/erpnext version-16 setup_wizard/data/uom_data.json.)
 ERPNEXT_BUILTIN_UOMS: set[str] = {
-    "Box", "Centimeter", "Cubic Centimeter", "Cubic Meter", "Cup",
-    "Gram", "Hour", "Kg", "Litre", "Meter", "Minute", "Nos",
-    "Ounce", "Pair", "Pound", "Set", "Square Centimeter",
-    "Square Meter", "Tonne", "Unit",
+    "Box",
+    "Centimeter",
+    "Cubic Centimeter",
+    "Cubic Meter",
+    "Cup",
+    "Gram",
+    "Hour",
+    "Kg",
+    "Litre",
+    "Meter",
+    "Minute",
+    "Nos",
+    "Ounce",
+    "Pair",
+    "Pound",
+    "Set",
+    "Square Centimeter",
+    "Square Meter",
+    "Tonne",
+    "Unit",
 }
 
 # Map every legacy unit (Arabic free-text + UNITT English) to a v16
@@ -35,68 +52,154 @@ ERPNEXT_BUILTIN_UOMS: set[str] = {
 # back to DEFAULT_UOM ('Nos').
 UOM_CANONICAL: dict[str, str] = {
     # ---- v16 built-in matches (no emit needed) ----
-    "Unit": "Unit", "وحدة": "Unit",
-    "Kg": "Kg", "كيلو": "Kg", "كغم": "Kg",
-    "Gram": "Gram", "Gr": "Gram", "غرام": "Gram",
-    "Box": "Box", "صندوق": "Box",
-    "Litre": "Litre", "Liter": "Litre", "لتر": "Litre",
-    "Meter": "Meter", "متر": "Meter",
-    "Pound": "Pound", "رطل": "Pound", "Rotl": "Pound",
-    "Pair": "Pair", "اجوزة": "Pair", "اجوزيات": "Pair",
-    "Set": "Set", "طقم": "Set",
+    "Unit": "Unit",
+    "وحدة": "Unit",
+    "Kg": "Kg",
+    "كيلو": "Kg",
+    "كغم": "Kg",
+    "Gram": "Gram",
+    "Gr": "Gram",
+    "غرام": "Gram",
+    "Box": "Box",
+    "صندوق": "Box",
+    "Litre": "Litre",
+    "Liter": "Litre",
+    "لتر": "Litre",
+    "Meter": "Meter",
+    "متر": "Meter",
+    "Pound": "Pound",
+    "رطل": "Pound",
+    "Rotl": "Pound",
+    "Pair": "Pair",
+    "اجوزة": "Pair",
+    "اجوزيات": "Pair",
+    "Set": "Set",
+    "طقم": "Set",
     "Nos": "Nos",
-    "Hour": "Hour", "Minute": "Minute",
-    "Cup": "Cup", "كوب": "Cup", "كاسة": "Cup",
-    "Tonne": "Tonne", "Ton": "Tonne", "طن": "Tonne",
-    "Ounce": "Ounce", "Ouqiya": "Ounce", "وقية": "Ounce",
-    "Square Meter": "Square Meter", "M2": "Square Meter", "م2": "Square Meter",
-    "Square Centimeter": "Square Centimeter", "Cm2": "Square Centimeter", "سم2": "Square Centimeter",
-    "Cubic Meter": "Cubic Meter", "M3": "Cubic Meter", "م3": "Cubic Meter",
-    "Cubic Centimeter": "Cubic Centimeter", "Cm3": "Cubic Centimeter", "سم3": "Cubic Centimeter",
-    "Centimeter": "Centimeter", "CM": "Centimeter", "سم": "Centimeter",
+    "Hour": "Hour",
+    "Minute": "Minute",
+    "Cup": "Cup",
+    "كوب": "Cup",
+    "كاسة": "Cup",
+    "Tonne": "Tonne",
+    "Ton": "Tonne",
+    "طن": "Tonne",
+    "Ounce": "Ounce",
+    "Ouqiya": "Ounce",
+    "وقية": "Ounce",
+    "Square Meter": "Square Meter",
+    "M2": "Square Meter",
+    "م2": "Square Meter",
+    "Square Centimeter": "Square Centimeter",
+    "Cm2": "Square Centimeter",
+    "سم2": "Square Centimeter",
+    "Cubic Meter": "Cubic Meter",
+    "M3": "Cubic Meter",
+    "م3": "Cubic Meter",
+    "Cubic Centimeter": "Cubic Centimeter",
+    "Cm3": "Cubic Centimeter",
+    "سم3": "Cubic Centimeter",
+    "Centimeter": "Centimeter",
+    "CM": "Centimeter",
+    "سم": "Centimeter",
     # ---- Custom UOMs (emitted in 01_uom.csv before items import) ----
     # Container shapes
-    "Carton": "Carton", "كرتون": "Carton", "كرتونة": "Carton", "كرتونه": "Carton", "كتونه": "Carton",
-    "Can": "Can", "علبة": "Can", "علبه": "Can", "علب": "Can",
-    "Tin": "Tin", "تنكة": "Tin", "تنكه": "Tin",
-    "Crate": "Crate", "كروز": "Crate",
-    "Pack": "Pack", "Packet": "Pack",
-    "بكيت": "Pack", "بكييت": "Pack", "بيكت": "Pack", "وبكيت": "Pack", "عبوة": "Pack",
-    "Bag": "Bag", "كيس": "Bag", "أكياس": "Bag", "شوال": "Bag", "Sack": "Bag",
-    "Jar": "Jar", "مطربان": "Jar",
+    "Carton": "Carton",
+    "كرتون": "Carton",
+    "كرتونة": "Carton",
+    "كرتونه": "Carton",
+    "كتونه": "Carton",
+    "Can": "Can",
+    "علبة": "Can",
+    "علبه": "Can",
+    "علب": "Can",
+    "Tin": "Tin",
+    "تنكة": "Tin",
+    "تنكه": "Tin",
+    "Crate": "Crate",
+    "كروز": "Crate",
+    "Pack": "Pack",
+    "Packet": "Pack",
+    "بكيت": "Pack",
+    "بكييت": "Pack",
+    "بيكت": "Pack",
+    "وبكيت": "Pack",
+    "عبوة": "Pack",
+    "Bag": "Bag",
+    "كيس": "Bag",
+    "أكياس": "Bag",
+    "شوال": "Bag",
+    "Sack": "Bag",
+    "Jar": "Jar",
+    "مطربان": "Jar",
     # Volume containers
-    "Bottle": "Bottle", "قنينة": "Bottle", "قنية": "Bottle", "قنيه": "Bottle", "قنيةى": "Bottle",
-    "Jerrycan": "Jerrycan", "جركل": "Jerrycan",
-    "Gallon": "Gallon", "جلن": "Gallon",
-    "Pail": "Pail", "سطل": "Pail",
+    "Bottle": "Bottle",
+    "قنينة": "Bottle",
+    "قنية": "Bottle",
+    "قنيه": "Bottle",
+    "قنيةى": "Bottle",
+    "Jerrycan": "Jerrycan",
+    "جركل": "Jerrycan",
+    "Gallon": "Gallon",
+    "جلن": "Gallon",
+    "Pail": "Pail",
+    "سطل": "Pail",
     # Discrete items
-    "Piece": "Piece", "Pieces": "Piece", "قطعة": "Piece", "حبة": "Piece", "حبه": "Piece",
-    "Bowl": "Bowl", "جاط": "Bowl",
-    "Plate": "Plate", "صحن": "Plate",
-    "Mug": "Mug", "كوز": "Mug",
-    "Pitcher": "Pitcher", "ابريق": "Pitcher",
-    "Vessel": "Vessel", "أنية": "Vessel", "انية": "Vessel",
-    "Roll": "Roll", "رول": "Roll", "لفة": "Roll",
-    "Slice": "Slice", "شرحة": "Slice",
-    "Mould": "Mould", "قالب": "Mould",
-    "Brush": "Brush", "فرشاية": "Brush",
-    "Device": "Device", "جهاز": "Device",
-    "Sprinkler": "Sprinkler", "مطرة": "Sprinkler",
-    "Greenhouse": "Greenhouse", "صوبة": "Greenhouse",
-    "Hanato": "Hanato", "هاناتو": "Hanato",
+    "Piece": "Piece",
+    "Pieces": "Piece",
+    "قطعة": "Piece",
+    "حبة": "Piece",
+    "حبه": "Piece",
+    "Bowl": "Bowl",
+    "جاط": "Bowl",
+    "Plate": "Plate",
+    "صحن": "Plate",
+    "Mug": "Mug",
+    "كوز": "Mug",
+    "Pitcher": "Pitcher",
+    "ابريق": "Pitcher",
+    "Vessel": "Vessel",
+    "أنية": "Vessel",
+    "انية": "Vessel",
+    "Roll": "Roll",
+    "رول": "Roll",
+    "لفة": "Roll",
+    "Slice": "Slice",
+    "شرحة": "Slice",
+    "Mould": "Mould",
+    "قالب": "Mould",
+    "Brush": "Brush",
+    "فرشاية": "Brush",
+    "Device": "Device",
+    "جهاز": "Device",
+    "Sprinkler": "Sprinkler",
+    "مطرة": "Sprinkler",
+    "Greenhouse": "Greenhouse",
+    "صوبة": "Greenhouse",
+    "Hanato": "Hanato",
+    "هاناتو": "Hanato",
     # Groups
-    "Bunch": "Bunch", "ربطة": "Bunch", "ربطه": "Bunch",
-    "Bundle": "Bundle", "رزمة": "Bundle", "حزمة": "Bundle",
-    "Dozen": "Dozen", "دزينة": "Dozen", "دزينه": "Dozen",
-    "Quartet": "Quartet", "اربعات": "Quartet",
+    "Bunch": "Bunch",
+    "ربطة": "Bunch",
+    "ربطه": "Bunch",
+    "Bundle": "Bundle",
+    "رزمة": "Bundle",
+    "حزمة": "Bundle",
+    "Dozen": "Dozen",
+    "دزينة": "Dozen",
+    "دزينه": "Dozen",
+    "Quartet": "Quartet",
+    "اربعات": "Quartet",
     # Cable (length-shaped, custom)
-    "Cable": "Cable", "كابل": "Cable",
+    "Cable": "Cable",
+    "كابل": "Cable",
 }
 
 DEFAULT_UOM = "Nos"
 
 
 # -- text / value coercion ----------------------------------------------------
+
 
 def clean_str(value: Any) -> str:
     if value is None:
@@ -177,6 +280,7 @@ def parse_decimal(value: Any, default: float = 0.0) -> float:
 
 # -- date / time --------------------------------------------------------------
 
+
 def parse_date(value: Any) -> str | None:
     """Return YYYY-MM-DD or None for empty / sentinel dates."""
     s = clean_str(value)
@@ -198,6 +302,7 @@ def parse_time(value: Any) -> str | None:
 
 
 # -- currency / unit lookups --------------------------------------------------
+
 
 def currency_iso(curid: Any) -> str:
     """Legacy CURID (1..4) → ISO code (ILS / JOD / USD / EUR)."""
@@ -224,6 +329,7 @@ def normalize_uom(text: Any) -> str:
 
 # -- naming -------------------------------------------------------------------
 
+
 def with_abbr(name: str, abbr: str) -> str:
     """Append the company abbreviation suffix Frappe autoname applies.
 
@@ -239,6 +345,7 @@ def with_abbr(name: str, abbr: str) -> str:
 
 
 # -- legacy ID encoders -------------------------------------------------------
+
 
 def item_id(catid: Any) -> str:
     return f"ALA-{clean_str(catid)}"
@@ -265,6 +372,7 @@ WALKIN_CUSTOMER_ID = "CUST-WALKIN"
 
 # -- iteration helpers --------------------------------------------------------
 
+
 def index_by(rows: Iterable[dict], key: str) -> dict[str, dict]:
     """Build a row-by-key index, last-write-wins on collisions."""
     out: dict[str, dict] = {}
@@ -285,6 +393,7 @@ def group_by(rows: Iterable[dict], key: str) -> dict[str, list[dict]]:
 
 
 # -- account name resolution (shared between strategies) ----------------------
+
 
 def account_full_name(ctx, account_id) -> str:
     """Return the autonamed Account form for a legacy ACCOUNTID.
@@ -316,13 +425,13 @@ def account_full_name(ctx, account_id) -> str:
 # as Asset). Used both to build the mirror CoA and to classify legacy accounts
 # into ERPnext buckets in native.
 ROOT_TYPE_BY_ID: dict[str, tuple[str, str]] = {
-    "0": ("Asset", "Balance Sheet"),     # غير محدد (placeholder)
-    "1": ("Asset", "Balance Sheet"),     # الموجودات
-    "2": ("Liability", "Balance Sheet"), # المطلوبات
-    "3": ("Equity", "Balance Sheet"),    # راس المال
-    "4": ("Expense", "Profit and Loss"), # المشتريات والمصاريف
+    "0": ("Asset", "Balance Sheet"),  # غير محدد (placeholder)
+    "1": ("Asset", "Balance Sheet"),  # الموجودات
+    "2": ("Liability", "Balance Sheet"),  # المطلوبات
+    "3": ("Equity", "Balance Sheet"),  # راس المال
+    "4": ("Expense", "Profit and Loss"),  # المشتريات والمصاريف
     "5": ("Income", "Profit and Loss"),  # الايرادات
-    "6": ("Asset", "Balance Sheet"),     # الذمم (memo / receivables)
+    "6": ("Asset", "Balance Sheet"),  # الذمم (memo / receivables)
 }
 
 

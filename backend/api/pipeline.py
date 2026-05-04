@@ -77,7 +77,8 @@ def _strategy_result(
         _clear_dir(staging_dir)
     strategy = get_strategy(strategy_name)
     out: StrategyResult = strategy.transform(
-        legacy, config,
+        legacy,
+        config,
         staging_dir=staging_dir,
         table_loader=table_loader,
     )
@@ -90,9 +91,11 @@ def _strategy_result(
     checklist_rows = out.output_tables.get("__migration_setup_checklist__") or []
     coverage_rows = out.output_tables.get("__native_bucket_coverage__") or []
     return _result_shape(
-        tables={} if staging_dir else {
-            k: v for k, v in out.output_tables.items() if not k.startswith("__")
-        },
+        tables=(
+            {}
+            if staging_dir
+            else {k: v for k, v in out.output_tables.items() if not k.startswith("__")}
+        ),
         total_rows=total,
         warnings=[w.get("message", "") for w in out.warnings],
         note=f"strategy={strategy_name}",
@@ -101,10 +104,12 @@ def _strategy_result(
         strategy_name=strategy_name,
         strategy_label=getattr(strategy, "label", strategy_name),
         audit_report=audit_rows[0] if audit_rows else None,
-        setup_checklist_md=(checklist_rows[0] or {}).get("content")
-                           if checklist_rows else None,
-        bucket_coverage_md=(coverage_rows[0] or {}).get("content")
-                           if coverage_rows else None,
+        setup_checklist_md=(
+            (checklist_rows[0] or {}).get("content") if checklist_rows else None
+        ),
+        bucket_coverage_md=(
+            (coverage_rows[0] or {}).get("content") if coverage_rows else None
+        ),
         output_doctypes=counts,
         staging_dir=staging_dir,
     )
@@ -161,13 +166,17 @@ def _resolve_strategy(s: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
     return name, config
 
 
-def _run_transform(s: Dict[str, Any], session_id: Optional[str] = None) -> Dict[str, Any]:
+def _run_transform(
+    s: Dict[str, Any], session_id: Optional[str] = None
+) -> Dict[str, Any]:
     legacy = _legacy_tables(s)
     name, config = _resolve_strategy(s)
     staging_dir = _transform_staging_dir(s, session_id)
     loader = _make_table_loader(s)
     result = _strategy_result(
-        legacy, name, config,
+        legacy,
+        name,
+        config,
         staging_dir=staging_dir,
         table_loader=loader,
     )
@@ -181,7 +190,9 @@ def _run_transform(s: Dict[str, Any], session_id: Optional[str] = None) -> Dict[
     return result
 
 
-def _transform_staging_dir(s: Dict[str, Any], session_id: Optional[str] = None) -> Optional[str]:
+def _transform_staging_dir(
+    s: Dict[str, Any], session_id: Optional[str] = None
+) -> Optional[str]:
     """Per-session/project dir where strategy emits stream as JSONL.
 
     Uses disk-streaming mode for large datasets to avoid memory exhaustion.
@@ -192,6 +203,7 @@ def _transform_staging_dir(s: Dict[str, Any], session_id: Optional[str] = None) 
 
     if project_id:
         from persistence.project_state import project_dir
+
         staging_dir = os.path.join(project_dir(project_id), "_transform_out")
     elif session_id:
         staging_dir = os.path.join(OUTPUT_DIR, session_id, "_transform_out")
@@ -271,12 +283,22 @@ def _response_payload(result: Dict[str, Any]) -> Dict[str, Any]:
     The wire response carries summaries and the audit/checklist artifacts.
     """
     keep = {
-        "ok", "tables_transformed", "total_rows",
-        "encoding_conversions", "type_conversions", "reference_mappings",
-        "null_normalizations", "dedup_removed",
-        "warnings", "preview",
-        "strategy_name", "strategy_label", "strategy_stats",
-        "output_doctypes", "audit_report", "setup_checklist_md",
+        "ok",
+        "tables_transformed",
+        "total_rows",
+        "encoding_conversions",
+        "type_conversions",
+        "reference_mappings",
+        "null_normalizations",
+        "dedup_removed",
+        "warnings",
+        "preview",
+        "strategy_name",
+        "strategy_label",
+        "strategy_stats",
+        "output_doctypes",
+        "audit_report",
+        "setup_checklist_md",
         "bucket_coverage_md",
     }
     return {k: v for k, v in result.items() if k in keep}
@@ -303,7 +325,8 @@ async def load(session_id: str, body: LoadRequest):
 
     excluded = _excluded_set(s)
     fk_edges: List[tuple] = [
-        edge for edge in s.get("fk_edges", [])
+        edge
+        for edge in s.get("fk_edges", [])
         if edge[0] not in excluded and edge[1] not in excluded
     ]
 
@@ -391,8 +414,12 @@ async def load_erpnext(session_id: str, body: ErpnextLoadRequest):
     project_id = s.get("project_id")
     if project_id:
         save_erpnext_credentials(
-            project_id, body.url, body.api_key, body.api_secret,
-            body.company, body.company_abbr,
+            project_id,
+            body.url,
+            body.api_key,
+            body.api_secret,
+            body.company,
+            body.company_abbr,
         )
 
     out_dir = (
@@ -417,7 +444,9 @@ async def load_erpnext(session_id: str, body: ErpnextLoadRequest):
     )
 
     company = body.company or (s.get("strategy_config") or {}).get("company_name")
-    company_abbr = body.company_abbr or (s.get("strategy_config") or {}).get("company_abbr") or ""
+    company_abbr = (
+        body.company_abbr or (s.get("strategy_config") or {}).get("company_abbr") or ""
+    )
     opening_date = (s.get("strategy_config") or {}).get("opening_date") or ""
     client = ErpnextClient(body.url, body.api_key, body.api_secret)
     run = create_pipeline_run(project_id, "load") if project_id else None
@@ -436,12 +465,19 @@ async def load_erpnext(session_id: str, body: ErpnextLoadRequest):
         # X-Accel-Buffering header so the first real events reach the
         # browser as soon as we yield them.
         yield ":" + (" " * 2048) + "\n\n"
-        yield _sse({"event": "begin", "company": company,
-                    "skipping": sorted(already.keys()) if already else []})
+        yield _sse(
+            {
+                "event": "begin",
+                "company": company,
+                "skipping": sorted(already.keys()) if already else [],
+            }
+        )
         last_event: Dict[str, Any] = {}
         try:
             for ev in run_live_import(
-                out_dir, client, company or "",
+                out_dir,
+                client,
+                company or "",
                 opening_date=opening_date,
                 company_abbr=company_abbr,
                 already_imported=already,
@@ -459,7 +495,11 @@ async def load_erpnext(session_id: str, body: ErpnextLoadRequest):
         finally:
             if run and project_id:
                 status = "done" if last_event.get("event") == "complete" else "error"
-                note = "via live api" if status == "done" else str(last_event.get("message", ""))[:200]
+                note = (
+                    "via live api"
+                    if status == "done"
+                    else str(last_event.get("message", ""))[:200]
+                )
                 rows = 0
                 summary = last_event.get("summary") or []
                 if isinstance(summary, list):
@@ -519,7 +559,8 @@ def _run_frappe_writer(session: Dict[str, Any], out_dir: str) -> Dict[str, Any]:
     config = session.get("strategy_config") or {}
     include_legacy = bool(config.get("include_legacy_fields", True))
     files = write_frappe_csvs(
-        tables, out_dir,
+        tables,
+        out_dir,
         audit_report=audit_report,
         checklist_md=checklist_md,
         bucket_coverage_md=bucket_coverage_md,
@@ -527,8 +568,7 @@ def _run_frappe_writer(session: Dict[str, Any], out_dir: str) -> Dict[str, Any]:
         staging_dir=staging_dir,
     )
     rows_written = transformed.get("output_doctypes") or {
-        dt: len(rows) for dt, rows in tables.items()
-        if not dt.startswith("__") and rows
+        dt: len(rows) for dt, rows in tables.items() if not dt.startswith("__") and rows
     }
     return {
         "ok": True,

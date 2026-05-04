@@ -103,5 +103,3 @@ class EditDataRequest(BaseModel):
 class EditDataResponse(BaseModel):
     ok: bool
     stats: Dict[str, Any]
-
-

@@ -10,6 +10,7 @@ its topological ordinal). For each:
 Stops on first failure. Yields events (suitable for SSE streaming):
 {"event": "stage" | "progress" | "done" | "error" | "complete", ...}.
 """
+
 from __future__ import annotations
 
 import csv
@@ -22,7 +23,6 @@ from urllib.parse import quote as _urlquote
 
 from core.load.erpnext_client import ErpnextClient, ErpnextError, parse_import_log
 
-
 # Filename slug → ERPnext doctype. Mirror of writer._DOCTYPE_FROM_SAFE
 # but keyed on the prefixed slug actually used in output filenames.
 SLUG_TO_DOCTYPE: dict[str, str] = {
@@ -32,7 +32,7 @@ SLUG_TO_DOCTYPE: dict[str, str] = {
     "item_group": "Item Group",
     "brand": "Brand",
     "bank": "Bank",
-    "account": "Account",       # uses import_coa, see _import_coa branch below
+    "account": "Account",  # uses import_coa, see _import_coa branch below
     "bank_account": "Bank Account",
     "customer": "Customer",
     "supplier": "Supplier",
@@ -65,11 +65,13 @@ POLL_TIMEOUT_SEC = 600
 # next file (e.g. Item Price right after Item) can race the commit and
 # see "missing for Item" against rows we just inserted. A small settle
 # pause before the next file gives Frappe time to flush.
-SETTLE_DELAY_SEC = 10.0
+SETTLE_DELAY_SEC = 7.0
 
 
 def run_live_import(
-    output_dir: str, client: ErpnextClient, company: str,
+    output_dir: str,
+    client: ErpnextClient,
+    company: str,
     opening_date: str = "",
     company_abbr: str = "",
     already_imported: dict[str, dict] | None = None,
@@ -94,22 +96,31 @@ def run_live_import(
     """
     files = _ordered_csv_files(output_dir)
     if not files:
-        yield {"event": "error", "message": "no CSV files in output dir — run transform first"}
+        yield {
+            "event": "error",
+            "message": "no CSV files in output dir — run transform first",
+        }
         return
     already = already_imported or {}
     selection = set(selected_doctypes) if selected_doctypes is not None else None
     manual_skips = set(skip_files or [])
 
-    yield {"event": "stage", "name": "preflight",
-           "doctypes": DOCTYPES_NEEDING_IMPORT_PERM}
+    yield {
+        "event": "stage",
+        "name": "preflight",
+        "doctypes": DOCTYPES_NEEDING_IMPORT_PERM,
+    }
     for doctype in DOCTYPES_NEEDING_IMPORT_PERM:
         try:
             # DocType-level allow_import flag (may require developer mode)
             client.enable_doctype_import(doctype)
         except ErpnextError as e:
-            yield {"event": "preflight", "doctype": doctype,
-                   "status": "warning",
-                   "message": f"could not enable DocType.allow_import (may need developer mode): {e}"}
+            yield {
+                "event": "preflight",
+                "doctype": doctype,
+                "status": "warning",
+                "message": f"could not enable DocType.allow_import (may need developer mode): {e}",
+            }
         try:
             # Role-level permission (always works in any mode)
             client.grant_import_perm(doctype)
@@ -118,8 +129,12 @@ def run_live_import(
             # Non-fatal — most standard doctypes already have the right
             # perms. We surface the failure and let the actual import
             # call fail loudly if perms really are the blocker.
-            yield {"event": "preflight", "doctype": doctype,
-                   "status": "warning", "message": str(e)}
+            yield {
+                "event": "preflight",
+                "doctype": doctype,
+                "status": "warning",
+                "message": str(e),
+            }
 
     if _will_send_stock_reconciliation(files, selected_doctypes):
         yield from _ensure_negative_stock(client)
@@ -135,41 +150,70 @@ def run_live_import(
     for fname in files:
         slug = _slug_from_filename(fname)
         if slug in SKIP_VIA_API:
-            yield {"event": "skipped", "file": fname,
-                   "reason": "not yet supported via live API — download CSV manually"}
+            yield {
+                "event": "skipped",
+                "file": fname,
+                "reason": "not yet supported via live API — download CSV manually",
+            }
             summary.append({"file": fname, "status": "skipped"})
             continue
 
         doctype = SLUG_TO_DOCTYPE.get(slug)
         if not doctype:
-            yield {"event": "skipped", "file": fname, "reason": f"unknown doctype slug: {slug}"}
+            yield {
+                "event": "skipped",
+                "file": fname,
+                "reason": f"unknown doctype slug: {slug}",
+            }
             summary.append({"file": fname, "status": "skipped"})
             continue
 
         if selection is not None and doctype not in selection:
-            yield {"event": "skipped", "file": fname, "doctype": doctype,
-                   "reason": "deselected"}
+            yield {
+                "event": "skipped",
+                "file": fname,
+                "doctype": doctype,
+                "reason": "deselected",
+            }
             summary.append({"file": fname, "doctype": doctype, "status": "skipped"})
             continue
 
         if fname in manual_skips:
-            yield {"event": "skipped", "file": fname, "doctype": doctype,
-                   "reason": "user clicked CONTINUE past this on a previous attempt"}
+            yield {
+                "event": "skipped",
+                "file": fname,
+                "doctype": doctype,
+                "reason": "user clicked CONTINUE past this on a previous attempt",
+            }
             summary.append({"file": fname, "doctype": doctype, "status": "skipped"})
             continue
 
         prior = already.get(fname)
         if prior:
-            yield {"event": "skipped", "file": fname, "doctype": doctype,
-                   "reason": f"already imported {prior['imported_count']} rows on "
-                             f"{prior['completed_at']} — toggle 'Re-upload everything' to redo"}
-            summary.append({"file": fname, "doctype": doctype, "status": "skipped",
-                            "imported": prior["imported_count"]})
+            yield {
+                "event": "skipped",
+                "file": fname,
+                "doctype": doctype,
+                "reason": f"already imported {prior['imported_count']} rows on "
+                f"{prior['completed_at']} — toggle 'Re-upload everything' to redo",
+            }
+            summary.append(
+                {
+                    "file": fname,
+                    "doctype": doctype,
+                    "status": "skipped",
+                    "imported": prior["imported_count"],
+                }
+            )
             continue
 
         if just_uploaded:
-            yield {"event": "settling", "delay": SETTLE_DELAY_SEC,
-                   "doctype": doctype, "file": fname}
+            yield {
+                "event": "settling",
+                "delay": SETTLE_DELAY_SEC,
+                "doctype": doctype,
+                "file": fname,
+            }
             time.sleep(SETTLE_DELAY_SEC)
             just_uploaded = False
 
@@ -183,8 +227,13 @@ def run_live_import(
                     result = ev
                 yield ev
         except ErpnextError as e:
-            yield {"event": "error", "file": fname, "doctype": doctype,
-                   "message": str(e), "payload": e.payload}
+            yield {
+                "event": "error",
+                "file": fname,
+                "doctype": doctype,
+                "message": str(e),
+                "payload": e.payload,
+            }
             summary.append({"file": fname, "status": "error", "error": str(e)})
             if halt_on_failure:
                 # Frontend resumes by re-issuing the request with this
@@ -193,8 +242,13 @@ def run_live_import(
                 # halted file in manual_skips (skip with explicit
                 # 'user clicked CONTINUE' reason), and pick up from
                 # the next one in dependency order.
-                yield {"event": "halted", "file": fname, "doctype": doctype,
-                       "reason": "error", "message": str(e)}
+                yield {
+                    "event": "halted",
+                    "file": fname,
+                    "doctype": doctype,
+                    "reason": "error",
+                    "message": str(e),
+                }
                 return
             continue
 
@@ -210,10 +264,14 @@ def run_live_import(
         # the failed rows and decide explicitly whether to skip this
         # file or include it in a retry.
         if halt_on_failure and result.get("status") == "partial":
-            yield {"event": "halted", "file": fname, "doctype": doctype,
-                   "reason": "partial",
-                   "imported": int(result.get("imported") or 0),
-                   "failed": int(result.get("failed") or 0)}
+            yield {
+                "event": "halted",
+                "file": fname,
+                "doctype": doctype,
+                "reason": "partial",
+                "imported": int(result.get("imported") or 0),
+                "failed": int(result.get("failed") or 0),
+            }
             return
 
     counts = _verify_counts(client, summary)
@@ -222,8 +280,12 @@ def run_live_import(
 
 # -- per-file handlers (generators yielding progress events) -----------------
 
+
 def _import_via_data_import(
-    client: ErpnextClient, path: str, doctype: str, company: str,
+    client: ErpnextClient,
+    path: str,
+    doctype: str,
+    company: str,
 ) -> Iterator[dict]:
     """Upload, queue, then poll Frappe Data Import. Yields progress events
     so the user sees Frappe's own status (Queued / In Progress / Success)
@@ -240,11 +302,15 @@ def _import_via_data_import(
     if doctype == "Item Price":
         emitted_items = _read_emitted_item_codes(os.path.dirname(path))
         if emitted_items:
-            content, dropped = _filter_csv_by_column(content, "item_code", emitted_items)
+            content, dropped = _filter_csv_by_column(
+                content, "item_code", emitted_items
+            )
             if dropped:
-                yield {"event": "filtering",
-                       "message": f"dropped {dropped} Item Price rows referencing items not in 30_item.csv",
-                       "filtered": dropped}
+                yield {
+                    "event": "filtering",
+                    "message": f"dropped {dropped} Item Price rows referencing items not in 30_item.csv",
+                    "filtered": dropped,
+                }
 
     yield {"event": "uploading", "stage": "upload"}
     file_url = client.upload_file(fname, content, content_type="text/csv")
@@ -262,7 +328,8 @@ def _import_via_data_import(
 
 
 def _poll_data_import_streaming(
-    client: ErpnextClient, name: str,
+    client: ErpnextClient,
+    name: str,
 ) -> Iterator[dict]:
     """Poll Frappe until the Data Import finishes. Yields one event per
     poll showing current status + parsed row counts + any template
@@ -272,7 +339,9 @@ def _poll_data_import_streaming(
     last_progress = (-1, -1)
     while True:
         if time.monotonic() > deadline:
-            raise ErpnextError(f"Data Import {name} timed out after {POLL_TIMEOUT_SEC}s")
+            raise ErpnextError(
+                f"Data Import {name} timed out after {POLL_TIMEOUT_SEC}s"
+            )
         time.sleep(POLL_INTERVAL_SEC)
         d = client.get_data_import_status(name)
         status = d.get("status") or "Pending"
@@ -285,9 +354,13 @@ def _poll_data_import_streaming(
         progress_changed = (successes, failures) != last_progress
         status_changed = status != last_status
         if status_changed or progress_changed or terminal:
-            ev: dict = {"event": "polling", "status": status,
-                        "imported": successes, "failed": failures,
-                        "data_import": name}
+            ev: dict = {
+                "event": "polling",
+                "status": status,
+                "imported": successes,
+                "failed": failures,
+                "data_import": name,
+            }
             if warnings:
                 ev["warnings"] = warnings
             yield ev
@@ -299,9 +372,14 @@ def _poll_data_import_streaming(
 
         errors = [_log_error(r) for r in log if not r.get("success")][:10]
         if status == "Success":
-            yield {"event": "done", "status": "success",
-                   "imported": successes, "failed": 0,
-                   "data_import": name, "warnings": warnings}
+            yield {
+                "event": "done",
+                "status": "success",
+                "imported": successes,
+                "failed": 0,
+                "data_import": name,
+                "warnings": warnings,
+            }
             return
         if status == "Partial Success":
             # Frappe occasionally marks Partial Success even when every
@@ -310,28 +388,43 @@ def _poll_data_import_streaming(
             # zero actual failures, surface as success — otherwise the
             # UI flags a 'partial' run that wasn't really partial.
             if failures == 0:
-                yield {"event": "done", "status": "success",
-                       "imported": successes, "failed": 0,
-                       "data_import": name, "warnings": warnings}
+                yield {
+                    "event": "done",
+                    "status": "success",
+                    "imported": successes,
+                    "failed": 0,
+                    "data_import": name,
+                    "warnings": warnings,
+                }
                 return
-            yield {"event": "done", "status": "partial",
-                   "imported": successes, "failed": failures,
-                   "data_import": name, "errors": errors, "warnings": warnings}
+            yield {
+                "event": "done",
+                "status": "partial",
+                "imported": successes,
+                "failed": failures,
+                "data_import": name,
+                "errors": errors,
+                "warnings": warnings,
+            }
             return
         # Status == "Error"
         if errors:
             err = "; ".join(errors)[:1000]
         else:
             log_rows = client.get_data_import_error_log(name)
-            err = (log_rows[0]["error"] if log_rows
-                   else d.get("failure_message") or "Data Import failed")
+            err = (
+                log_rows[0]["error"]
+                if log_rows
+                else d.get("failure_message") or "Data Import failed"
+            )
         if warnings:
             err = f"{err} | warnings: {' | '.join(warnings)[:500]}"
         raise ErpnextError(f"Data Import {name} failed: {err}")
 
 
 def _will_send_stock_reconciliation(
-    files: list[str], selected_doctypes: list[str] | None,
+    files: list[str],
+    selected_doctypes: list[str] | None,
 ) -> bool:
     selection = set(selected_doctypes) if selected_doctypes is not None else None
     for f in files:
@@ -350,12 +443,17 @@ def _ensure_negative_stock(client: ErpnextClient) -> Iterator[dict]:
         client.allow_negative_stock()
         yield {"event": "preflight", "stage": "allow_negative_stock", "status": "ok"}
     except ErpnextError as e:
-        yield {"event": "preflight", "stage": "allow_negative_stock",
-               "status": "warning", "message": str(e)}
+        yield {
+            "event": "preflight",
+            "stage": "allow_negative_stock",
+            "status": "warning",
+            "message": str(e),
+        }
 
 
 def _will_send_journal_entries(
-    files: list[str], selected_doctypes: list[str] | None,
+    files: list[str],
+    selected_doctypes: list[str] | None,
 ) -> bool:
     """True iff at least one upcoming file maps to Journal Entry and the
     user didn't deselect that doctype."""
@@ -371,7 +469,9 @@ def _will_send_journal_entries(
 
 
 def _ensure_round_off_account(
-    client: ErpnextClient, company: str, abbr: str,
+    client: ErpnextClient,
+    company: str,
+    abbr: str,
 ) -> Iterator[dict]:
     """ERPnext v16 needs two round-off accounts on Company:
     - round_off_account: general ledger rounding
@@ -382,20 +482,26 @@ def _ensure_round_off_account(
     'Round Off - {abbr}') instead of guessing. Failures are non-fatal:
     JEs with no rounding diff still post fine."""
     try:
-        resp = client.get(
-            f"/api/resource/Company/{_urlquote(company, safe='')}"
-        )
+        resp = client.get(f"/api/resource/Company/{_urlquote(company, safe='')}")
     except ErpnextError as e:
-        yield {"event": "preflight", "stage": "round_off",
-               "status": "warning", "message": f"company lookup failed: {e}"}
+        yield {
+            "event": "preflight",
+            "stage": "round_off",
+            "status": "warning",
+            "message": f"company lookup failed: {e}",
+        }
         return
     company_data = (resp or {}).get("data") or {}
     round_off = company_data.get("round_off_account")
     round_off_opening = company_data.get("round_off_for_opening")
 
     if round_off and round_off_opening:
-        yield {"event": "preflight", "stage": "round_off",
-               "status": "ok", "account": round_off}
+        yield {
+            "event": "preflight",
+            "stage": "round_off",
+            "status": "ok",
+            "account": round_off,
+        }
         return
 
     candidate = _find_round_off_account(client, company)
@@ -404,10 +510,13 @@ def _ensure_round_off_account(
         candidate = f"Round Off - {abbr}".strip(" -")
         fallback_used = True
     if not candidate:
-        yield {"event": "preflight", "stage": "round_off",
-               "status": "warning",
-               "message": "no Account with account_type='Round Off' found and no abbr to fall back on; "
-                          "manually set Company → Round Off Account before importing JEs"}
+        yield {
+            "event": "preflight",
+            "stage": "round_off",
+            "status": "warning",
+            "message": "no Account with account_type='Round Off' found and no abbr to fall back on; "
+            "manually set Company → Round Off Account before importing JEs",
+        }
         return
 
     # Verify the candidate account actually exists before PUTing it as a
@@ -417,11 +526,15 @@ def _ensure_round_off_account(
         hint = (
             f"fallback candidate {candidate!r} doesn't exist; "
             f"manually set Company → Round Off Account to a valid account"
-            if fallback_used else
-            f"resolved candidate {candidate!r} from account_type lookup but it doesn't exist"
+            if fallback_used
+            else f"resolved candidate {candidate!r} from account_type lookup but it doesn't exist"
         )
-        yield {"event": "preflight", "stage": "round_off",
-               "status": "warning", "message": hint}
+        yield {
+            "event": "preflight",
+            "stage": "round_off",
+            "status": "warning",
+            "message": hint,
+        }
         return
 
     try:
@@ -435,13 +548,20 @@ def _ensure_round_off_account(
                 f"/api/resource/Company/{_urlquote(company, safe='')}",
                 payload,
             )
-        yield {"event": "preflight", "stage": "round_off",
-               "status": "set", "account": candidate,
-               "fields": list(payload.keys())}
+        yield {
+            "event": "preflight",
+            "stage": "round_off",
+            "status": "set",
+            "account": candidate,
+            "fields": list(payload.keys()),
+        }
     except ErpnextError as e:
-        yield {"event": "preflight", "stage": "round_off",
-               "status": "warning",
-               "message": f"could not set round_off accounts to {candidate!r}: {e}"}
+        yield {
+            "event": "preflight",
+            "stage": "round_off",
+            "status": "warning",
+            "message": f"could not set round_off accounts to {candidate!r}: {e}",
+        }
 
 
 def _account_exists(client: ErpnextClient, account_name: str) -> bool:
@@ -470,11 +590,13 @@ def _find_round_off_account(client: ErpnextClient, company: str) -> str:
             "/api/method/frappe.client.get_list",
             params={
                 "doctype": "Account",
-                "filters": json.dumps([
-                    ["company", "=", company],
-                    ["account_type", "=", "Round Off"],
-                    ["disabled", "=", 0],
-                ]),
+                "filters": json.dumps(
+                    [
+                        ["company", "=", company],
+                        ["account_type", "=", "Round Off"],
+                        ["disabled", "=", 0],
+                    ]
+                ),
                 "fields": json.dumps(["name"]),
                 "limit_page_length": 1,
             },
@@ -488,30 +610,46 @@ def _find_round_off_account(client: ErpnextClient, company: str) -> str:
 
 
 def _ensure_fiscal_year(
-    client: ErpnextClient, opening_date: str,
+    client: ErpnextClient,
+    opening_date: str,
 ) -> Iterator[dict]:
     """Verify ERPnext has a Fiscal Year covering opening_date; create
     one (Jan→Dec of that year) if not. Without this, every opening JE
     posts to a date Frappe rejects as 'not in any active Fiscal Year'."""
     try:
         if client.has_fiscal_year_for(opening_date):
-            yield {"event": "preflight", "stage": "fiscal_year",
-                   "status": "ok", "date": opening_date}
+            yield {
+                "event": "preflight",
+                "stage": "fiscal_year",
+                "status": "ok",
+                "date": opening_date,
+            }
             return
     except ErpnextError as e:
-        yield {"event": "preflight", "stage": "fiscal_year",
-               "status": "warning", "message": f"lookup failed: {e}"}
+        yield {
+            "event": "preflight",
+            "stage": "fiscal_year",
+            "status": "warning",
+            "message": f"lookup failed: {e}",
+        }
         return
 
     try:
         year = opening_date.split("-")[0]
         client.create_fiscal_year(year, f"{year}-01-01", f"{year}-12-31")
-        yield {"event": "preflight", "stage": "fiscal_year",
-               "status": "created", "year": year}
+        yield {
+            "event": "preflight",
+            "stage": "fiscal_year",
+            "status": "created",
+            "year": year,
+        }
     except ErpnextError as e:
-        yield {"event": "preflight", "stage": "fiscal_year",
-               "status": "warning",
-               "message": f"could not create Fiscal Year for {opening_date}: {e}"}
+        yield {
+            "event": "preflight",
+            "stage": "fiscal_year",
+            "status": "warning",
+            "message": f"could not create Fiscal Year for {opening_date}: {e}",
+        }
 
 
 def _read_emitted_item_codes(output_dir: str) -> set[str]:
@@ -541,8 +679,10 @@ def _read_emitted_item_codes(output_dir: str) -> set[str]:
         if not rows:
             continue
         header = rows[0]
-        idx = header.index("item_code") if "item_code" in header else (
-            header.index("ID") if "ID" in header else None
+        idx = (
+            header.index("item_code")
+            if "item_code" in header
+            else (header.index("ID") if "ID" in header else None)
         )
         if idx is None:
             continue
@@ -553,7 +693,9 @@ def _read_emitted_item_codes(output_dir: str) -> set[str]:
 
 
 def _filter_csv_by_column(
-    content: bytes, column: str, valid_values: set[str],
+    content: bytes,
+    column: str,
+    valid_values: set[str],
 ) -> tuple[bytes, int]:
     """Drop rows whose `column` value isn't in `valid_values`.
 
@@ -635,7 +777,10 @@ def _log_error(row: dict) -> str:
 
 
 def _import_coa(
-    client: ErpnextClient, path: str, doctype: str, company: str,
+    client: ErpnextClient,
+    path: str,
+    doctype: str,
+    company: str,
 ) -> Iterator[dict]:
     """Chart of Accounts importer is a one-shot synchronous method —
     no polling, but we still yield begin/done events for consistent
@@ -645,21 +790,27 @@ def _import_coa(
     yield {"event": "uploading", "stage": "upload"}
     with open(path, "rb") as fh:
         content = fh.read()
-    file_url = client.upload_file(os.path.basename(path), content, content_type="text/csv")
+    file_url = client.upload_file(
+        os.path.basename(path), content, content_type="text/csv"
+    )
     yield {"event": "uploading", "stage": "import_coa"}
     resp = client.import_chart_of_accounts(file_url, company)
     msg = (resp or {}).get("message") or {}
     imported = len(msg.get("imported") or [])
     failed = len(msg.get("failed_to_import") or [])
-    out: dict = {"event": "done",
-                 "status": "success" if failed == 0 else "partial",
-                 "imported": imported, "failed": failed}
+    out: dict = {
+        "event": "done",
+        "status": "success" if failed == 0 else "partial",
+        "imported": imported,
+        "failed": failed,
+    }
     if failed:
         out["errors"] = (msg.get("failed_to_import") or [])[:10]
     yield out
 
 
 # -- verification -------------------------------------------------------------
+
 
 def _verify_counts(client: ErpnextClient, summary: list[dict]) -> dict[str, dict]:
     """Query ERPnext for actual row counts per doctype after import."""
@@ -687,15 +838,17 @@ def _verify_counts(client: ErpnextClient, summary: list[dict]) -> dict[str, dict
 
 # -- helpers ------------------------------------------------------------------
 
+
 def _ordered_csv_files(output_dir: str) -> list[str]:
     return sorted(
-        f for f in os.listdir(output_dir)
+        f
+        for f in os.listdir(output_dir)
         if f.endswith(".csv") and not f.startswith("99_")
     )
 
 
 def _slug_from_filename(fname: str) -> str:
-    stem = fname[:-len(".csv")] if fname.endswith(".csv") else fname
+    stem = fname[: -len(".csv")] if fname.endswith(".csv") else fname
     parts = stem.split("_", 1)
     if len(parts) != 2:
         return stem

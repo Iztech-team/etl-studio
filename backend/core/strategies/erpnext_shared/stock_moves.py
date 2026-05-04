@@ -8,6 +8,7 @@ Stock Settings → Allow Negative Stock to be enabled before import.
 One Stock Reconciliation per warehouse — small store count (1 warehouse
 in our data) keeps this simple.
 """
+
 from typing import Iterable
 
 from core.strategies.erpnext_shared.common import (
@@ -32,15 +33,22 @@ def emit_stock_opening(ctx: Context) -> None:
         if not rows:
             ctx.result.bump("stock_recos_skipped_empty")
             continue
-        ctx.result.emit("Stock Reconciliation", _stock_reco_payload(
-            ctx, store_id, warehouse, rows,
-        ))
+        ctx.result.emit(
+            "Stock Reconciliation",
+            _stock_reco_payload(
+                ctx,
+                store_id,
+                warehouse,
+                rows,
+            ),
+        )
         ctx.result.bump("stock_recos_emitted")
         ctx.result.bump("stock_lines_emitted", len(rows))
         _count_negatives(rows, ctx)
 
 
 # -- Per-warehouse grouping ---------------------------------------------------
+
 
 def _group_stock_by_warehouse(
     ctx: Context,
@@ -55,6 +63,7 @@ def _group_stock_by_warehouse(
 
 
 # -- Reco payload + lines -----------------------------------------------------
+
 
 def _stock_reco_payload(
     ctx: Context,
@@ -116,6 +125,7 @@ def _stock_line(
 
 
 # -- Cost / valuation rate ----------------------------------------------------
+
 
 def _cost_lookup(ctx: Context) -> dict[str, float]:
     out: dict[str, float] = {}

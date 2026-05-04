@@ -12,6 +12,7 @@ by default:
 - "VAT" under "Duties and Taxes" (catch-all for legacy VAT classes
   21/22/23/24 until Phase 2 splits them per rate)
 """
+
 from core.strategies.erpnext_shared.common import (
     clean_str,
     currency_iso,
@@ -35,17 +36,20 @@ def emit_accounts(ctx: Context) -> None:
 
 def _emit_standard_customs(ctx: Context) -> None:
     for name, parent_short, root_type, account_type in STANDARD_CUSTOMS:
-        ctx.result.emit("Account", {
-            "name": ctx.with_abbr(name),
-            "account_name": name,
-            "company": ctx.config.company_name,
-            "parent_account": ctx.with_abbr(parent_short),
-            "is_group": 0,
-            "account_currency": ctx.config.default_currency,
-            "root_type": root_type,
-            "report_type": "Balance Sheet",
-            "account_type": account_type,
-        })
+        ctx.result.emit(
+            "Account",
+            {
+                "name": ctx.with_abbr(name),
+                "account_name": name,
+                "company": ctx.config.company_name,
+                "parent_account": ctx.with_abbr(parent_short),
+                "is_group": 0,
+                "account_currency": ctx.config.default_currency,
+                "root_type": root_type,
+                "report_type": "Balance Sheet",
+                "account_type": account_type,
+            },
+        )
         ctx.result.bump("native_custom_leaves_emitted")
 
 
@@ -77,19 +81,22 @@ def _emit_bank_gl_leaves(ctx: Context) -> None:
             if abbr and abbr not in parts[-1]:
                 parts.append(abbr)
             autoname = " - ".join(parts)
-            ctx.result.emit("Account", {
-                "name": autoname,
-                "account_name": name,
-                "account_number": leaf_id,
-                "company": ctx.config.company_name,
-                "parent_account": parent,
-                "is_group": 0,
-                "account_currency": currency_iso(row.get("CURID")),
-                "root_type": "Asset",
-                "report_type": "Balance Sheet",
-                "account_type": "Bank",
-                "legacy_acctid": leaf_id,
-            })
+            ctx.result.emit(
+                "Account",
+                {
+                    "name": autoname,
+                    "account_name": name,
+                    "account_number": leaf_id,
+                    "company": ctx.config.company_name,
+                    "parent_account": parent,
+                    "is_group": 0,
+                    "account_currency": currency_iso(row.get("CURID")),
+                    "root_type": "Asset",
+                    "report_type": "Balance Sheet",
+                    "account_type": "Bank",
+                    "legacy_acctid": leaf_id,
+                },
+            )
             ctx.result.bump("native_bank_gl_leaves_emitted")
 
 

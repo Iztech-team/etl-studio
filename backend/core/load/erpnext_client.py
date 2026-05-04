@@ -7,6 +7,7 @@ for the post-import verification step.
 Methods raise `ErpnextError` on non-2xx responses with a normalized
 message that includes the Frappe-side traceback when available.
 """
+
 from __future__ import annotations
 
 import json
@@ -29,10 +30,12 @@ class ErpnextClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._session = requests.Session()
-        self._session.headers.update({
-            "Authorization": f"token {api_key}:{api_secret}",
-            "X-Frappe-CSRF-Token": "",
-        })
+        self._session.headers.update(
+            {
+                "Authorization": f"token {api_key}:{api_secret}",
+                "X-Frappe-CSRF-Token": "",
+            }
+        )
 
     # -- low-level ------------------------------------------------------------
 
@@ -73,7 +76,9 @@ class ErpnextClient:
 
     # -- file + import --------------------------------------------------------
 
-    def upload_file(self, filename: str, content: bytes, content_type: str = "text/csv") -> str:
+    def upload_file(
+        self, filename: str, content: bytes, content_type: str = "text/csv"
+    ) -> str:
         """POST /api/method/upload_file → returns file_url."""
         files = {"file": (filename, content, content_type)}
         resp = self._request("POST", "/api/method/upload_file", files=files)
@@ -81,12 +86,15 @@ class ErpnextClient:
 
     def create_data_import(self, doctype: str, file_url: str) -> str:
         """POST /api/resource/Data Import → returns Data Import name."""
-        resp = self.post("/api/resource/Data Import", {
-            "reference_doctype": doctype,
-            "import_type": "Insert New Records",
-            "import_file": file_url,
-            "mute_emails": 1,
-        })
+        resp = self.post(
+            "/api/resource/Data Import",
+            {
+                "reference_doctype": doctype,
+                "import_type": "Insert New Records",
+                "import_file": file_url,
+                "mute_emails": 1,
+            },
+        )
         return ((resp or {}).get("data") or {}).get("name", "")
 
     def start_data_import(self, name: str) -> Any:
@@ -96,15 +104,19 @@ class ErpnextClient:
         )
 
     def get_data_import_status(self, name: str) -> dict:
-        resp = self.get(f"/api/resource/Data Import/{requests.utils.quote(name, safe='')}")
+        resp = self.get(
+            f"/api/resource/Data Import/{requests.utils.quote(name, safe='')}"
+        )
         return (resp or {}).get("data") or {}
 
     def get_data_import_error_log(self, name: str) -> list[dict]:
         """Fall back to Error Log when import_log is empty."""
-        filters = json.dumps([
-            ["reference_doctype", "=", "Data Import"],
-            ["reference_name", "=", name],
-        ])
+        filters = json.dumps(
+            [
+                ["reference_doctype", "=", "Data Import"],
+                ["reference_name", "=", name],
+            ]
+        )
         fields = json.dumps(["error", "method", "creation"])
         path = (
             "/api/resource/Error Log"
@@ -127,13 +139,16 @@ class ErpnextClient:
     def enable_doctype_import(self, doctype: str) -> None:
         """Idempotent — uses Property Setter so it works without developer mode."""
         try:
-            self.post("/api/resource/Property Setter", {
-                "doctype_or_field": "DocType",
-                "doc_type": doctype,
-                "property": "allow_import",
-                "value": "1",
-                "property_type": "Check",
-            })
+            self.post(
+                "/api/resource/Property Setter",
+                {
+                    "doctype_or_field": "DocType",
+                    "doc_type": doctype,
+                    "property": "allow_import",
+                    "value": "1",
+                    "property_type": "Check",
+                },
+            )
         except ErpnextError as e:
             if "DuplicateEntryError" in str(e.payload or ""):
                 return
@@ -141,21 +156,31 @@ class ErpnextClient:
 
     def allow_negative_stock(self) -> None:
         """Enable allow_negative_stock in Stock Settings."""
-        self.put("/api/resource/Stock Settings/Stock Settings", {
-            "allow_negative_stock": 1,
-        })
+        self.put(
+            "/api/resource/Stock Settings/Stock Settings",
+            {
+                "allow_negative_stock": 1,
+            },
+        )
 
     def grant_import_perm(self, doctype: str, role: str = "System Manager") -> None:
         """Add a Custom DocPerm with import=1. Idempotent at the row level
         (Frappe creates a fresh row each call; harmless duplication)."""
-        self.post("/api/resource/Custom DocPerm", {
-            "parent": doctype,
-            "parenttype": "DocType",
-            "parentfield": "permissions",
-            "role": role,
-            "permlevel": 0,
-            "read": 1, "write": 1, "create": 1, "submit": 1, "import": 1,
-        })
+        self.post(
+            "/api/resource/Custom DocPerm",
+            {
+                "parent": doctype,
+                "parenttype": "DocType",
+                "parentfield": "permissions",
+                "role": role,
+                "permlevel": 0,
+                "read": 1,
+                "write": 1,
+                "create": 1,
+                "submit": 1,
+                "import": 1,
+            },
+        )
 
     # -- queries --------------------------------------------------------------
 
@@ -168,20 +193,32 @@ class ErpnextClient:
 
     def has_fiscal_year_for(self, iso_date: str) -> bool:
         """True iff a Fiscal Year already covers `iso_date`."""
-        return self.get_count("Fiscal Year", filters=[
-            ["year_start_date", "<=", iso_date],
-            ["year_end_date", ">=", iso_date],
-        ]) > 0
+        return (
+            self.get_count(
+                "Fiscal Year",
+                filters=[
+                    ["year_start_date", "<=", iso_date],
+                    ["year_end_date", ">=", iso_date],
+                ],
+            )
+            > 0
+        )
 
     def create_fiscal_year(
-        self, year_label: str, year_start_date: str, year_end_date: str,
+        self,
+        year_label: str,
+        year_start_date: str,
+        year_end_date: str,
     ) -> Any:
-        return self.post("/api/resource/Fiscal Year", {
-            "doctype": "Fiscal Year",
-            "year": year_label,
-            "year_start_date": year_start_date,
-            "year_end_date": year_end_date,
-        })
+        return self.post(
+            "/api/resource/Fiscal Year",
+            {
+                "doctype": "Fiscal Year",
+                "year": year_label,
+                "year_start_date": year_start_date,
+                "year_end_date": year_end_date,
+            },
+        )
 
     def list_companies(self) -> list[str]:
         resp = self.get(
@@ -192,6 +229,7 @@ class ErpnextClient:
 
 
 # -- helpers ------------------------------------------------------------------
+
 
 def _extract_error_message(payload: Any) -> str:
     """Pull a human-friendly message from Frappe's nested error shape."""

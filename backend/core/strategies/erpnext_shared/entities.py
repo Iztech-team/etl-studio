@@ -5,17 +5,18 @@ Accounts, …). The strategy orchestrator runs only the emit phases for
 the entities the user selected, plus their transitive dependencies.
 Empty / unset selection means "everything".
 """
+
 from typing import Iterable
 
 ENTITIES: dict[str, dict] = {
-    "customers":         {"label": "Customers",         "depends_on": []},
-    "suppliers":         {"label": "Suppliers",         "depends_on": []},
-    "items":             {"label": "Items",             "depends_on": []},
+    "customers": {"label": "Customers", "depends_on": []},
+    "suppliers": {"label": "Suppliers", "depends_on": []},
+    "items": {"label": "Items", "depends_on": []},
     "chart_of_accounts": {"label": "Chart of Accounts", "depends_on": []},
-    "bank_accounts":     {"label": "Bank Accounts",     "depends_on": ["chart_of_accounts"]},
-    "employees":         {"label": "Employees",         "depends_on": []},
-    "opening_stock":     {"label": "Opening Stock",     "depends_on": ["items"]},
-    "opening_balances":  {
+    "bank_accounts": {"label": "Bank Accounts", "depends_on": ["chart_of_accounts"]},
+    "employees": {"label": "Employees", "depends_on": []},
+    "opening_stock": {"label": "Opening Stock", "depends_on": ["items"]},
+    "opening_balances": {
         "label": "Opening Balances",
         "depends_on": ["customers", "suppliers", "chart_of_accounts", "bank_accounts"],
     },

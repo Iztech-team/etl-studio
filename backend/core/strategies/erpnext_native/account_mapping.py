@@ -18,6 +18,7 @@ real Account in ERPnext at import time, either because it's part of
 the standard CoA or because we emit it as a custom in
 `erpnext_native/accounts.py`.
 """
+
 import re
 
 from core.strategies.erpnext_shared.common import (
@@ -35,7 +36,7 @@ CLASS_TO_BUCKET: dict[str, str] = {
     "22": "VAT",
     "23": "VAT",
     "24": "VAT",
-    "4":  "Furniture and Fixtures",
+    "4": "Furniture and Fixtures",
     "47": "Accumulated Depreciation",
     "51": "Round Off",
 }
@@ -56,11 +57,11 @@ BANK_CLASSES = {"10", "14"}
 
 # Fallback by walked root_type when CLASS doesn't pin a bucket.
 FALLBACK_BY_ROOT_TYPE: dict[str, str] = {
-    "Asset":     "Earnest Money",
+    "Asset": "Earnest Money",
     "Liability": "Accrued Expenses",
-    "Equity":    "Capital Stock",
-    "Income":    "Sales",
-    "Expense":   "Miscellaneous Expenses",
+    "Equity": "Capital Stock",
+    "Income": "Sales",
+    "Expense": "Miscellaneous Expenses",
 }
 
 # Conservative starter set. Each rule = (compiled regex, ERPnext leaf name).
@@ -68,26 +69,26 @@ FALLBACK_BY_ROOT_TYPE: dict[str, str] = {
 # Order matters — first match wins, so put specific patterns before broad
 # ones. Refine via the bucket-coverage report after a real run.
 EXPENSE_NAME_RULES: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"راتب|رواتب|أجور|اجور|مرتب|مكافأ"),       "Salary"),
-    (re.compile(r"إيجار|ايجار"),                            "Office Rent"),
+    (re.compile(r"راتب|رواتب|أجور|اجور|مرتب|مكافأ"), "Salary"),
+    (re.compile(r"إيجار|ايجار"), "Office Rent"),
     (re.compile(r"كهرباء|ماء|مياه|هاتف|تلفون|انترنت|إنترنت"), "Utility Expenses"),
-    (re.compile(r"إعلان|اعلان|تسويق|دعاية"),                "Marketing Expenses"),
-    (re.compile(r"نقل|شحن|توصيل|مواصلات"),                  "Freight and Forwarding Charges"),
-    (re.compile(r"سفر|تذاكر سفر|تنقل"),                     "Travel Expenses"),
-    (re.compile(r"استهلاك|إهلاك|اهلاك"),                    "Depreciation"),
-    (re.compile(r"عمولة بنك|رسوم بنك|عمولات بنك"),          "Bank Charges"),
-    (re.compile(r"محام|قانون|قضائي|محاماة"),                "Legal Expenses"),
-    (re.compile(r"قرطاسية|طباعة|أوراق"),                    "Print and Stationery"),
-    (re.compile(r"بريد|طوابع"),                             "Postal Expenses"),
-    (re.compile(r"صيانة"),                                  "Office Maintenance Expenses"),
-    (re.compile(r"ضيافة|ترفيه"),                            "Entertainment Expenses"),
-    (re.compile(r"فائدة"),                                  "Interest Expense"),
+    (re.compile(r"إعلان|اعلان|تسويق|دعاية"), "Marketing Expenses"),
+    (re.compile(r"نقل|شحن|توصيل|مواصلات"), "Freight and Forwarding Charges"),
+    (re.compile(r"سفر|تذاكر سفر|تنقل"), "Travel Expenses"),
+    (re.compile(r"استهلاك|إهلاك|اهلاك"), "Depreciation"),
+    (re.compile(r"عمولة بنك|رسوم بنك|عمولات بنك"), "Bank Charges"),
+    (re.compile(r"محام|قانون|قضائي|محاماة"), "Legal Expenses"),
+    (re.compile(r"قرطاسية|طباعة|أوراق"), "Print and Stationery"),
+    (re.compile(r"بريد|طوابع"), "Postal Expenses"),
+    (re.compile(r"صيانة"), "Office Maintenance Expenses"),
+    (re.compile(r"ضيافة|ترفيه"), "Entertainment Expenses"),
+    (re.compile(r"فائدة"), "Interest Expense"),
 ]
 
 INCOME_NAME_RULES: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"خدمة|خدمات"),     "Service"),
-    (re.compile(r"فائدة"),          "Interest Income"),
-    (re.compile(r"مبيعات|بيع"),     "Sales"),
+    (re.compile(r"خدمة|خدمات"), "Service"),
+    (re.compile(r"فائدة"), "Interest Income"),
+    (re.compile(r"مبيعات|بيع"), "Sales"),
 ]
 
 

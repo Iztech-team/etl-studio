@@ -16,6 +16,7 @@ Three load-bearing decisions live here:
    reference (which uses the parent's autonamed form `{name} - {abbr}`)
    resolves to a row that already exists.
 """
+
 from typing import Iterable
 
 from core.strategies.erpnext_shared.common import (
@@ -94,79 +95,99 @@ def _emit_party_leaf_accounts(ctx: Context) -> None:
       individual outstanding-cheque opening JEs. Lives under الموجودات
       المتداولة (Current Assets).
     """
-    abbr_or_id = lambda acctid, fallback: account_full_name(ctx, acctid) or ctx.with_abbr(fallback)
+    abbr_or_id = lambda acctid, fallback: account_full_name(
+        ctx, acctid
+    ) or ctx.with_abbr(fallback)
     equity_parent = abbr_or_id("3", "راس المال")
     current_assets_parent = abbr_or_id("11", "الموجودات المتداولة")
     receivable_parent = abbr_or_id("6", "الذمم")
     payable_parent = abbr_or_id("2", "المطلوبات")
 
-    ctx.result.emit("Account", {
-        "name": ctx.with_abbr("Debtors"),
-        "account_name": "Debtors",
-        "company": ctx.config.company_name,
-        "parent_account": receivable_parent,
-        "is_group": 0,
-        "account_currency": ctx.config.default_currency,
-        "root_type": "Asset",
-        "report_type": "Balance Sheet",
-        "account_type": "Receivable",
-    })
-    ctx.result.emit("Account", {
-        "name": ctx.with_abbr("Creditors"),
-        "account_name": "Creditors",
-        "company": ctx.config.company_name,
-        "parent_account": payable_parent,
-        "is_group": 0,
-        "account_currency": ctx.config.default_currency,
-        "root_type": "Liability",
-        "report_type": "Balance Sheet",
-        "account_type": "Payable",
-    })
-    ctx.result.emit("Account", {
-        "name": ctx.with_abbr("Temporary Opening"),
-        "account_name": "Temporary Opening",
-        "company": ctx.config.company_name,
-        "parent_account": equity_parent,
-        "is_group": 0,
-        "account_currency": ctx.config.default_currency,
-        "root_type": "Equity",
-        "report_type": "Balance Sheet",
-        "account_type": "Temporary",
-    })
-    ctx.result.emit("Account", {
-        "name": ctx.with_abbr("Cheques in Hand"),
-        "account_name": "Cheques in Hand",
-        "company": ctx.config.company_name,
-        "parent_account": current_assets_parent,
-        "is_group": 0,
-        "account_currency": ctx.config.default_currency,
-        "root_type": "Asset",
-        "report_type": "Balance Sheet",
-        "account_type": "Cash",
-    })
+    ctx.result.emit(
+        "Account",
+        {
+            "name": ctx.with_abbr("Debtors"),
+            "account_name": "Debtors",
+            "company": ctx.config.company_name,
+            "parent_account": receivable_parent,
+            "is_group": 0,
+            "account_currency": ctx.config.default_currency,
+            "root_type": "Asset",
+            "report_type": "Balance Sheet",
+            "account_type": "Receivable",
+        },
+    )
+    ctx.result.emit(
+        "Account",
+        {
+            "name": ctx.with_abbr("Creditors"),
+            "account_name": "Creditors",
+            "company": ctx.config.company_name,
+            "parent_account": payable_parent,
+            "is_group": 0,
+            "account_currency": ctx.config.default_currency,
+            "root_type": "Liability",
+            "report_type": "Balance Sheet",
+            "account_type": "Payable",
+        },
+    )
+    ctx.result.emit(
+        "Account",
+        {
+            "name": ctx.with_abbr("Temporary Opening"),
+            "account_name": "Temporary Opening",
+            "company": ctx.config.company_name,
+            "parent_account": equity_parent,
+            "is_group": 0,
+            "account_currency": ctx.config.default_currency,
+            "root_type": "Equity",
+            "report_type": "Balance Sheet",
+            "account_type": "Temporary",
+        },
+    )
+    ctx.result.emit(
+        "Account",
+        {
+            "name": ctx.with_abbr("Cheques in Hand"),
+            "account_name": "Cheques in Hand",
+            "company": ctx.config.company_name,
+            "parent_account": current_assets_parent,
+            "is_group": 0,
+            "account_currency": ctx.config.default_currency,
+            "root_type": "Asset",
+            "report_type": "Balance Sheet",
+            "account_type": "Cash",
+        },
+    )
     expense_parent = abbr_or_id("4", "المشتريات والمصاريف")
-    ctx.result.emit("Account", {
-        "name": ctx.with_abbr("Round Off"),
-        "account_name": "Round Off",
-        "company": ctx.config.company_name,
-        "parent_account": expense_parent,
-        "is_group": 0,
-        "account_currency": ctx.config.default_currency,
-        "root_type": "Expense",
-        "report_type": "Profit and Loss",
-        "account_type": "Round Off",
-    })
-    ctx.result.emit("Account", {
-        "name": ctx.with_abbr("Stock Adjustment"),
-        "account_name": "Stock Adjustment",
-        "company": ctx.config.company_name,
-        "parent_account": expense_parent,
-        "is_group": 0,
-        "account_currency": ctx.config.default_currency,
-        "root_type": "Expense",
-        "report_type": "Profit and Loss",
-        "account_type": "Stock Adjustment",
-    })
+    ctx.result.emit(
+        "Account",
+        {
+            "name": ctx.with_abbr("Round Off"),
+            "account_name": "Round Off",
+            "company": ctx.config.company_name,
+            "parent_account": expense_parent,
+            "is_group": 0,
+            "account_currency": ctx.config.default_currency,
+            "root_type": "Expense",
+            "report_type": "Profit and Loss",
+            "account_type": "Round Off",
+        },
+    )
+    ctx.result.emit(
+        "Account",
+        {
+            "name": ctx.with_abbr("Stock Adjustment"),
+            "account_name": "Stock Adjustment",
+            "company": ctx.config.company_name,
+            "parent_account": expense_parent,
+            "is_group": 0,
+            "account_currency": ctx.config.default_currency,
+            "root_type": "Expense",
+            "report_type": "Profit and Loss",
+            "account_type": "Stock Adjustment",
+        },
+    )
     ctx.result.bump("party_leaf_accounts_emitted", 6)
 
 
@@ -185,6 +206,7 @@ def _root_id_for_each(ctx: Context) -> dict[str, str]:
 
 
 # -- Emission -----------------------------------------------------------------
+
 
 def _emit_deleted_accounts(
     ctx: Context,
@@ -220,7 +242,8 @@ def _emit_account(
     is_root = account_id in ROOT_TYPE_BY_ID
     root_id = root_for.get(account_id, account_id)
     root_type, report_type = ROOT_TYPE_BY_ID.get(
-        root_id, ("Asset", "Balance Sheet"),
+        root_id,
+        ("Asset", "Balance Sheet"),
     )
     # account_number = legacy ACCOUNTID gives Frappe a stable ASCII
     # prefix in the autoname ('{number} - {name} - {abbr}'). Without
@@ -291,6 +314,7 @@ def _is_active(row: dict) -> bool:
 
 # -- Filtering ----------------------------------------------------------------
 
+
 def _emittable_accounts(ctx: Context, deleted: set[str]) -> list[dict]:
     out: list[dict] = []
     for row in ctx.table("ACCOUNTT"):
@@ -338,5 +362,3 @@ def _deleted_account_ids(ctx: Context) -> set[str]:
         for r in ctx.table("DELETEDACCOUNTT")
         if clean_str(r.get("ACCOUNTID"))
     }
-
-

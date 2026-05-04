@@ -11,6 +11,7 @@ side by side. Two outputs land in `ctx.result`:
   follow before importing the CSVs (Stock Settings flag, custom field
   registration, dependency-ordered import sequence).
 """
+
 from typing import Any
 
 from core.strategies.erpnext_shared.context import Context
@@ -24,6 +25,7 @@ def emit_audit(ctx: Context) -> None:
 
 
 # -- Preservation report ------------------------------------------------------
+
 
 def _emit_preservation_report(ctx: Context) -> None:
     legacy_counts = _legacy_counts(ctx)
@@ -62,68 +64,92 @@ def _preservation_summary(
     stats = ctx.result.stats
     rows: list[dict[str, Any]] = []
     if "items" in active:
-        rows.append(_check(
-            "Items",
-            max(0, legacy.get("CATEGORYT", 0) - len(_deleted_catids(ctx))),
-            output.get("Item", 0),
-        ))
-        rows.append(_check(
-            "Item Prices (non-zero only)",
-            stats.get("item_prices_emitted", 0),
-            output.get("Item Price", 0),
-        ))
+        rows.append(
+            _check(
+                "Items",
+                max(0, legacy.get("CATEGORYT", 0) - len(_deleted_catids(ctx))),
+                output.get("Item", 0),
+            )
+        )
+        rows.append(
+            _check(
+                "Item Prices (non-zero only)",
+                stats.get("item_prices_emitted", 0),
+                output.get("Item Price", 0),
+            )
+        )
     if "customers" in active:
-        rows.append(_check(
-            "Customers (incl. walk-in + orphans)",
-            legacy.get("CUSTT", 0) + 1 + stats.get("orphan_customers_emitted", 0),
-            output.get("Customer", 0),
-        ))
+        rows.append(
+            _check(
+                "Customers (incl. walk-in + orphans)",
+                legacy.get("CUSTT", 0) + 1 + stats.get("orphan_customers_emitted", 0),
+                output.get("Customer", 0),
+            )
+        )
     if "suppliers" in active:
-        rows.append(_check(
-            "Suppliers",
-            legacy.get("SUPPLIERT", 0),
-            output.get("Supplier", 0),
-        ))
+        rows.append(
+            _check(
+                "Suppliers",
+                legacy.get("SUPPLIERT", 0),
+                output.get("Supplier", 0),
+            )
+        )
     if "bank_accounts" in active:
-        rows.append(_check(
-            "Banks",
-            legacy.get("BANKT", 0),
-            output.get("Bank", 0),
-            slack=2,
-        ))
-        rows.append(_check(
-            "Bank Accounts",
-            legacy.get("BANKACCOUNTT", 0),
-            output.get("Bank Account", 0),
-        ))
+        rows.append(
+            _check(
+                "Banks",
+                legacy.get("BANKT", 0),
+                output.get("Bank", 0),
+                slack=2,
+            )
+        )
+        rows.append(
+            _check(
+                "Bank Accounts",
+                legacy.get("BANKACCOUNTT", 0),
+                output.get("Bank Account", 0),
+            )
+        )
     if "opening_balances" in active:
-        rows.append(_check(
-            "Opening Journal Entries (parties + GL + cheques)",
-            _opening_je_expected(stats),
-            output.get("Journal Entry", 0),
-        ))
+        rows.append(
+            _check(
+                "Opening Journal Entries (parties + GL + cheques)",
+                _opening_je_expected(stats),
+                output.get("Journal Entry", 0),
+            )
+        )
     if "employees" in active:
-        rows.append(_check(
-            "Employees",
-            legacy.get("EMPLOYEET", 0),
-            output.get("Employee", 0),
-            slack=5,
-        ))
+        rows.append(
+            _check(
+                "Employees",
+                legacy.get("EMPLOYEET", 0),
+                output.get("Employee", 0),
+                slack=5,
+            )
+        )
     return rows
 
 
 def _opening_je_expected(stats: dict[str, int]) -> int:
     """Sum every `opening_*_emitted` stat so mirror's per-leaf and native's
     bucketed / bank-leaf JE counts both contribute to the same total."""
-    return sum(v for k, v in stats.items()
-               if k.startswith("opening_") and k.endswith("_emitted"))
+    return sum(
+        v
+        for k, v in stats.items()
+        if k.startswith("opening_") and k.endswith("_emitted")
+    )
 
 
 def _check(label: str, expected: int, actual: int, slack: int = 0) -> dict:
     diff = actual - expected
     status = "ok" if abs(diff) <= slack else ("over" if diff > 0 else "short")
-    return {"label": label, "expected": expected, "actual": actual,
-            "diff": diff, "status": status}
+    return {
+        "label": label,
+        "expected": expected,
+        "actual": actual,
+        "diff": diff,
+        "status": status,
+    }
 
 
 def _deleted_catids(ctx: Context) -> set[str]:
@@ -136,10 +162,12 @@ def _slug(name: str) -> str:
 
 # -- Migration setup checklist (markdown) ------------------------------------
 
+
 def _emit_setup_checklist(ctx: Context) -> None:
     md = _checklist_markdown(ctx)
-    ctx.result.output_tables[CHECKLIST_KEY] = [{"filename": "migration_setup_checklist.md",
-                                                "content": md}]
+    ctx.result.output_tables[CHECKLIST_KEY] = [
+        {"filename": "migration_setup_checklist.md", "content": md}
+    ]
 
 
 def _checklist_markdown(ctx: Context) -> str:

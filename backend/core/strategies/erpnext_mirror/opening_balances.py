@@ -16,6 +16,7 @@ GL emit which is the part that distinguishes Mirror from Native.
 - Revenue (root 5) / Expense (root 4) accumulators → close annually
 - GL 118 (Cheques for Collection) → reconstructed via per-cheque JEs
 """
+
 from typing import Any
 
 from core.strategies.erpnext_shared.common import (
@@ -60,11 +61,19 @@ def emit_opening_balances(ctx: Context) -> None:
     bank_gl_to_label = bank_gl_to_bank_account(ctx)
 
     emit_party_balances(
-        ctx, "customer", fx_rates, customer_index, parent_ids,
+        ctx,
+        "customer",
+        fx_rates,
+        customer_index,
+        parent_ids,
         party_account=ctx.with_abbr("Debtors"),
     )
     emit_party_balances(
-        ctx, "supplier", fx_rates, supplier_index, parent_ids,
+        ctx,
+        "supplier",
+        fx_rates,
+        supplier_index,
+        parent_ids,
         party_account=ctx.with_abbr("Creditors"),
     )
     _emit_gl_balances(ctx, fx_rates, parent_ids, bank_gl_to_label)
@@ -98,27 +107,32 @@ def _emit_gl_balances(
         gl_account = account_full_name(ctx, account_id)
         if not gl_account:
             ctx.result.warn(
-                "OpeningBalance", "missing GL account name",
+                "OpeningBalance",
+                "missing GL account name",
                 legacy_acctid=account_id,
             )
             continue
         original_remark = (
             f" (originally {balance:.2f} {account_ccy} @ {rate})"
-            if account_ccy != DEFAULT_CURRENCY else ""
+            if account_ccy != DEFAULT_CURRENCY
+            else ""
         )
-        ctx.result.emit("Journal Entry", _build_gl_je(
-            ctx,
-            name=f"OPN-GL-{account_id}",
-            account=gl_account,
-            balance=balance,
-            company_amount=company_amt,
-            account_currency=account_ccy,
-            exchange_rate=rate,
-            original_remark=original_remark,
-            account_name=pick(row, "NAME", "NAMEE", "NAMEH"),
-            legacy_acctid=account_id,
-            bank_account=bank_gl_to_label.get(account_id),
-        ))
+        ctx.result.emit(
+            "Journal Entry",
+            _build_gl_je(
+                ctx,
+                name=f"OPN-GL-{account_id}",
+                account=gl_account,
+                balance=balance,
+                company_amount=company_amt,
+                account_currency=account_ccy,
+                exchange_rate=rate,
+                original_remark=original_remark,
+                account_name=pick(row, "NAME", "NAMEE", "NAMEH"),
+                legacy_acctid=account_id,
+                bank_account=bank_gl_to_label.get(account_id),
+            ),
+        )
         ctx.result.bump("opening_gl_balances_emitted")
 
 
@@ -159,11 +173,15 @@ def _build_gl_je(
         main_line["bank_account"] = bank_account
     counter_line: dict[str, Any] = {"account": ctx.with_abbr("Temporary Opening")}
     set_je_pair(
-        main_line, counter_line, abs_amt,
+        main_line,
+        counter_line,
+        abs_amt,
         company_amount=abs_company,
         debit_main=balance > 0,
-        main_currency=account_currency, main_rate=exchange_rate,
-        counter_currency=DEFAULT_CURRENCY, counter_rate=1.0,
+        main_currency=account_currency,
+        main_rate=exchange_rate,
+        counter_currency=DEFAULT_CURRENCY,
+        counter_rate=1.0,
     )
     return {
         "name": name,

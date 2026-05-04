@@ -36,7 +36,8 @@ def _zip_dir(dir_path: str, zip_filename: str) -> StreamingResponse:
             zf.write(os.path.join(dir_path, name), arcname=name)
     buf.seek(0)
     return StreamingResponse(
-        buf, media_type="application/zip",
+        buf,
+        media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{zip_filename}"'},
     )
 
@@ -123,5 +124,7 @@ async def download_transform_partial(project_id: str, filename: str):
     project = get_project(project_id)
     if not project:
         raise HTTPException(404, "Project not found")
-    path = _safe_path(os.path.join(project_dir(project_id), "transform_partial"), filename)
+    path = _safe_path(
+        os.path.join(project_dir(project_id), "transform_partial"), filename
+    )
     return FileResponse(path, filename=os.path.basename(path))

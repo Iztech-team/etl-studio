@@ -11,6 +11,7 @@ So this module owns the party + cheque emit and the universally-needed
 helpers (sign rule, currency conversion, JE pair construction); each
 strategy module supplies its own GL-emit on top.
 """
+
 from typing import Any
 
 from core.strategies.erpnext_shared.common import (
@@ -40,6 +41,7 @@ INVENTORY_CLASSES = {"40", "41", "42"}
 
 
 # -- Party balances (customers + suppliers) -----------------------------------
+
 
 def emit_party_balances(
     ctx: Context,
@@ -83,17 +85,20 @@ def emit_party_balances(
             continue
         party_name = pick(row, "NAME", "NAMEE", "NAMEH")
         party = name_index.get(account_id) or fallback_id(account_id)
-        ctx.result.emit("Journal Entry", _build_party_je(
-            ctx,
-            name=f"{name_prefix}-{account_id}",
-            party_type=party_type,
-            party=party,
-            party_account=party_account,
-            balance=balance_default,
-            original_remark=original_remark,
-            party_name=party_name,
-            legacy_acctid=account_id,
-        ))
+        ctx.result.emit(
+            "Journal Entry",
+            _build_party_je(
+                ctx,
+                name=f"{name_prefix}-{account_id}",
+                party_type=party_type,
+                party=party,
+                party_account=party_account,
+                balance=balance_default,
+                original_remark=original_remark,
+                party_name=party_name,
+                legacy_acctid=account_id,
+            ),
+        )
         ctx.result.bump(f"{stat_key}_emitted")
 
 
@@ -116,11 +121,15 @@ def _build_party_je(
     }
     counter_line: dict[str, Any] = {"account": ctx.with_abbr("Temporary Opening")}
     set_je_pair(
-        party_line, counter_line, abs_amt,
+        party_line,
+        counter_line,
+        abs_amt,
         company_amount=abs_amt,
         debit_main=balance > 0,
-        main_currency=DEFAULT_CURRENCY, main_rate=1.0,
-        counter_currency=DEFAULT_CURRENCY, counter_rate=1.0,
+        main_currency=DEFAULT_CURRENCY,
+        main_rate=1.0,
+        counter_currency=DEFAULT_CURRENCY,
+        counter_rate=1.0,
     )
     return {
         "name": name,
@@ -140,6 +149,7 @@ def _build_party_je(
 
 
 # -- Outstanding cheques ------------------------------------------------------
+
 
 def emit_outstanding_cheques(
     ctx: Context,
@@ -171,7 +181,9 @@ def emit_outstanding_cheques(
     party_by_account = _build_party_account_map(ctx)
     for cheque in ctx.iter_streamed("CHEQUET"):
         if not _is_outstanding_incoming_cheque(
-            cheque, latest_acct_per_cheque, ctx.accounts_by_id,
+            cheque,
+            latest_acct_per_cheque,
+            ctx.accounts_by_id,
         ):
             continue
         amount_default = _cheque_amount_default(cheque, fx_rates)
@@ -208,40 +220,43 @@ def emit_outstanding_cheques(
         party_type, party = _resolve_cheque_party(cheque, party_by_account)
         party_hint = f" — party: {party_type}/{party}" if party_type and party else ""
 
-        ctx.result.emit("Journal Entry", {
-            "name": f"OPN-CHQ-{cheque_id}",
-            "voucher_type": "Opening Entry",
-            "is_opening": "Yes",
-            "cheque_no": cheque_no,
-            "cheque_date": cheque_date,
-            "company": ctx.config.company_name,
-            # Opening JEs all freeze the world on opening_date — the
-            # cheque's original DOCDATE / CDATE survive in cheque_date
-            # and user_remark for traceback but must NOT drive the
-            # posting_date, otherwise ERPnext rejects the row when no
-            # Fiscal Year covers that historical date.
-            "posting_date": ctx.config.opening_date,
-            "user_remark": (
-                f"Outstanding cheque #{cheque_no} from {owner}, "
-                f"due {cheque_date}, bank {bank}{party_hint}{original_remark}"
-            ),
-            "docstatus": 1,
-            "accounts": [
-                cheques_line,
-                {
-                    "account": temp_opening,
-                    "account_currency": DEFAULT_CURRENCY,
-                    "exchange_rate": 1.0,
-                    "debit_in_account_currency": 0,
-                    "credit_in_account_currency": abs_amt,
-                },
-            ],
-            "total_debit": abs_amt,
-            "total_credit": abs_amt,
-            "multi_currency": 0,
-            "legacy_chequeid": cheque_id,
-            "legacy_kind": "opening_cheque",
-        })
+        ctx.result.emit(
+            "Journal Entry",
+            {
+                "name": f"OPN-CHQ-{cheque_id}",
+                "voucher_type": "Opening Entry",
+                "is_opening": "Yes",
+                "cheque_no": cheque_no,
+                "cheque_date": cheque_date,
+                "company": ctx.config.company_name,
+                # Opening JEs all freeze the world on opening_date — the
+                # cheque's original DOCDATE / CDATE survive in cheque_date
+                # and user_remark for traceback but must NOT drive the
+                # posting_date, otherwise ERPnext rejects the row when no
+                # Fiscal Year covers that historical date.
+                "posting_date": ctx.config.opening_date,
+                "user_remark": (
+                    f"Outstanding cheque #{cheque_no} from {owner}, "
+                    f"due {cheque_date}, bank {bank}{party_hint}{original_remark}"
+                ),
+                "docstatus": 1,
+                "accounts": [
+                    cheques_line,
+                    {
+                        "account": temp_opening,
+                        "account_currency": DEFAULT_CURRENCY,
+                        "exchange_rate": 1.0,
+                        "debit_in_account_currency": 0,
+                        "credit_in_account_currency": abs_amt,
+                    },
+                ],
+                "total_debit": abs_amt,
+                "total_credit": abs_amt,
+                "multi_currency": 0,
+                "legacy_chequeid": cheque_id,
+                "legacy_kind": "opening_cheque",
+            },
+        )
         ctx.result.bump("opening_cheques_emitted")
 
 
@@ -292,7 +307,8 @@ def _build_latest_cheque_account(ctx: Context) -> dict[str, str]:
 
 
 def _resolve_cheque_party(
-    cheque: dict, party_by_account: dict[str, tuple[str, str]],
+    cheque: dict,
+    party_by_account: dict[str, tuple[str, str]],
 ) -> tuple[str | None, str | None]:
     """Find the customer/supplier this cheque is linked to.
 
@@ -376,6 +392,7 @@ def _cheque_original_remark(cheque: dict) -> str:
 
 # -- Sign rule + currency conversion ------------------------------------------
 
+
 def set_je_pair(
     main: dict[str, Any],
     counter: dict[str, Any],
@@ -413,7 +430,8 @@ def set_je_pair(
 
 
 def account_ccy_and_rate(
-    row: dict, fx_rates: dict[str, float],
+    row: dict,
+    fx_rates: dict[str, float],
 ) -> tuple[str, float]:
     """Return (ISO currency, rate-to-default) for a legacy ACCOUNTT row."""
     curid = clean_str(row.get("CURID"))
@@ -448,6 +466,7 @@ def to_default(
 
 
 # -- Index helpers ------------------------------------------------------------
+
 
 def parent_id_set(ctx: Context) -> set[str]:
     """ACCOUNTIDs that appear as someone's FATHERID — i.e. group accounts."""

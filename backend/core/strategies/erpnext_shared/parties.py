@@ -9,6 +9,7 @@ Orphan customers are ACCOUNTIDs that appear in CATESINVDOCT but in
 neither CUSTT nor SUPPLIERT — typically employee or representative
 accounts; we emit them as customers so their invoices have a valid party.
 """
+
 from core.strategies.erpnext_shared.common import (
     WALKIN_CUSTOMER_ID,
     clean_str,
@@ -50,22 +51,27 @@ def emit_suppliers(ctx: Context) -> None:
 
 # -- Walk-in ------------------------------------------------------------------
 
+
 def _emit_walkin_customer(ctx: Context) -> None:
-    ctx.result.emit("Customer", {
-        "name": WALKIN_CUSTOMER_ID,
-        "customer_name": WALKIN_DISPLAY_NAME,
-        "customer_type": CUSTOMER_TYPE_DEFAULT,
-        "customer_group": CUSTOMER_GROUP_NAME,
-        "territory": TERRITORY_NAME,
-        "default_currency": ctx.config.default_currency,
-        "disabled": 0,
-        "legacy_custid": "0",
-        "legacy_kind": "walkin",
-    })
+    ctx.result.emit(
+        "Customer",
+        {
+            "name": WALKIN_CUSTOMER_ID,
+            "customer_name": WALKIN_DISPLAY_NAME,
+            "customer_type": CUSTOMER_TYPE_DEFAULT,
+            "customer_group": CUSTOMER_GROUP_NAME,
+            "territory": TERRITORY_NAME,
+            "default_currency": ctx.config.default_currency,
+            "disabled": 0,
+            "legacy_custid": "0",
+            "legacy_kind": "walkin",
+        },
+    )
     ctx.result.bump("walkin_customers_emitted")
 
 
 # -- Customer (CUSTT) ---------------------------------------------------------
+
 
 def _emit_customer(
     ctx: Context,
@@ -85,23 +91,27 @@ def _emit_customer(
     # v16 Customer has only `mobile_no` (Read Only, auto-populated from
     # linked Contact). No `phone` field — the template column is a
     # generator artifact but doesn't map. Office phone is dropped.
-    ctx.result.emit("Customer", {
-        "name": customer_id(custid),
-        "customer_name": name,
-        "customer_type": CUSTOMER_TYPE_DEFAULT,
-        "customer_group": CUSTOMER_GROUP_NAME,
-        "territory": TERRITORY_NAME,
-        "default_currency": ctx.config.default_currency,
-        "default_price_list": price_list_name(ctx, row.get("PRICEID")),
-        "mobile_no": phone["mobile"] or phone["office"],
-        "disabled": 0,
-        "legacy_custid": custid,
-        "legacy_kind": "regular",
-    })
+    ctx.result.emit(
+        "Customer",
+        {
+            "name": customer_id(custid),
+            "customer_name": name,
+            "customer_type": CUSTOMER_TYPE_DEFAULT,
+            "customer_group": CUSTOMER_GROUP_NAME,
+            "territory": TERRITORY_NAME,
+            "default_currency": ctx.config.default_currency,
+            "default_price_list": price_list_name(ctx, row.get("PRICEID")),
+            "mobile_no": phone["mobile"] or phone["office"],
+            "disabled": 0,
+            "legacy_custid": custid,
+            "legacy_kind": "regular",
+        },
+    )
     ctx.result.bump("customers_emitted")
 
 
 # -- Supplier (SUPPLIERT) -----------------------------------------------------
+
 
 def _emit_supplier(
     ctx: Context,
@@ -119,21 +129,25 @@ def _emit_supplier(
         return
     phone = _phone_for(contacts.get(account_id, []))
     # v16 Supplier mirrors Customer — only mobile_no exists, no phone.
-    ctx.result.emit("Supplier", {
-        "name": supplier_id(suppid),
-        "supplier_name": name,
-        "supplier_type": SUPPLIER_TYPE_DEFAULT,
-        "supplier_group": SUPPLIER_GROUP_NAME,
-        "country": ctx.config.country,
-        "default_currency": ctx.config.default_currency,
-        "mobile_no": phone["mobile"] or phone["office"],
-        "disabled": 0,
-        "legacy_suppid": suppid,
-    })
+    ctx.result.emit(
+        "Supplier",
+        {
+            "name": supplier_id(suppid),
+            "supplier_name": name,
+            "supplier_type": SUPPLIER_TYPE_DEFAULT,
+            "supplier_group": SUPPLIER_GROUP_NAME,
+            "country": ctx.config.country,
+            "default_currency": ctx.config.default_currency,
+            "mobile_no": phone["mobile"] or phone["office"],
+            "disabled": 0,
+            "legacy_suppid": suppid,
+        },
+    )
     ctx.result.bump("suppliers_emitted")
 
 
 # -- Orphans (referenced by invoices, not in CUSTT/SUPPLIERT) -----------------
+
 
 def _emit_orphan_customers(ctx: Context, contacts: dict[str, list[dict]]) -> None:
     """Customers that appear in invoices but not in CUSTT/SUPPLIERT.
@@ -156,18 +170,21 @@ def _emit_orphan(
         ctx.result.warn("Orphan", "no ACCOUNTT.NAME", account_id=account_id)
         return
     phone = _phone_for(contacts.get(account_id, []))
-    ctx.result.emit("Customer", {
-        "name": customer_id(account_id),
-        "customer_name": name,
-        "customer_type": CUSTOMER_TYPE_DEFAULT,
-        "customer_group": CUSTOMER_GROUP_NAME,
-        "territory": TERRITORY_NAME,
-        "default_currency": ctx.config.default_currency,
-        "mobile_no": phone["mobile"] or phone["office"],
-        "disabled": 0,
-        "legacy_custid": account_id,
-        "legacy_kind": "orphan",
-    })
+    ctx.result.emit(
+        "Customer",
+        {
+            "name": customer_id(account_id),
+            "customer_name": name,
+            "customer_type": CUSTOMER_TYPE_DEFAULT,
+            "customer_group": CUSTOMER_GROUP_NAME,
+            "territory": TERRITORY_NAME,
+            "default_currency": ctx.config.default_currency,
+            "mobile_no": phone["mobile"] or phone["office"],
+            "disabled": 0,
+            "legacy_custid": account_id,
+            "legacy_kind": "orphan",
+        },
+    )
     ctx.result.bump("orphan_customers_emitted")
 
 
@@ -181,9 +198,13 @@ def _phone_for(contact_rows: list[dict]) -> dict[str, str]:
     office = ""
     for r in contact_rows or []:
         if not mobile:
-            mobile = normalize_phone(r.get("MOBILE")) or normalize_phone(r.get("MOBILE2"))
+            mobile = normalize_phone(r.get("MOBILE")) or normalize_phone(
+                r.get("MOBILE2")
+            )
         if not office:
-            office = normalize_phone(r.get("OFFICEPHONE1")) or normalize_phone(r.get("OFFICEPHONE2"))
+            office = normalize_phone(r.get("OFFICEPHONE1")) or normalize_phone(
+                r.get("OFFICEPHONE2")
+            )
         if mobile and office:
             break
     return {"mobile": mobile, "office": office}
@@ -204,7 +225,9 @@ def _orphan_invoice_account_ids(ctx: Context) -> list[str]:
     customers = ctx.customer_account_ids
     seen: set[str] = set()
     for source in ("CATESINVDOCT", "CATESRETINVDOCT"):
-        rows = ctx.iter_streamed(source) if source == "CATESINVDOCT" else ctx.table(source)
+        rows = (
+            ctx.iter_streamed(source) if source == "CATESINVDOCT" else ctx.table(source)
+        )
         for row in rows:
             aid = clean_str(row.get("ACCOUNTID"))
             if not aid or aid == "0":
@@ -217,10 +240,9 @@ def _orphan_invoice_account_ids(ctx: Context) -> list[str]:
 
 # -- Helpers ------------------------------------------------------------------
 
+
 def _account_name(ctx: Context, account_id: str) -> str:
     row = ctx.accounts_by_id.get(account_id)
     if not row:
         return ""
     return pick(row, "NAME", "NAMEE", "NAMEH")
-
-
