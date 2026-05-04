@@ -70,7 +70,8 @@ def emit_accounts(ctx: Context) -> None:
     rows.sort(key=_sort_key)
     root_for = _root_id_for_each(ctx)
     for row in rows:
-        _emit_account(ctx, row, parent_ids, root_for)
+        _emit_account(ctx, row, parent_ids, root_for, force_disabled=False)
+    _emit_deleted_accounts(ctx, deleted, parent_ids, root_for)
     _emit_party_leaf_accounts(ctx)
 
 
@@ -162,11 +163,30 @@ def _root_id_for_each(ctx: Context) -> dict[str, str]:
 
 # -- Emission -----------------------------------------------------------------
 
+def _emit_deleted_accounts(
+    ctx: Context,
+    deleted: set[str],
+    parent_ids: set[str],
+    root_for: dict[str, str],
+) -> None:
+    """Emit deleted accounts as disabled so opening JEs can still reference them."""
+    for row in ctx.table("ACCOUNTT"):
+        account_id = clean_str(row.get("ACCOUNTID"))
+        if not account_id or account_id not in deleted:
+            continue
+        cls = clean_str(row.get("CLASS"))
+        if cls in SKIP_CLASSES:
+            continue
+        _emit_account(ctx, row, parent_ids, root_for, force_disabled=True)
+    ctx.result.bump("deleted_accounts_restored", len(deleted))
+
+
 def _emit_account(
     ctx: Context,
     row: dict,
     parent_ids: set[str],
     root_for: dict[str, str],
+    force_disabled: bool = False,
 ) -> None:
     account_id = clean_str(row.get("ACCOUNTID"))
     raw_name = pick(row, "NAME", "NAMEE", "NAMEH")
@@ -197,7 +217,7 @@ def _emit_account(
         "account_currency": currency_iso(row.get("CURID")),
         "root_type": root_type,
         "report_type": report_type,
-        "disabled": 0 if _is_active(row) else 1,
+        "disabled": 1 if force_disabled else (0 if _is_active(row) else 1),
         "legacy_acctid": account_id,
         "legacy_class": clean_str(row.get("CLASS")),
     }
