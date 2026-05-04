@@ -65,7 +65,7 @@ POLL_TIMEOUT_SEC = 600
 # next file (e.g. Item Price right after Item) can race the commit and
 # see "missing for Item" against rows we just inserted. A small settle
 # pause before the next file gives Frappe time to flush.
-SETTLE_DELAY_SEC = 3.0
+SETTLE_DELAY_SEC = 10.0
 
 
 def run_live_import(

@@ -111,6 +111,7 @@ def _stock_line(
         "warehouse": warehouse,
         "qty": qty,
         "valuation_rate": rate,
+        "allow_zero_valuation_rate": 1,
     }
 
 
