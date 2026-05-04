@@ -125,11 +125,25 @@ class ErpnextClient:
     # -- doctype prep ---------------------------------------------------------
 
     def enable_doctype_import(self, doctype: str) -> None:
-        """Idempotent — leaves DocType unchanged if already importable."""
-        self.put(
-            f"/api/resource/DocType/{requests.utils.quote(doctype, safe='')}",
-            {"allow_import": 1},
-        )
+        """Idempotent — uses Property Setter so it works without developer mode."""
+        try:
+            self.post("/api/resource/Property Setter", {
+                "doctype_or_field": "DocType",
+                "doc_type": doctype,
+                "property": "allow_import",
+                "value": "1",
+                "property_type": "Check",
+            })
+        except ErpnextError as e:
+            if "DuplicateEntryError" in str(e.payload or ""):
+                return
+            raise
+
+    def allow_negative_stock(self) -> None:
+        """Enable allow_negative_stock in Stock Settings."""
+        self.put("/api/resource/Stock Settings/Stock Settings", {
+            "allow_negative_stock": 1,
+        })
 
     def grant_import_perm(self, doctype: str, role: str = "System Manager") -> None:
         """Add a Custom DocPerm with import=1. Idempotent at the row level

@@ -121,6 +121,9 @@ def run_live_import(
             yield {"event": "preflight", "doctype": doctype,
                    "status": "warning", "message": str(e)}
 
+    if _will_send_stock_reconciliation(files, selected_doctypes):
+        yield from _ensure_negative_stock(client)
+
     if _will_send_journal_entries(files, selected_doctypes):
         if opening_date:
             yield from _ensure_fiscal_year(client, opening_date)
@@ -325,6 +328,30 @@ def _poll_data_import_streaming(
         if warnings:
             err = f"{err} | warnings: {' | '.join(warnings)[:500]}"
         raise ErpnextError(f"Data Import {name} failed: {err}")
+
+
+def _will_send_stock_reconciliation(
+    files: list[str], selected_doctypes: list[str] | None,
+) -> bool:
+    selection = set(selected_doctypes) if selected_doctypes is not None else None
+    for f in files:
+        slug = _slug_from_filename(f)
+        dt = SLUG_TO_DOCTYPE.get(slug)
+        if dt != "Stock Reconciliation":
+            continue
+        if selection is None or dt in selection:
+            return True
+    return False
+
+
+def _ensure_negative_stock(client: ErpnextClient) -> Iterator[dict]:
+    """Enable allow_negative_stock before Stock Reconciliation import."""
+    try:
+        client.allow_negative_stock()
+        yield {"event": "preflight", "stage": "allow_negative_stock", "status": "ok"}
+    except ErpnextError as e:
+        yield {"event": "preflight", "stage": "allow_negative_stock",
+               "status": "warning", "message": str(e)}
 
 
 def _will_send_journal_entries(
