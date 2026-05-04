@@ -20,6 +20,7 @@ class TransformResponse(BaseModel):
     output_doctypes: Dict[str, int] = {}
     audit_report: Optional[Dict[str, Any]] = None
     setup_checklist_md: Optional[str] = None
+    bucket_coverage_md: Optional[str] = None
 
 
 class CounterReset(BaseModel):
@@ -91,6 +92,10 @@ class TableSelectionRequest(BaseModel):
     tables: List[str]
 
 
+class EntitySelectionRequest(BaseModel):
+    entities: List[str]
+
+
 class EditDataRequest(BaseModel):
     tables: Dict[str, List[Dict[str, Any]]]
 
@@ -98,5 +103,3 @@ class EditDataRequest(BaseModel):
 class EditDataResponse(BaseModel):
     ok: bool
     stats: Dict[str, Any]
-
-

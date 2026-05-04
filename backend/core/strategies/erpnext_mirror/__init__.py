@@ -7,8 +7,8 @@ from core.strategies.erpnext_shared.audit import emit_audit
 from core.strategies.erpnext_shared.context import Context
 from core.strategies.erpnext_shared.employees import emit_employees
 from core.strategies.erpnext_shared.items import emit_item_prices, emit_items
-from core.strategies.erpnext_shared.masters import emit_masters
-from core.strategies.erpnext_shared.parties import emit_parties
+from core.strategies.erpnext_shared.masters import emit_bank_masters, emit_item_masters
+from core.strategies.erpnext_shared.parties import emit_customers, emit_suppliers
 from core.strategies.erpnext_shared.stock_moves import emit_stock_opening
 
 
@@ -18,9 +18,7 @@ class ErpnextMirrorStrategy(TransformStrategy):
 
     The Al Arabi tree (~3,500 accounts, hierarchical Arabic naming) is
     emitted unchanged; opening balances are posted per-account with a
-    1:1 correspondence to legacy `ACCOUNTT`. Sibling strategy
-    `ErpnextNativeStrategy` aggregates onto ERPnext's standard chart
-    instead — see that module for the alternative.
+    1:1 correspondence to legacy `ACCOUNTT`.
     """
 
     name = "erpnext_mirror"
@@ -69,8 +67,7 @@ class ErpnextMirrorStrategy(TransformStrategy):
             "label": "Include legacy_* fields",
             "help": (
                 "Adds legacy_custid, cheque_owner_name, etc. as custom fields. "
-                "Required if you want post-migration traceback. Disable to skip "
-                "the Customize Form setup step."
+                "Required if you want post-migration traceback."
             ),
         },
     }
@@ -88,44 +85,30 @@ class ErpnextMirrorStrategy(TransformStrategy):
         ctx = Context.build(tables, config, result, table_loader=table_loader)
         self._record_intake(ctx)
 
-        emit_masters(ctx)
-        ctx.free_table("UNITT")
+        active = ctx.config.selected_entities
 
-        emit_items(ctx)
-        emit_item_prices(ctx)
-        ctx.free_table("CATEGORYT")
-        ctx.free_table("CATPRICET")
-        ctx.free_table("CATESYNONYMT")
-        ctx.free_table("CATSUPPLIERT")
-        ctx.free_table("CATDESCT")
-
-        emit_parties(ctx)
-        ctx.free_table("CONTACTST")
-
-        emit_accounts(ctx)
-
-        emit_opening_balances(ctx)
-        ctx.free_table("CUSTT")
-        ctx.free_table("SUPPLIERT")
-        ctx.free_table("CHEQUET")
-        for unused in (
-            "CATESINVDOCT", "CATESRETINVDOCT", "CATESRETINVDOCDETT",
-            "CATEPINVDOCT", "CATEPRETINVDOCT", "CATEPRETINVDOCDETT",
-            "RECDOCT", "RECDOCDETT", "PAYDOCT", "PAYDOCDETT",
-            "ENTRYDOCT", "ENTRYDOCDETT",
-            "STARTENTRYDOCT", "STARTENTRYDOCDETT",
-            "DNOTEDOCT", "DNOTEDOCDETT",
-        ):
-            ctx.free_table(unused)
-
-        emit_stock_opening(ctx)
-        ctx.free_table("CATSTORET")
-
-        emit_employees(ctx)
-        ctx.free_table("EMPLOYEET")
-        ctx.free_table("ACCOUNTT")
+        if "items" in active:
+            emit_item_masters(ctx)
+            emit_items(ctx)
+            emit_item_prices(ctx)
+        if "bank_accounts" in active:
+            emit_bank_masters(ctx)
+        if "customers" in active:
+            emit_customers(ctx)
+        if "suppliers" in active:
+            emit_suppliers(ctx)
+        if "chart_of_accounts" in active:
+            emit_accounts(ctx)
+        if "opening_balances" in active:
+            emit_opening_balances(ctx)
+        if "opening_stock" in active:
+            emit_stock_opening(ctx)
+        if "employees" in active:
+            emit_employees(ctx)
 
         emit_audit(ctx)
+        for tbl in list(ctx.legacy.keys()):
+            ctx.free_table(tbl)
         return result
 
     def _record_intake(self, ctx: Context) -> None:

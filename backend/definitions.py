@@ -57,6 +57,62 @@ CREATE_INDEX_AUDIT_EVENTS_RUN = (
     "CREATE INDEX IF NOT EXISTS idx_audit_events_run ON audit_events(run_id)"
 )
 
+CREATE_ERPNEXT_CREDS_TABLE = """
+    CREATE TABLE IF NOT EXISTS erpnext_credentials (
+        project_id    TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+        url           TEXT NOT NULL,
+        api_key       TEXT NOT NULL,
+        api_secret    TEXT NOT NULL,
+        company       TEXT,
+        company_abbr  TEXT,
+        updated_at    TEXT NOT NULL
+    )
+"""
+
+UPSERT_ERPNEXT_CREDS = """
+    INSERT INTO erpnext_credentials (project_id, url, api_key, api_secret, company, company_abbr, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(project_id) DO UPDATE SET
+        url = excluded.url,
+        api_key = excluded.api_key,
+        api_secret = excluded.api_secret,
+        company = excluded.company,
+        company_abbr = excluded.company_abbr,
+        updated_at = excluded.updated_at
+"""
+
+GET_ERPNEXT_CREDS = """
+    SELECT url, api_key, api_secret, company, company_abbr, updated_at
+    FROM erpnext_credentials WHERE project_id = ?
+"""
+
+CREATE_ERPNEXT_IMPORTS_TABLE = """
+    CREATE TABLE IF NOT EXISTS erpnext_imports (
+        project_id     TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        file_name      TEXT NOT NULL,
+        doctype        TEXT NOT NULL,
+        imported_count INTEGER NOT NULL DEFAULT 0,
+        completed_at   TEXT NOT NULL,
+        PRIMARY KEY (project_id, file_name)
+    )
+"""
+
+UPSERT_ERPNEXT_IMPORT = """
+    INSERT INTO erpnext_imports (project_id, file_name, doctype, imported_count, completed_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(project_id, file_name) DO UPDATE SET
+        doctype = excluded.doctype,
+        imported_count = excluded.imported_count,
+        completed_at = excluded.completed_at
+"""
+
+LIST_ERPNEXT_IMPORTS = """
+    SELECT file_name, doctype, imported_count, completed_at
+    FROM erpnext_imports WHERE project_id = ?
+"""
+
+CLEAR_ERPNEXT_IMPORTS = "DELETE FROM erpnext_imports WHERE project_id = ?"
+
 # --- Project queries ---
 
 INSERT_PROJECT = (

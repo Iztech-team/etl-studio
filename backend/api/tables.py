@@ -19,10 +19,15 @@ router = APIRouter()
 SKIP_EAGER_LOAD = {
     # Tables large enough that materializing as Python list[dict] is
     # the dominant RSS allocator. Strategy reads them via
-    # Context.iter_streamed() row-by-row instead.
-    "CATEGORYT",         # item master, ~19K rows × ~100 fields → 600MB+
-    "CATESINVDOCT",      # sales invoice headers, ~146K × wide rows
-    "CATESINVDOCDETT",   # sales invoice lines, ~1M+ rows
+    # Context.iter_streamed() row-by-row instead, or are not currently
+    # used by any migration strategy.
+    "CATEGORYT",  # item master, ~19K rows × ~100 fields → 600MB+
+    "CATESINVDOCT",  # sales invoice headers, ~146K × wide rows
+    "CATESINVDOCDETT",  # sales invoice lines, 256MB on disk
+    "CATLEDGERT",  # inventory costing ledger, 447MB on disk — not used by strategies
+    "LEDGERT",  # GL ledger, 147MB on disk — not used by strategies
+    "CATEPINVDOCDETT",  # purchase invoice lines, 3.3MB on disk
+    "CATESRETINVDOCDETT",  # sales return invoice lines, 1.9MB on disk
 }
 
 
@@ -63,10 +68,7 @@ def _ensure_rows_loaded(
     # Treat both 'missing key' and 'present-but-empty' as needs-loading.
     # Skip giant tables in SKIP_EAGER_LOAD — those are streamed by the
     # strategy via Context.iter_streamed() to keep peak RSS bounded.
-    needed = [
-        t for t in wanted
-        if not raw_tables.get(t) and t not in SKIP_EAGER_LOAD
-    ]
+    needed = [t for t in wanted if not raw_tables.get(t) and t not in SKIP_EAGER_LOAD]
     if not needed:
         return
 
@@ -108,7 +110,8 @@ async def get_table_data(session_id: str):
 
 @router.get("/table-data/{session_id}/{table_name}")
 async def get_table_page(
-    session_id: str, table_name: str,
+    session_id: str,
+    table_name: str,
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1, le=500),
 ):
@@ -130,7 +133,8 @@ async def get_table_page(
         "table": table_name,
         "rows": rows[start:end],
         "columns": list(rows[0].keys()) if rows else [],
-        "page": page, "page_size": page_size,
+        "page": page,
+        "page_size": page_size,
         "total_rows": total,
         "total_pages": max(1, (total + page_size - 1) // page_size),
     }
@@ -149,7 +153,9 @@ async def save_table_data(session_id: str, body: EditDataRequest):
             continue
         raw["tables"][table] = rows
 
-    stats = {table: {"row_count": len(rows)} for table, rows in raw.get("tables", {}).items()}
+    stats = {
+        table: {"row_count": len(rows)} for table, rows in raw.get("tables", {}).items()
+    }
     raw["stats"] = stats
     raw["preview"] = {t: rows[:5] for t, rows in raw.get("tables", {}).items()}
 
@@ -159,7 +165,12 @@ async def save_table_data(session_id: str, body: EditDataRequest):
     raw["schema"] = extractor._schema
 
     await _auto_save(session_id, "edit")
-    return {"ok": True, "stats": stats, "preview": raw["preview"], "schema": raw["schema"]}
+    return {
+        "ok": True,
+        "stats": stats,
+        "preview": raw["preview"],
+        "schema": raw["schema"],
+    }
 
 
 @router.get("/session/{session_id}/config")

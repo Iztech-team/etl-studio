@@ -206,6 +206,8 @@ async function fetchResumed(
 							(evt.excluded_tables as string[] | undefined) ?? [],
 						allExtractedTables:
 							(evt.all_extracted_tables as string[] | undefined) ?? [],
+						selectedEntities:
+							(evt.selected_entities as string[] | undefined) ?? [],
 						config: (evt.config as ResumedSession["config"]) ?? null,
 						transform:
 							(evt.transform as ResumedSession["transform"]) ?? null,

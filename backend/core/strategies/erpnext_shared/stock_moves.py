@@ -8,6 +8,7 @@ Stock Settings → Allow Negative Stock to be enabled before import.
 One Stock Reconciliation per warehouse — small store count (1 warehouse
 in our data) keeps this simple.
 """
+
 from typing import Iterable
 
 from core.strategies.erpnext_shared.common import (
@@ -32,15 +33,22 @@ def emit_stock_opening(ctx: Context) -> None:
         if not rows:
             ctx.result.bump("stock_recos_skipped_empty")
             continue
-        ctx.result.emit("Stock Reconciliation", _stock_reco_payload(
-            ctx, store_id, warehouse, rows,
-        ))
+        ctx.result.emit(
+            "Stock Reconciliation",
+            _stock_reco_payload(
+                ctx,
+                store_id,
+                warehouse,
+                rows,
+            ),
+        )
         ctx.result.bump("stock_recos_emitted")
         ctx.result.bump("stock_lines_emitted", len(rows))
         _count_negatives(rows, ctx)
 
 
 # -- Per-warehouse grouping ---------------------------------------------------
+
 
 def _group_stock_by_warehouse(
     ctx: Context,
@@ -55,6 +63,7 @@ def _group_stock_by_warehouse(
 
 
 # -- Reco payload + lines -----------------------------------------------------
+
 
 def _stock_reco_payload(
     ctx: Context,
@@ -71,7 +80,7 @@ def _stock_reco_payload(
         "set_posting_time": 1,
         "company": ctx.config.company_name,
         "set_warehouse": warehouse,
-        "expense_account": ctx.with_abbr("Stock Adjustment"),
+        "expense_account": ctx.with_abbr("Temporary Opening"),
         "docstatus": 1,
         "items": items,
         "legacy_storeid": store_id,
@@ -103,7 +112,7 @@ def _stock_line(
     if not catid:
         return None
     qty = parse_decimal(row.get("STARTQTY"))
-    if qty == 0:
+    if qty <= 0:
         return None
     rate = cost_by_catid.get(catid, 0.0)
     return {
@@ -111,10 +120,12 @@ def _stock_line(
         "warehouse": warehouse,
         "qty": qty,
         "valuation_rate": rate,
+        "allow_zero_valuation_rate": 1,
     }
 
 
 # -- Cost / valuation rate ----------------------------------------------------
+
 
 def _cost_lookup(ctx: Context) -> dict[str, float]:
     out: dict[str, float] = {}

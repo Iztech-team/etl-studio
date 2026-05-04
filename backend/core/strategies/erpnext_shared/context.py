@@ -4,6 +4,7 @@ Built once at the top of `ErpnextStrategy.transform`. Domain modules read
 from `ctx.legacy` / `ctx.accounts_by_id` / etc. and emit through
 `ctx.result.emit(...)`. Keeps domain module signatures small and uniform.
 """
+
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
 
@@ -16,6 +17,10 @@ from core.strategies.erpnext_shared.common import (
     supplier_id,
     with_abbr,
 )
+from core.strategies.erpnext_shared.entities import (
+    ALL_ENTITIES,
+    resolve_dependencies,
+)
 
 
 @dataclass
@@ -27,6 +32,9 @@ class Config:
     opening_date: str | None = None
     summarize_walkin_sales: bool = True
     include_legacy_fields: bool = True
+    selected_entities: frozenset[str] = field(
+        default_factory=lambda: frozenset(ALL_ENTITIES)
+    )
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "Config":
@@ -38,6 +46,7 @@ class Config:
             opening_date=clean_str(raw.get("opening_date")) or None,
             summarize_walkin_sales=bool(raw.get("summarize_walkin_sales", True)),
             include_legacy_fields=bool(raw.get("include_legacy_fields", True)),
+            selected_entities=resolve_dependencies(raw.get("selected_entities")),
         )
 
 
@@ -99,6 +108,7 @@ class Context:
         if name in self.legacy and self.legacy[name]:
             self.legacy[name] = []
             import gc
+
             gc.collect()
 
     def with_abbr(self, base: str) -> str:

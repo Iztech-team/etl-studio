@@ -14,6 +14,7 @@ This module knows nothing about how output_tables was generated — it
 just consumes the shape and writes correct Frappe CSVs. Audit report
 and migration checklist artifacts are written alongside as `99_*` files.
 """
+
 from __future__ import annotations
 
 import csv
@@ -36,7 +37,7 @@ CHUNK_SIZE = 5_000
 # before later-prefixed ones so cross-doctype references resolve.
 DOCTYPE_PREFIX: dict[str, str] = {
     # Independent masters (no link dependencies on other emitted doctypes)
-    "UOM": "01",          # custom UOMs only — v16 built-ins skipped
+    "UOM": "01",  # custom UOMs only — v16 built-ins skipped
     "Warehouse": "02",
     "Price List": "03",
     "Item Group": "04",
@@ -44,7 +45,7 @@ DOCTYPE_PREFIX: dict[str, str] = {
     "Bank": "06",
     # Tree doctypes (Account uses CoA Importer, not Data Import)
     "Account": "10",
-    "Bank Account": "11", # depends on Account + Bank
+    "Bank Account": "11",  # depends on Account + Bank
     # Parties (must precede Item — Item.supplier_items references Supplier)
     "Customer": "20",
     "Supplier": "21",
@@ -73,10 +74,16 @@ SPLITS = {
         ("63", "purchase_return", lambda r: bool(r.get("is_return"))),
     ],
     "Journal Entry": [
-        ("50", "journal_entry_opening",
-         lambda r: r.get("is_opening") in ("Yes", "yes", 1, True)),
-        ("71", "journal_entry",
-         lambda r: r.get("is_opening") not in ("Yes", "yes", 1, True)),
+        (
+            "50",
+            "journal_entry_opening",
+            lambda r: r.get("is_opening") in ("Yes", "yes", 1, True),
+        ),
+        (
+            "71",
+            "journal_entry",
+            lambda r: r.get("is_opening") not in ("Yes", "yes", 1, True),
+        ),
     ],
 }
 
@@ -86,6 +93,7 @@ def write_frappe_csvs(
     output_dir: str,
     audit_report: dict | None = None,
     checklist_md: str | None = None,
+    bucket_coverage_md: str | None = None,
     include_legacy_fields: bool = True,
     staging_dir: str | None = None,
 ) -> list[str]:
@@ -111,7 +119,14 @@ def write_frappe_csvs(
             continue
         cleaned = _strip_legacy(records) if not include_legacy_fields else records
         written.extend(_write_one_doctype(doctype, cleaned, output_dir))
-    written.extend(_write_audit_artifacts(output_dir, audit_report, checklist_md))
+    written.extend(
+        _write_audit_artifacts(
+            output_dir,
+            audit_report,
+            checklist_md,
+            bucket_coverage_md,
+        )
+    )
     written.sort()
     return written
 
@@ -166,7 +181,7 @@ _DOCTYPE_FROM_SAFE = {
 
 
 def _doctype_from_jsonl(fname: str) -> str:
-    stem = fname[:-len(".jsonl")]
+    stem = fname[: -len(".jsonl")]
     # JSONL stems come from `_safe_doctype()` which preserves case but
     # replaces spaces with underscores ('Bank Account' → 'Bank_Account').
     # The dict keys are lowercase, so normalize before lookup. Fall back
@@ -197,6 +212,7 @@ def _strip_one(record: dict) -> dict:
 
 # -- per-doctype dispatch -----------------------------------------------------
 
+
 def _write_one_doctype(
     doctype: str,
     records: list[dict],
@@ -223,38 +239,76 @@ def _write_one_doctype(
 # applies the abbr automatically when it creates each Frappe record.
 
 COA_HEADERS = [
-    "Account Name", "Parent Account", "Account Number",
-    "Parent Account Number", "Is Group", "Account Type",
-    "Root Type", "Account Currency",
+    "Account Name",
+    "Parent Account",
+    "Account Number",
+    "Parent Account Number",
+    "Is Group",
+    "Account Type",
+    "Root Type",
+    "Account Currency",
 ]
 
 
 def _write_coa_importer_csv(records: list[dict], output_dir: str) -> list[str]:
     path = os.path.join(output_dir, "10_account.csv")
+    # Build a child→parent_number map from the parent_account references
+    # (which carry the parent's number-prefixed autoname). The CoA
+    # Importer uses Account Number to disambiguate when multiple
+    # accounts share the same name in different branches.
+    parent_number_by_name = {
+        r.get("account_name") or "": r.get("account_number") or "" for r in records
+    }
     with open(path, "w", encoding="utf-8", newline="") as fh:
         writer = csv.writer(fh, quoting=csv.QUOTE_ALL)
         writer.writerow(COA_HEADERS)
         for r in records:
-            writer.writerow([
-                r.get("account_name", ""),
-                _coa_parent_short_name(r),
-                "",  # Account Number — legacy doesn't carry this
-                "",  # Parent Account Number — same
-                1 if r.get("is_group") else 0,
-                r.get("account_type", "") or "",
-                r.get("root_type", "") or "",
-                r.get("account_currency", "") or "",
-            ])
+            parent_short = _coa_parent_short_name(r)
+            parent_number = _coa_parent_number(r, parent_number_by_name)
+            writer.writerow(
+                [
+                    r.get("account_name", ""),
+                    parent_short,
+                    r.get("account_number", "") or "",
+                    parent_number,
+                    1 if r.get("is_group") else 0,
+                    r.get("account_type", "") or "",
+                    r.get("root_type", "") or "",
+                    r.get("account_currency", "") or "",
+                ]
+            )
     return [os.path.basename(path)]
 
 
 def _coa_parent_short_name(record: dict) -> str:
     """Account.parent_account in our records is the autonamed form
-    'X - {abbr}'; the CoA Importer wants the short name 'X'."""
+    '{number} - X - {abbr}' (or 'X - {abbr}' for legacy unknown rows).
+    The CoA Importer wants the short name 'X' alone."""
     parent = record.get("parent_account") or ""
-    if " - " in parent:
-        return parent.rsplit(" - ", 1)[0]
-    return parent
+    if not parent:
+        return ""
+    parts = parent.split(" - ")
+    # Strip leading numeric prefix (account_number) if present
+    if len(parts) >= 3 and parts[0].isdigit():
+        parts = parts[1:]
+    # Strip trailing company abbr
+    if len(parts) >= 2:
+        parts = parts[:-1]
+    return " - ".join(parts) if parts else parent
+
+
+def _coa_parent_number(record: dict, by_name: dict[str, str]) -> str:
+    """Resolve a record's parent's Account Number for the CoA Importer's
+    disambiguation column. We have the parent's autoname like
+    '{number} - X - {abbr}' on parent_account; pull the number out."""
+    parent = record.get("parent_account") or ""
+    if not parent:
+        return ""
+    head = parent.split(" - ", 1)[0]
+    if head.isdigit():
+        return head
+    short = _coa_parent_short_name(record)
+    return by_name.get(short, "")
 
 
 def _write_split_streams(
@@ -296,6 +350,7 @@ def _chunk(items: list[dict], size: int) -> Iterable[list[dict]]:
 
 
 # -- column / row layout (Frappe flat CSV) -----------------------------------
+
 
 def _write_csv(path: str, records: list[dict], doctype: str) -> None:
     parent_fields, child_tables = _collect_columns(records)
@@ -380,7 +435,9 @@ def _record_rows(
     for child_field, columns in child_tables.items():
         children = _child_rows(record.get(child_field))
         if children:
-            _fill_child_columns(first, child_field, columns, children[0], parent_doctype)
+            _fill_child_columns(
+                first, child_field, columns, children[0], parent_doctype
+            )
     yield first
 
     for child_field, columns in child_tables.items():
@@ -424,10 +481,12 @@ def _format_value(value: Any) -> Any:
 
 # -- audit / checklist artifacts ---------------------------------------------
 
+
 def _write_audit_artifacts(
     output_dir: str,
     audit_report: dict | None,
     checklist_md: str | None,
+    bucket_coverage_md: str | None = None,
 ) -> list[str]:
     out: list[str] = []
     if audit_report:
@@ -440,10 +499,16 @@ def _write_audit_artifacts(
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(checklist_md)
         out.append(os.path.basename(path))
+    if bucket_coverage_md:
+        path = os.path.join(output_dir, "99_native_bucket_coverage.md")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(bucket_coverage_md)
+        out.append(os.path.basename(path))
     return out
 
 
 # -- helpers ------------------------------------------------------------------
+
 
 def _slug(doctype: str) -> str:
     return doctype.lower().replace(" ", "_")

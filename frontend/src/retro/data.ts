@@ -7,6 +7,9 @@ export type Project = {
 	phase: string;
 	created_at: string;
 	updated_at: string;
+	last_run_status?: string | null;
+	last_run_note?: string | null;
+	last_run_phase?: string | null;
 };
 
 export type StageId =
@@ -59,6 +62,7 @@ export type ResumedSession = {
 	tables: string[];
 	excludedTables: string[];
 	allExtractedTables: string[];
+	selectedEntities: string[];
 	config: Record<string, unknown> | null;
 	transform: Record<string, unknown> | null;
 	loadResult: Record<string, unknown> | null;

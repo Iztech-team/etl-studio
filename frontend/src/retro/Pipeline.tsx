@@ -1,11 +1,13 @@
 import {
 	createContext,
+	Fragment,
 	useContext,
 	useEffect,
 	useMemo,
 	useRef,
 	useState,
 	type ChangeEvent,
+	type CSSProperties,
 	type DragEvent,
 	type ReactNode,
 } from "react";
@@ -43,6 +45,13 @@ type UploadResult = {
 	schema: Record<string, Record<string, unknown>>;
 	stats: Record<string, { row_count: number }>;
 	excludedTables: string[];
+	selectedEntities: string[];
+};
+
+type EntityDescriptor = {
+	id: string;
+	label: string;
+	depends_on: string[];
 };
 
 type AuditCheck = {
@@ -168,6 +177,7 @@ function PipelineProvider({
 			schema: resumed.schema,
 			stats: resumed.stats,
 			excludedTables: resumed.excludedTables ?? [],
+			selectedEntities: resumed.selectedEntities ?? [],
 		};
 	});
 	const [transformResult, setTransformResult] = useState<TransformResult | null>(() => {
@@ -359,6 +369,7 @@ function donePayloadToUploadResult(data: DonePayload): UploadResult {
 		schema: data.inferred_schema ?? {},
 		stats: data.stats ?? {},
 		excludedTables: [],
+		selectedEntities: [],
 	};
 }
 
@@ -543,6 +554,7 @@ async function uploadToBackend(
 		schema,
 		stats,
 		excludedTables: [],
+		selectedEntities: [],
 	};
 }
 
@@ -1940,227 +1952,81 @@ function TablePreviewModal({
 
 // ---------- extract ----------
 
-const EXTRACT_KEYS = [
-	{
-		title: "NAVIGATION",
-		bindings: [
-			{ keys: ["j", "↓"], label: "next table" },
-			{ keys: ["k", "↑"], label: "prev table" },
-			{ keys: ["/"], label: "focus search" },
-		],
-	},
-	{
-		title: "SELECTION",
-		bindings: [
-			{ keys: ["Space", "d"], label: "toggle table" },
-			{ keys: ["a"], label: "toggle all / filtered" },
-			{ keys: ["e"], label: "deselect empty" },
-		],
-	},
-	{
-		title: "ACTIONS",
-		bindings: [
-			{ keys: ["p"], label: "preview focused table" },
-			{ keys: ["Enter"], label: "proceed to transform" },
-		],
-	},
-];
-
 function RlExtract({ onNext }: { onNext: () => void }) {
-	const {
-		uploadResult,
-		setUploadResult,
-		transformResult,
-		setTransformResult,
-		setLoadResult,
-	} = usePipelineCtx();
-	const [previewTable, setPreviewTable] = useState<string | null>(null);
+	const { uploadResult, setUploadResult, setTransformResult, setLoadResult } =
+		usePipelineCtx();
+	const [entities, setEntities] = useState<EntityDescriptor[] | null>(null);
+	const [picks, setPicks] = useState<Set<string>>(new Set());
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const [search, setSearch] = useState("");
-	const [focusIdx, setFocusIdx] = useState(0);
-	const searchRef = useRef<HTMLInputElement>(null);
-	const proceedRef = useRef<() => void>(() => {});
-
-	const tables = uploadResult?.tables ?? [];
-	const schema = uploadResult?.schema ?? {};
-	const excludedSet = useMemo(
-		() => new Set(uploadResult?.excludedTables ?? []),
-		[uploadResult?.excludedTables],
-	);
-
-	const rows = useMemo(() => {
-		return tables.map((t) => {
-			const colTypes = Object.values(schema[t.name] ?? {}) as string[];
-			const uniqueTypes = Array.from(
-				new Set(
-					colTypes.map((v) =>
-						typeof v === "string" ? v.toUpperCase() : "TEXT",
-					),
-				),
-			);
-			return {
-				n: t.name,
-				r: t.rowCount,
-				c: t.colCount,
-				types: uniqueTypes.length > 0 ? uniqueTypes.slice(0, 4) : ["TEXT"],
-			};
-		});
-	}, [tables, schema]);
-
-	// Selection state, keyed by table name so it survives re-orderings.
-	// Initial pick state honours any tables that were previously excluded
-	// (e.g. when the user navigates back to the extract stage from a later
-	// stage).
-	const [picked, setPicked] = useState<Record<string, boolean>>(() =>
-		Object.fromEntries(tables.map((t) => [t.name, !excludedSet.has(t.name)])),
-	);
-
-	// If tables change (new extraction) or excluded set changes, re-sync.
-	useEffect(() => {
-		setPicked((prev) => {
-			const next: Record<string, boolean> = {};
-			let same = Object.keys(prev).length === tables.length;
-			for (const t of tables) {
-				const defaultPicked = !excludedSet.has(t.name);
-				next[t.name] = t.name in prev ? prev[t.name] : defaultPicked;
-				if (!(t.name in prev)) same = false;
-			}
-			return same ? prev : next;
-		});
-	}, [tables, excludedSet]);
-
-	const filtered = useMemo(() => {
-		if (!search.trim()) return rows;
-		const q = search.trim().toLowerCase();
-		return rows.filter((r) => r.n.toLowerCase().includes(q));
-	}, [rows, search]);
 
 	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			const target = e.target as HTMLElement;
-			const isInput = target.tagName === "INPUT" || target.tagName === "TEXTAREA";
-			if (isInput) return;
+		let cancelled = false;
+		fetch("/api/entities")
+			.then((r) => r.json())
+			.then((d) => {
+				if (cancelled) return;
+				const list = (d.entities ?? []) as EntityDescriptor[];
+				setEntities(list);
+				const prev = uploadResult?.selectedEntities ?? [];
+				setPicks(prev.length > 0
+					? new Set(prev)
+					: new Set(list.map((e) => e.id)));
+			})
+			.catch((e) => { if (!cancelled) setError(String(e)); });
+		return () => { cancelled = true; };
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
 
-			switch (e.key.toLowerCase()) {
-				case "arrowup":
-				case "k":
-					e.preventDefault();
-					setFocusIdx((i) => Math.max(0, i - 1));
-					break;
-				case "arrowdown":
-				case "j":
-					e.preventDefault();
-					setFocusIdx((i) => Math.min(filtered.length - 1, i + 1));
-					break;
-				case "enter":
-				case "d":
-				case " ":
-					if (filtered.length > 0 && focusIdx < filtered.length) {
-						e.preventDefault();
-						const tableName = filtered[focusIdx].n;
-						togglePick(tableName);
-					}
-					break;
-				case "p":
-					if (filtered.length > 0 && focusIdx < filtered.length && uploadResult?.sessionId) {
-						e.preventDefault();
-						setPreviewTable(filtered[focusIdx].n);
-					}
-					break;
-				case "e":
-					e.preventDefault();
-					deselectEmpty();
-					break;
-				case "a":
-					e.preventDefault();
-					toggleAllTables();
-					break;
-				case "/":
-					e.preventDefault();
-					searchRef.current?.focus();
-					break;
-				case "enter": {
-					const count = rows.filter((r) => picked[r.n]).length;
-					if (count > 0 && !saving) {
-						e.preventDefault();
-						proceedRef.current();
-					}
-					break;
-				}
-			}
-		};
-		window.addEventListener("keydown", handleKeyDown);
-		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [focusIdx, filtered, rows, picked, saving, uploadResult?.sessionId]);
-
-	const pickedCount = rows.filter((r) => picked[r.n]).length;
-	const pickedRowCount = rows.reduce(
-		(a, r) => a + (picked[r.n] ? r.r : 0),
-		0,
+	const effective = useMemo(
+		() => (entities ? resolveEntityDeps(picks, entities) : new Set<string>()),
+		[picks, entities],
 	);
-	const emptyCount = rows.filter((r) => r.r === 0 && picked[r.n]).length;
 
-	const togglePick = (name: string) =>
-		setPicked((p) => ({ ...p, [name]: !p[name] }));
+	const labelMap = useMemo(
+		() => Object.fromEntries((entities ?? []).map((e) => [e.id, e.label])),
+		[entities],
+	);
 
-	const allFilteredPicked = filtered.every((r) => picked[r.n]);
-	const toggleAllFiltered = () => {
-		setPicked((p) => {
-			const next = { ...p };
-			const target = !allFilteredPicked;
-			for (const r of filtered) next[r.n] = target;
-			return next;
-		});
-	};
+	if (!entities) {
+		return (
+			<div className="mono" style={{ fontSize: 11, color: "var(--lg-ink-dim)", padding: 24 }}>
+				Loading entities…
+			</div>
+		);
+	}
 
-	const allTablesPicked = rows.every((r) => picked[r.n]);
-	const toggleAllTables = () => {
-		setPicked((p) => {
-			const next = { ...p };
-			const target = !allTablesPicked;
-			for (const r of rows) next[r.n] = target;
-			return next;
-		});
-	};
-
-	const deselectEmpty = () => {
-		setPicked((p) => {
-			const next = { ...p };
-			for (const r of rows) if (r.r === 0) next[r.n] = false;
+	const togglePick = (id: string) => {
+		setPicks((prev) => {
+			const next = new Set(prev);
+			if (next.has(id)) {
+				next.delete(id);
+				for (const dep of entityDependents(id, entities)) next.delete(dep);
+			} else {
+				next.add(id);
+			}
 			return next;
 		});
 	};
 
 	const proceed = async () => {
-		if (!uploadResult?.sessionId) return;
-		const selectedNames = rows.filter((r) => picked[r.n]).map((r) => r.n);
+		const sid = uploadResult?.sessionId;
+		if (!sid) return;
 		setSaving(true);
 		setError(null);
 		try {
-			const res = await fetch(
-				`/api/pre-extract-select/${uploadResult.sessionId}`,
-				{
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ tables: selectedNames }),
-				},
-			);
+			const res = await fetch(`/api/select-entities/${sid}`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ entities: Array.from(picks) }),
+			});
 			if (!res.ok) {
 				const err = await res.json().catch(() => null);
-				throw new Error(err?.detail || "Selection failed");
+				throw new Error(err?.detail ?? "Selection failed");
 			}
-			const data = (await res.json()) as {
-				ok: boolean;
-				changed: boolean;
-				kept: string[];
-				excluded: string[];
-			};
+			const data = (await res.json()) as { selected: string[]; changed: boolean };
 			if (uploadResult) {
-				setUploadResult({
-					...uploadResult,
-					excludedTables: data.excluded,
-				});
+				setUploadResult({ ...uploadResult, selectedEntities: data.selected });
 			}
 			if (data.changed) {
 				setTransformResult(null);
@@ -2173,273 +2039,177 @@ function RlExtract({ onNext }: { onNext: () => void }) {
 			setSaving(false);
 		}
 	};
-	proceedRef.current = proceed;
 
 	return (
-		<div
-			style={{
-				display: "grid",
-				gridTemplateColumns: "1fr 320px",
-				gap: 14,
-				marginTop: 14,
-			}}
-		>
-			{previewTable && uploadResult?.sessionId && (
-				<TablePreviewModal
-					sessionId={uploadResult.sessionId}
-					tableName={previewTable}
-					onClose={() => setPreviewTable(null)}
-				/>
-			)}
-			<div className="panel">
-				<div
-					className="panel-head"
-					style={{ display: "flex", alignItems: "center", gap: 12 }}
-				>
-					<IDisk size={10} />
-					<span>
-						EXTRACTED {tables.length} · {pickedCount} PICKED
-					</span>
-					<div style={{ flex: 1 }} />
-					<input
-						ref={searchRef}
-						className="input"
-						placeholder="Search… [/]"
-						value={search}
-						onChange={(e) => setSearch(e.target.value)}
-						onKeyDown={(e) => { if (e.key === "Escape") { e.currentTarget.blur(); setSearch(""); } }}
-						style={{
-							fontSize: 10,
-							padding: "3px 8px",
-							width: 160,
-							background: "var(--lg-bg)",
-							border: "1px solid var(--lg-border)",
-							color: "var(--lg-ink)",
-							fontFamily: "var(--lg-mono)",
-							textTransform: "none",
-							letterSpacing: 0,
-						}}
-					/>
-					<button
-						className="btn btn-ghost"
-						style={{ padding: "3px 10px", fontSize: 9 }}
-						onClick={toggleAllFiltered}
-						disabled={filtered.length === 0}
-					>
-						{allFilteredPicked ? "DESELECT" : "SELECT"}{" "}
-						{search ? "FILTERED" : "ALL"}
-					</button>
+		<div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
+			<div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+				<div className="pixel glow-amber" style={{ fontSize: 11, color: "var(--lg-amber)" }}>
+					▣ EXTRACT — pick what to migrate
 				</div>
-				<div className="panel-body" style={{ padding: 0 }}>
-					{filtered.length === 0 ? (
-						<div
-							className="mono"
-							style={{
-								fontSize: 11,
-								color: "var(--lg-ink-mute)",
-								padding: 30,
-								textAlign: "center",
-							}}
-						>
-							{rows.length === 0
-								? "No tables extracted yet. Go back to Upload first."
-								: `No tables match "${search}".`}
-						</div>
-					) : (
-						<table className="table">
-							<thead>
-								<tr>
-									<th style={{ width: 30 }}></th>
-									<th>TABLE</th>
-									<th>ROWS</th>
-									<th>COLS</th>
-									<th>TYPES</th>
-									<th style={{ width: 70 }}></th>
-								</tr>
-							</thead>
-							<tbody>
-								{filtered.map((t, idx) => {
-									const isPicked = !!picked[t.n];
-										const isFocused = idx === focusIdx;
-									return (
-										<tr
-											key={t.n}
-											onClick={() => togglePick(t.n)}
-											style={{ cursor: "pointer", background: isFocused ? "var(--lg-bg-2)" : undefined }}
-											className={isPicked ? "row-selected" : ""}
-										>
-											<td>
-												<div
-													style={{
-														width: 12,
-														height: 12,
-														border: "1px solid var(--lg-amber)",
-														background: isPicked
-															? "var(--lg-amber)"
-															: "transparent",
-														display: "flex",
-														alignItems: "center",
-														justifyContent: "center",
-														color: "#0a0410",
-													}}
-												>
-													{isPicked && <ICheck size={8} />}
-												</div>
-											</td>
-											<td
-												style={{
-													fontFamily: "var(--lg-pixel)",
-													fontSize: 9,
-													color: "var(--lg-amber)",
-													letterSpacing: "0.1em",
-												}}
-											>
-												{t.n.toUpperCase()}
-											</td>
-											<td
-												style={{
-													fontVariantNumeric: "tabular-nums",
-													color:
-														t.r === 0 ? "var(--lg-ink-mute)" : undefined,
-												}}
-											>
-												{t.r.toLocaleString()}
-											</td>
-											<td>{t.c}</td>
-											<td>
-												<div
-													style={{ display: "flex", gap: 4, flexWrap: "wrap" }}
-												>
-													{t.types.map((tp) => (
-														<span key={tp} className="badge badge-mute">
-															{tp}
-														</span>
-													))}
-												</div>
-											</td>
-											<td onClick={(e) => e.stopPropagation()}>
-												<button
-													className="btn btn-ghost"
-													style={{ padding: "2px 8px", fontSize: 9 }}
-													onClick={() => setPreviewTable(t.n)}
-												>
-													PREVIEW
-												</button>
-											</td>
-										</tr>
-									);
-								})}
-							</tbody>
-						</table>
-					)}
+				<div style={{ flex: 1 }} />
+				<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}>
+					{effective.size} of {entities.length} selected
 				</div>
 			</div>
-			<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-				<div className="panel">
-					<div className="panel-head">SELECTED</div>
-					<div className="panel-body">
-						<div
-							className="pixel"
-							style={{ fontSize: 28, color: "var(--lg-amber)" }}
-						>
-							{String(pickedCount).padStart(2, "0")} / {tables.length} TBLS
-						</div>
-						<div
-							className="mono"
-							style={{
-								fontSize: 11,
-								color: "var(--lg-ink-dim)",
-								marginTop: 4,
-							}}
-						>
-							{pickedRowCount.toLocaleString()} ROWS
-						</div>
-					</div>
-				</div>
-				<div className="panel">
-					<div className="panel-head">QUICK ACTIONS</div>
-					<div
-						className="panel-body"
-						style={{ display: "flex", flexDirection: "column", gap: 8 }}
-					>
-						<button
-							className="btn btn-ghost"
-							style={{ fontSize: 10, padding: "6px 10px" }}
-							onClick={deselectEmpty}
-							disabled={emptyCount === 0}
-							title="Uncheck every table that has zero rows"
-						>
-							DESELECT EMPTY ({emptyCount})
-						</button>
-						<div
-							className="mono"
-							style={{
-								fontSize: 10,
-								color: "var(--lg-ink-mute)",
-								lineHeight: 1.6,
-							}}
-						>
-							Click a row to toggle selection. Use Search to find tables.
-							Preview shows the first 100 rows.
-						</div>
-					</div>
-				</div>
-				{(() => {
-					const currentExcluded = new Set(
-						rows.filter((r) => !picked[r.n]).map((r) => r.n),
+
+			<div
+				style={{
+					display: "grid",
+					gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+					gap: 10,
+				}}
+			>
+				{entities.map((e) => {
+					const userPicked = picks.has(e.id);
+					const forced = !userPicked && effective.has(e.id);
+					return (
+						<EntityCard
+							key={e.id}
+							entity={e}
+							picked={userPicked}
+							forced={forced}
+							depLabels={e.depends_on.map((d) => labelMap[d] ?? d)}
+							onToggle={() => togglePick(e.id)}
+						/>
 					);
-					const prevExcluded = excludedSet;
-					let diff = currentExcluded.size !== prevExcluded.size;
-					if (!diff) {
-						for (const n of currentExcluded) {
-							if (!prevExcluded.has(n)) {
-								diff = true;
-								break;
-							}
-						}
-					}
-					if (diff && transformResult) {
-						return (
-							<div
-								className="mono"
-								style={{
-									fontSize: 10,
-									padding: "8px 10px",
-									border: "1px solid var(--lg-amber, #c79b00)",
-									color: "var(--lg-amber, #c79b00)",
-									lineHeight: 1.5,
-								}}
-							>
-								{"> "}Changing the selection will reset transform & export
-								results. Configure work for tables that remain selected is
-								preserved.
-							</div>
-						);
-					}
-					return null;
-				})()}
-				{error && (
-					<div
-						className="mono"
-						style={{ fontSize: 11, color: "var(--lg-coral)" }}
-					>
-						{"> "}
-						{error}
-					</div>
-				)}
-				<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-					<CheatSheet groups={EXTRACT_KEYS} />
-					<button
-						className="btn btn-primary"
-						onClick={proceed}
-						disabled={pickedCount === 0 || saving}
-					>
-						{saving ? "SAVING…" : "CONTINUE TO TRANSFORM"} <IArrow size={10} />
-					</button>
+				})}
+			</div>
+
+			{error && (
+				<div className="mono" style={{ fontSize: 11, color: "var(--lg-coral)" }}>
+					{"> "}{error}
 				</div>
+			)}
+
+			<div style={{ display: "flex", justifyContent: "flex-end" }}>
+				<button
+					className="btn btn-primary"
+					onClick={proceed}
+					disabled={effective.size === 0 || saving || !uploadResult?.sessionId}
+				>
+					{saving ? "SAVING…" : "CONTINUE TO TRANSFORM"} <IArrow size={10} />
+				</button>
 			</div>
 		</div>
 	);
+}
+
+
+function EntityCard({
+	entity,
+	picked,
+	forced,
+	depLabels,
+	onToggle,
+}: {
+	entity: EntityDescriptor;
+	picked: boolean;
+	forced: boolean;
+	depLabels: string[];
+	onToggle: () => void;
+}) {
+	const active = picked || forced;
+	return (
+		<button
+			onClick={forced ? undefined : onToggle}
+			className="btn"
+			disabled={forced}
+			title={forced ? "Auto-included as a dependency" : ""}
+			style={{
+				textAlign: "left",
+				padding: "12px 14px",
+				borderColor: active ? "var(--lg-amber)" : "var(--lg-border-br)",
+				background: forced
+					? "rgba(199,155,0,0.04)"
+					: picked
+					? "rgba(199,155,0,0.08)"
+					: "transparent",
+				opacity: forced ? 0.7 : 1,
+				cursor: forced ? "not-allowed" : "pointer",
+				display: "flex",
+				flexDirection: "column",
+				gap: 6,
+				textTransform: "none",
+				letterSpacing: 0,
+			}}
+		>
+			<div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+				<span
+					style={{
+						display: "inline-flex",
+						alignItems: "center",
+						justifyContent: "center",
+						width: 14,
+						height: 14,
+						border: "1px solid var(--lg-amber)",
+						background: active ? "var(--lg-amber)" : "transparent",
+						color: "#0a0410",
+						flexShrink: 0,
+					}}
+				>
+					{active && <ICheck size={8} />}
+				</span>
+				<span
+					className="pixel"
+					style={{
+						fontSize: 12,
+						color: active ? "var(--lg-amber)" : "var(--lg-ink)",
+						letterSpacing: "0.05em",
+					}}
+				>
+					{entity.label.toUpperCase()}
+				</span>
+			</div>
+			{forced ? (
+				<span className="mono" style={{ fontSize: 9, color: "var(--lg-ink-mute)" }}>
+					auto-included
+				</span>
+			) : depLabels.length > 0 ? (
+				<span className="mono" style={{ fontSize: 9, color: "var(--lg-ink-dim)" }}>
+					requires: {depLabels.join(", ")}
+				</span>
+			) : null}
+		</button>
+	);
+}
+
+
+function resolveEntityDeps(picks: Set<string>, all: EntityDescriptor[]): Set<string> {
+	const out = new Set(picks);
+	let changed = true;
+	while (changed) {
+		changed = false;
+		for (const e of all) {
+			if (!out.has(e.id)) continue;
+			for (const d of e.depends_on) {
+				if (!out.has(d)) {
+					out.add(d);
+					changed = true;
+				}
+			}
+		}
+	}
+	return out;
+}
+
+
+function entityDependents(id: string, all: EntityDescriptor[]): Set<string> {
+	const out = new Set<string>();
+	let changed = true;
+	while (changed) {
+		changed = false;
+		for (const e of all) {
+			if (out.has(e.id)) continue;
+			for (const dep of e.depends_on) {
+				if (dep === id || out.has(dep)) {
+					out.add(e.id);
+					changed = true;
+					break;
+				}
+			}
+		}
+	}
+	return out;
 }
 
 // Reusable scrollable table-picker for stages with many tables.
@@ -2654,44 +2424,6 @@ function RlTableSidebar({
 //   3) save to /api/strategies/{sid}; trigger /api/transform/{sid}
 //   4) show preservation audit + per-doctype counts
 
-const TRANSFORM_KEYS = [
-	{
-		title: "COLUMN LIST",
-		bindings: [
-			{ keys: ["j", "↓"], label: "next column" },
-			{ keys: ["k", "↑"], label: "prev column" },
-			{ keys: ["d"], label: "toggle drop" },
-			{ keys: ["c"], label: "toggle cast" },
-			{ keys: ["r"], label: "rename column" },
-			{ keys: ["Alt+r"], label: "rename table" },
-		],
-	},
-	{
-		title: "TABLE SIDEBAR",
-		bindings: [
-			{ keys: ["Tab"], label: "next table" },
-			{ keys: ["Shift+Tab"], label: "prev table" },
-			{ keys: ["Shift+H"], label: "focus sidebar" },
-			{ keys: ["Shift+L"], label: "focus columns" },
-		],
-	},
-	{
-		title: "TRANSFORM CARDS",
-		bindings: [
-			{ keys: ["t"], label: "add transform" },
-			{ keys: ["j", "k"], label: "navigate cards" },
-			{ keys: ["Enter"], label: "edit focused card" },
-			{ keys: ["Del", "⌫"], label: "remove focused card" },
-		],
-	},
-	{
-		title: "ACTIONS",
-		bindings: [
-			{ keys: ["Ctrl+s"], label: "run transform / proceed" },
-		],
-	},
-];
-
 function RlTransform({ onNext }: { onNext: () => void }) {
 	const { uploadResult, transformResult, setTransformResult, projectId, projectName } =
 		usePipelineCtx();
@@ -2702,6 +2434,11 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 	const [running, setRunning] = useState(false);
 	const [runErr, setRunErr] = useState<string | null>(null);
 	const [result, setResult] = useState<TransformResult | null>(transformResult ?? null);
+	// Strategy is only "equipped" once the user fills out config in the modal
+	// and confirms — that's when pickedName + config get committed. Until
+	// then we hold a draft so cancel doesn't clobber the active equip.
+	const [configModalFor, setConfigModalFor] = useState<string | null>(null);
+	const [draftConfig, setDraftConfig] = useState<Record<string, unknown>>({});
 
 	useEffect(() => {
 		let cancelled = false;
@@ -2713,10 +2450,6 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 				if (cancelled) return;
 				const list = (json.strategies ?? []) as StrategyDescriptor[];
 				setStrategies(list);
-				if (list.length > 0 && !pickedName) {
-					setPickedName(list[0].name);
-					setConfig(smartDefaults(list[0].config_schema, projectName));
-				}
 			} catch (e) {
 				if (!cancelled) setLoadErr(e instanceof Error ? e.message : "load failed");
 			}
@@ -2725,18 +2458,36 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 		return () => {
 			cancelled = true;
 		};
-		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
-
-	useEffect(() => {
-		if (!pickedName || !strategies) return;
-		const s = strategies.find((x) => x.name === pickedName);
-		if (s) setConfig((prev) => ({ ...smartDefaults(s.config_schema, projectName), ...prev }));
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [pickedName, strategies]);
 
 	const picked = strategies?.find((s) => s.name === pickedName) ?? null;
 	const missingFields = picked ? requiredMissing(picked.config_schema, config) : [];
+
+	const openConfigModal = (name: string) => {
+		const s = strategies?.find((x) => x.name === name);
+		if (!s) return;
+		// Re-editing the equipped strategy keeps the existing config; picking
+		// a fresh one starts from smartDefaults so the user doesn't lose
+		// values they just set on a different strategy mid-flow.
+		setDraftConfig(
+			pickedName === name
+				? config
+				: smartDefaults(s.config_schema, projectName),
+		);
+		setConfigModalFor(name);
+	};
+
+	const equipStrategy = () => {
+		if (!configModalFor) return;
+		setPickedName(configModalFor);
+		setConfig(draftConfig);
+		setConfigModalFor(null);
+	};
+
+	const cancelConfigModal = () => setConfigModalFor(null);
+
+	const modalStrategy =
+		(configModalFor && strategies?.find((s) => s.name === configModalFor)) || null;
 
 	const runTransform = async () => {
 		if (!uploadResult?.sessionId || !pickedName) return;
@@ -2809,25 +2560,29 @@ function RlTransform({ onNext }: { onNext: () => void }) {
 					<StrategyPicker
 						strategies={strategies}
 						pickedName={pickedName}
-						onPick={setPickedName}
+						onPick={openConfigModal}
 					/>
-					{picked && (
-						<StrategyConfigForm
-							schema={picked.config_schema}
-							value={config}
-							onChange={setConfig}
-						/>
-					)}
 					{runErr && <RlErrorPanel message={runErr} />}
 					{running && <TransformRunningPanel />}
 					<TransformActions
-						disabled={running || !uploadResult?.sessionId || missingFields.length > 0}
+						disabled={running || !uploadResult?.sessionId || !pickedName || missingFields.length > 0}
 						running={running}
 						missingFields={missingFields}
 						onRun={runTransform}
 						picked={picked}
+						onEditConfig={pickedName ? () => openConfigModal(pickedName) : undefined}
 					/>
 				</>
+			)}
+
+			{modalStrategy && (
+				<StrategyConfigModal
+					strategy={modalStrategy}
+					config={draftConfig}
+					onChange={setDraftConfig}
+					onEquip={equipStrategy}
+					onCancel={cancelConfigModal}
+				/>
 			)}
 		</div>
 	);
@@ -3174,16 +2929,7 @@ function StrategyConfigForm({
 	const entries = Object.entries(schema);
 	if (entries.length === 0) return null;
 	return (
-		<div
-			style={{
-				display: "grid",
-				gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-				gap: 14,
-				padding: "12px 14px",
-				border: "1px solid var(--lg-border)",
-				background: "var(--lg-bg-2)",
-			}}
-		>
+		<div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 			{entries.map(([key, field]) => (
 				<ConfigField
 					key={key}
@@ -3212,41 +2958,58 @@ function ConfigField({
 	const required = !!field.required;
 	const help = field.help;
 	const type = field.type ?? "string";
+
+	if (type === "boolean") {
+		return (
+			<label
+				className="mono"
+				title={help}
+				style={{
+					display: "flex",
+					alignItems: "center",
+					gap: 10,
+					fontSize: 12,
+					color: "var(--lg-ink)",
+				}}
+			>
+				<input
+					type="checkbox"
+					checked={!!value}
+					onChange={(e) => onChange(e.target.checked)}
+				/>
+				<span>
+					{label}
+					{required ? " *" : ""}
+				</span>
+			</label>
+		);
+	}
+
 	return (
-		<label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-			<span className="pixel" style={{ fontSize: 9, color: "var(--lg-ink-mute)", letterSpacing: "0.1em" }}>
+		<label
+			title={help}
+			style={{ display: "flex", flexDirection: "column", gap: 4 }}
+		>
+			<span
+				className="pixel"
+				style={{ fontSize: 9, color: "var(--lg-ink-mute)", letterSpacing: "0.1em" }}
+			>
 				{label}
 				{required ? " *" : ""}
 			</span>
-			{type === "boolean" ? (
-				<label className="mono" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "var(--lg-ink)" }}>
-					<input
-						type="checkbox"
-						checked={!!value}
-						onChange={(e) => onChange(e.target.checked)}
-					/>
-					{help || "enabled"}
-				</label>
-			) : (
-				<input
-					type={type === "date" ? "date" : "text"}
-					className="mono"
-					value={(value as string | number | undefined) ?? ""}
-					onChange={(e) => onChange(e.target.value)}
-					style={{
-						background: "var(--lg-bg-2)",
-						border: "1px solid var(--lg-border-br)",
-						color: "var(--lg-ink)",
-						padding: "8px 10px",
-						fontSize: 12,
-					}}
-				/>
-			)}
-			{help && type !== "boolean" && (
-				<span className="mono" style={{ fontSize: 9, color: "var(--lg-ink-dim)" }}>
-					{help}
-				</span>
-			)}
+			<input
+				type={type === "date" ? "date" : "text"}
+				className="mono"
+				value={(value as string | number | undefined) ?? ""}
+				onChange={(e) => onChange(e.target.value)}
+				style={{
+					background: "var(--lg-bg-2)",
+					border: "1px solid var(--lg-border-br)",
+					color: "var(--lg-ink)",
+					padding: "8px 10px",
+					fontSize: 12,
+				}}
+			/>
 		</label>
 	);
 }
@@ -3257,12 +3020,14 @@ function TransformActions({
 	missingFields,
 	onRun,
 	picked,
+	onEditConfig,
 }: {
 	disabled: boolean;
 	running: boolean;
 	missingFields: string[];
 	onRun: () => void;
 	picked: StrategyDescriptor | null;
+	onEditConfig?: () => void;
 }) {
 	const stats = picked?.stats ?? {};
 	const summary = picked
@@ -3288,10 +3053,10 @@ function TransformActions({
 		>
 			<div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
 				<div className="pixel" style={{ fontSize: 9, color: "var(--lg-ink-mute)", letterSpacing: "0.15em" }}>
-					SELECTED:
+					EQUIPPED:
 				</div>
 				<div className="mono" style={{ fontSize: 12, color: "var(--lg-ink)" }}>
-					{summary}
+					{picked ? summary : "— pick a strategy above —"}
 				</div>
 				{missingFields.length > 0 && (
 					<div className="mono" style={{ fontSize: 10, color: "var(--lg-coral)" }}>
@@ -3299,14 +3064,152 @@ function TransformActions({
 					</div>
 				)}
 			</div>
-			<button
-				className={`btn btn-primary ${!disabled ? "pulse" : ""}`}
-				disabled={disabled}
-				onClick={onRun}
-				style={{ fontSize: 12, padding: "12px 24px" }}
+			<div style={{ display: "flex", gap: 8 }}>
+				{picked && onEditConfig && (
+					<button
+						className="btn btn-ghost"
+						onClick={onEditConfig}
+						style={{ fontSize: 11, padding: "12px 16px" }}
+					>
+						EDIT CONFIG
+					</button>
+				)}
+				<button
+					className={`btn btn-primary ${!disabled ? "pulse" : ""}`}
+					disabled={disabled}
+					onClick={onRun}
+					style={{ fontSize: 12, padding: "12px 24px" }}
+				>
+					{running ? "TRANSFORMING…" : "▶ TRANSFORM"}
+				</button>
+			</div>
+		</div>
+	);
+}
+
+
+function StrategyConfigModal({
+	strategy,
+	config,
+	onChange,
+	onEquip,
+	onCancel,
+}: {
+	strategy: StrategyDescriptor;
+	config: Record<string, unknown>;
+	onChange: (next: Record<string, unknown>) => void;
+	onEquip: () => void;
+	onCancel: () => void;
+}) {
+	const missing = requiredMissing(strategy.config_schema, config);
+	const hasFields = Object.keys(strategy.config_schema).length > 0;
+
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") onCancel();
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [onCancel]);
+
+	return (
+		<div
+			style={{
+				position: "fixed",
+				inset: 0,
+				zIndex: 9999,
+				background: "rgba(0,0,0,0.75)",
+				display: "flex",
+				alignItems: "center",
+				justifyContent: "center",
+				padding: 24,
+			}}
+			onClick={onCancel}
+		>
+			<div
+				style={{
+					background: "var(--lg-bg)",
+					border: "2px solid var(--lg-magenta)",
+					width: 420,
+					maxWidth: "92vw",
+					maxHeight: "90vh",
+					display: "flex",
+					flexDirection: "column",
+				}}
+				onClick={(e) => e.stopPropagation()}
 			>
-				{running ? "TRANSFORMING…" : "▶ TRANSFORM"}
-			</button>
+				<div
+					style={{
+						display: "flex",
+						alignItems: "center",
+						justifyContent: "space-between",
+						padding: "10px 14px",
+						borderBottom: "1px solid var(--lg-border)",
+						background: "var(--lg-bg-2)",
+					}}
+				>
+					<span
+						className="pixel"
+						style={{
+							fontSize: 11,
+							color: "var(--lg-magenta)",
+							letterSpacing: "0.1em",
+						}}
+					>
+						{strategy.label.toUpperCase()}
+					</span>
+					<button
+						className="btn btn-ghost"
+						style={{ padding: "2px 6px", fontSize: 10 }}
+						onClick={onCancel}
+					>
+						<IX size={10} />
+					</button>
+				</div>
+
+				<div style={{ padding: "16px 14px", overflowY: "auto" }}>
+					{hasFields ? (
+						<StrategyConfigForm
+							schema={strategy.config_schema}
+							value={config}
+							onChange={onChange}
+						/>
+					) : (
+						<div
+							className="mono"
+							style={{ fontSize: 11, color: "var(--lg-ink-dim)" }}
+						>
+							No configuration needed.
+						</div>
+					)}
+				</div>
+
+				<div
+					style={{
+						display: "flex",
+						justifyContent: "flex-end",
+						gap: 8,
+						padding: "10px 14px",
+						borderTop: "1px solid var(--lg-border)",
+					}}
+				>
+					<button
+						className="btn btn-ghost"
+						style={{ padding: "6px 14px", fontSize: 11 }}
+						onClick={onCancel}
+					>
+						CANCEL
+					</button>
+					<button
+						className="btn btn-primary"
+						style={{ padding: "6px 16px", fontSize: 11 }}
+						onClick={onEquip}
+						disabled={missing.length > 0}
+					>
+						EQUIP
+					</button>
+				</div>
+			</div>
 		</div>
 	);
 }
@@ -3551,10 +3454,22 @@ function requiredMissing(
 
 function RlExport({ onDone }: { onDone: () => void }) {
 	const { projectId, uploadResult, transformResult, loadResult, setLoadResult } = usePipelineCtx();
-	const usedStrategy = !!transformResult?.strategy_name;
+	// Strategy-driven formats (Frappe CSV, ERPnext live) always available
+	// when the user has uploaded data — the backend re-runs transform on
+	// demand if the heavy `transformed` payload was dropped between
+	// sessions, so we don't gate the UI on `transformResult` being live.
+	const usedStrategy = !!uploadResult;
 	const [fmt, setFmt] = useState(usedStrategy ? "frappe" : "json");
 	const [running, setRunning] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+
+	// On entry, drop any persisted loadResult so the user doesn't see
+	// stale output files from a previous run when reopening a project.
+	// They'll click EXPORT to regenerate against the current session.
+	useEffect(() => {
+		setLoadResult(null);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
 
 	const excluded = useMemo(
 		() => new Set(uploadResult?.excludedTables ?? []),
@@ -3565,6 +3480,7 @@ function RlExport({ onDone }: { onDone: () => void }) {
 
 	const FORMATS = usedStrategy
 		? [
+			{ id: "erpnext", label: "ERPNEXT (LIVE)", sub: "Push directly via REST API" },
 			{ id: "frappe", label: "FRAPPE CSV", sub: "ERPnext Data Import (chunked, ordered)" },
 			{ id: "json",   label: "JSON",       sub: "One object per row" },
 			{ id: "csv",    label: "CSV",        sub: "One file per table" },
@@ -3613,6 +3529,22 @@ function RlExport({ onDone }: { onDone: () => void }) {
 			setRunning(false);
 		}
 	};
+
+	if (fmt === "erpnext") {
+		return (
+			<ErpnextLiveExport
+				FORMATS={FORMATS}
+				fmt={fmt}
+				onFormatChange={(id) => {
+					if (loadResult) setLoadResult(null);
+					setFmt(id);
+				}}
+				sessionId={uploadResult?.sessionId ?? null}
+				projectId={projectId}
+				onDone={onDone}
+			/>
+		);
+	}
 
 	return (
 		<div
@@ -3752,10 +3684,10 @@ function RlExport({ onDone }: { onDone: () => void }) {
 								</div>
 								<dl className="kv">
 									{Object.entries(loadResult.rows_written).map(([table, count]) => (
-										<>
-											<dt key={table + "-dt"}>{table.toUpperCase()}</dt>
-											<dd key={table + "-dd"}>{count.toLocaleString()}</dd>
-										</>
+										<Fragment key={table}>
+											<dt>{table.toUpperCase()}</dt>
+											<dd>{count.toLocaleString()}</dd>
+										</Fragment>
 									))}
 								</dl>
 							</div>
@@ -3835,6 +3767,1033 @@ function RlExport({ onDone }: { onDone: () => void }) {
 		</div>
 	);
 }
+
+
+// ---------- ERPnext live export -------------------------------------------
+
+type ErpnextEvent = {
+	event: string;
+	[key: string]: unknown;
+};
+
+function ErpnextLiveExport({
+	FORMATS,
+	fmt,
+	onFormatChange,
+	sessionId,
+	projectId,
+	onDone,
+}: {
+	FORMATS: { id: string; label: string; sub: string }[];
+	fmt: string;
+	onFormatChange: (id: string) => void;
+	sessionId: string | null;
+	projectId: string | null;
+	onDone: () => void;
+}) {
+	const { transformResult, setTransformResult } = usePipelineCtx();
+	const expectedCounts = transformResult?.output_doctypes ?? {};
+	const allDoctypes = useMemo(
+		() => Object.keys(expectedCounts).sort(),
+		[expectedCounts],
+	);
+
+	const [url, setUrl] = useState("");
+	const [apiKey, setApiKey] = useState("");
+	const [apiSecret, setApiSecret] = useState("");
+	const [company, setCompany] = useState("");
+	const [companyAbbr, setCompanyAbbr] = useState("");
+	const [forceReupload, setForceReupload] = useState(false);
+	const [autoContinue, setAutoContinue] = useState(false);
+	const [skipFiles, setSkipFiles] = useState<Set<string>>(() => new Set());
+	const [haltedFile, setHaltedFile] = useState<{
+		file: string;
+		doctype: string;
+		reason: string;
+	} | null>(null);
+	const [running, setRunning] = useState(false);
+	const [events, setEvents] = useState<ErpnextEvent[]>([]);
+	const [error, setError] = useState<string | null>(null);
+	const [loadingDoctypes, setLoadingDoctypes] = useState(false);
+	const [selectedDoctypes, setSelectedDoctypes] = useState<Set<string>>(
+		() => new Set(allDoctypes),
+	);
+	const [importedDoctypes, setImportedDoctypes] = useState<Set<string>>(
+		() => new Set(),
+	);
+	const abortRef = useRef<AbortController | null>(null);
+
+	useEffect(() => {
+		setSelectedDoctypes(new Set(allDoctypes));
+	}, [allDoctypes]);
+
+	useEffect(() => {
+		if (!projectId) return;
+		fetch(`/api/erpnext-credentials/${projectId}`)
+			.then((r) => r.json())
+			.then((d) => {
+				const c = d?.credentials;
+				if (!c) return;
+				setUrl(c.url ?? "");
+				setApiKey(c.api_key ?? "");
+				setApiSecret(c.api_secret ?? "");
+				setCompany(c.company ?? "");
+				setCompanyAbbr(c.company_abbr ?? "");
+			})
+			.catch(() => {});
+		fetch(`/api/erpnext-imports/${projectId}`)
+			.then((r) => r.json())
+			.then((d) => {
+				const records = (d?.imports ?? {}) as Record<
+					string, { doctype: string; imported_count: number; completed_at: string }
+				>;
+				setImportedDoctypes(
+					new Set(Object.values(records).map((r) => r.doctype)),
+				);
+			})
+			.catch(() => {});
+	}, [projectId]);
+
+	// Seed company / abbr from the session's transform-stage strategy
+	// config so the user doesn't have to retype what they already picked.
+	// Saved erpnext credentials win (set above) — this only fills blanks.
+	useEffect(() => {
+		if (!sessionId) return;
+		fetch(`/api/strategies/${sessionId}`)
+			.then((r) => r.json())
+			.then((d) => {
+				const cfg = (d?.config ?? {}) as Record<string, unknown>;
+				if (typeof cfg.company_name === "string") {
+					setCompany((prev) => prev || (cfg.company_name as string));
+				}
+				if (typeof cfg.company_abbr === "string") {
+					setCompanyAbbr((prev) => prev || (cfg.company_abbr as string));
+				}
+			})
+			.catch(() => {});
+	}, [sessionId]);
+
+	// Doctype list is derived from transformResult.output_doctypes. On a
+	// freshly-reopened project the transformResult is null until the user
+	// triggers it; do that lazily here so the selection panel populates
+	// without making the user visit the Transform stage first.
+	useEffect(() => {
+		if (!sessionId) return;
+		if (transformResult) return;
+		let cancelled = false;
+		setLoadingDoctypes(true);
+		fetch(`/api/transform/${sessionId}`)
+			.then((r) => (r.ok ? r.json() : null))
+			.then((data) => {
+				if (cancelled || !data) return;
+				setTransformResult(data);
+			})
+			.catch(() => {})
+			.finally(() => {
+				if (!cancelled) setLoadingDoctypes(false);
+			});
+		return () => { cancelled = true; };
+	}, [sessionId, transformResult, setTransformResult]);
+
+	const send = async (extraSkips: string[] = []) => {
+		if (!sessionId || !url || !apiKey || !apiSecret) return;
+		const isResume = extraSkips.length > 0;
+		setRunning(true);
+		setError(null);
+		setHaltedFile(null);
+		if (!isResume) {
+			setEvents([]);
+			setSkipFiles(new Set());
+		}
+		const skipsForThisRun = isResume
+			? Array.from(new Set([...skipFiles, ...extraSkips]))
+			: [];
+		const ctl = new AbortController();
+		abortRef.current = ctl;
+		try {
+			const res = await fetch(`/api/load-erpnext/${sessionId}`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					url, api_key: apiKey, api_secret: apiSecret,
+					company, company_abbr: companyAbbr,
+					force_reupload: forceReupload && !isResume,
+					halt_on_failure: !autoContinue,
+					selected_doctypes: allDoctypes.length > 0
+						? Array.from(selectedDoctypes)
+						: null,
+					skip_files: skipsForThisRun.length > 0 ? skipsForThisRun : null,
+				}),
+				signal: ctl.signal,
+			});
+			if (!res.ok || !res.body) {
+				const e = await res.json().catch(() => null);
+				throw new Error(e?.detail ?? `HTTP ${res.status}`);
+			}
+			const reader = res.body.getReader();
+			const decoder = new TextDecoder();
+			let buf = "";
+			while (true) {
+				const { value, done } = await reader.read();
+				if (done) break;
+				buf += decoder.decode(value, { stream: true });
+				let idx;
+				while ((idx = buf.indexOf("\n\n")) >= 0) {
+					const chunk = buf.slice(0, idx);
+					buf = buf.slice(idx + 2);
+					if (!chunk.startsWith("data: ")) continue;
+					try {
+						const ev = JSON.parse(chunk.slice(6)) as ErpnextEvent;
+						setEvents((prev) => [...prev, ev]);
+						if (ev.event === "halted") {
+							setHaltedFile({
+								file: String(ev.file ?? ""),
+								doctype: String(ev.doctype ?? ""),
+								reason: String(ev.reason ?? "failure"),
+							});
+						}
+					} catch {}
+				}
+			}
+		} catch (e) {
+			if ((e as { name?: string })?.name !== "AbortError") {
+				setError(e instanceof Error ? e.message : "Send failed");
+			}
+		} finally {
+			setRunning(false);
+			abortRef.current = null;
+		}
+	};
+
+	const cancel = () => abortRef.current?.abort();
+	const continueFromHalt = () => {
+		if (!haltedFile) return;
+		setSkipFiles((prev) => new Set([...prev, haltedFile.file]));
+		send([haltedFile.file]);
+	};
+	const reset = () => {
+		setEvents([]);
+		setError(null);
+		setHaltedFile(null);
+		setSkipFiles(new Set());
+		// Refresh the already-imported set since a successful run may
+		// have just added entries to it.
+		if (projectId) {
+			fetch(`/api/erpnext-imports/${projectId}`)
+				.then((r) => r.json())
+				.then((d) => {
+					const records = (d?.imports ?? {}) as Record<
+						string, { doctype: string; imported_count: number; completed_at: string }
+					>;
+					setImportedDoctypes(
+						new Set(Object.values(records).map((r) => r.doctype)),
+					);
+				})
+				.catch(() => {});
+		}
+	};
+	const toggleDoctype = (dt: string) =>
+		setSelectedDoctypes((prev) => {
+			const next = new Set(prev);
+			if (next.has(dt)) next.delete(dt);
+			else next.add(dt);
+			return next;
+		});
+	const toggleAll = () =>
+		setSelectedDoctypes((prev) =>
+			prev.size === allDoctypes.length ? new Set() : new Set(allDoctypes),
+		);
+
+	const states = useMemo(
+		() => deriveDoctypeStates(events, expectedCounts),
+		[events, expectedCounts],
+	);
+	const idle = !running && events.length === 0;
+	const complete = events.find((e) => e.event === "complete");
+	const fatalError = events.find((e) => e.event === "error" && !e.file);
+
+	return (
+		<div
+			style={{
+				display: "grid",
+				gridTemplateColumns: "240px 1fr 280px",
+				gap: 14,
+				marginTop: 14,
+			}}
+		>
+			<div className="panel">
+				<div className="panel-head">FORMAT</div>
+				<div className="panel-body" style={{ padding: 0 }}>
+					{FORMATS.map((f) => (
+						<div
+							key={f.id}
+							onClick={() => onFormatChange(f.id)}
+							className={`rl-fmt-row ${fmt === f.id ? "active" : ""}`}
+						>
+							<div
+								className="pixel"
+								style={{
+									fontSize: 9,
+									color: fmt === f.id ? "#0a0410" : "var(--lg-amber)",
+									letterSpacing: "0.1em",
+								}}
+							>
+								{f.label}
+							</div>
+							<div
+								className="mono"
+								style={{
+									fontSize: 10,
+									color: fmt === f.id ? "#0a0410" : "var(--lg-ink-mute)",
+									marginTop: 3,
+								}}
+							>
+								{f.sub}
+							</div>
+						</div>
+					))}
+				</div>
+			</div>
+
+			<div className="panel">
+				<div className="panel-head">ERPNEXT TARGET</div>
+				<div
+					className="panel-body"
+					style={{ display: "flex", flexDirection: "column", gap: 14 }}
+				>
+					<ErpnextField
+						label="URL"
+						value={url}
+						onChange={setUrl}
+						placeholder="https://erp.example.com"
+						disabled={running}
+					/>
+					<ErpnextField
+						label="API KEY"
+						value={apiKey}
+						onChange={setApiKey}
+						disabled={running}
+					/>
+					<ErpnextField
+						label="API SECRET"
+						value={apiSecret}
+						onChange={setApiSecret}
+						type="password"
+						disabled={running}
+					/>
+					<ErpnextField
+						label="COMPANY"
+						value={company}
+						onChange={setCompany}
+						placeholder="Al Arabi"
+						disabled={running}
+					/>
+					<ErpnextField
+						label="ABBREVIATION"
+						value={companyAbbr}
+						onChange={setCompanyAbbr}
+						placeholder="ALA"
+						disabled={running}
+					/>
+					<label
+						className="mono"
+						style={{
+							display: "flex",
+							alignItems: "center",
+							gap: 10,
+							fontSize: 11,
+							color: "var(--lg-ink)",
+							cursor: running ? "not-allowed" : "pointer",
+						}}
+						title="Re-send every CSV even if it was successfully imported on a previous run"
+					>
+						<input
+							type="checkbox"
+							checked={forceReupload}
+							onChange={(e) => setForceReupload(e.target.checked)}
+							disabled={running}
+						/>
+						<span>Re-upload everything</span>
+					</label>
+					<label
+						className="mono"
+						style={{
+							display: "flex",
+							alignItems: "center",
+							gap: 10,
+							fontSize: 11,
+							color: "var(--lg-ink)",
+							cursor: running ? "not-allowed" : "pointer",
+						}}
+						title="By default the loader pauses on any partial / failed file and waits for you to click CONTINUE. Tick this to plough through automatically, logging errors as they happen."
+					>
+						<input
+							type="checkbox"
+							checked={autoContinue}
+							onChange={(e) => setAutoContinue(e.target.checked)}
+							disabled={running}
+						/>
+						<span>Auto-continue past failures</span>
+					</label>
+					{loadingDoctypes && allDoctypes.length === 0 && (
+						<div
+							className="mono"
+							style={{
+								borderTop: "1px solid var(--lg-border)",
+								paddingTop: 12,
+								marginTop: 4,
+								fontSize: 11,
+								color: "var(--lg-ink-dim)",
+							}}
+						>
+							Loading doctypes from transform…
+						</div>
+					)}
+					{!loadingDoctypes && allDoctypes.length === 0 && (
+						<div
+							className="mono"
+							style={{
+								borderTop: "1px solid var(--lg-border)",
+								paddingTop: 12,
+								marginTop: 4,
+								fontSize: 11,
+								color: "var(--lg-amber)",
+							}}
+						>
+							No doctypes available — go back to Transform and run a strategy first.
+						</div>
+					)}
+					{allDoctypes.length > 0 && (
+						<div
+							style={{
+								borderTop: "1px solid var(--lg-border)",
+								paddingTop: 12,
+								marginTop: 4,
+								display: "flex",
+								flexDirection: "column",
+								gap: 8,
+							}}
+						>
+							<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+								<span
+									className="pixel"
+									style={{
+										fontSize: 9,
+										color: "var(--lg-ink-mute)",
+										letterSpacing: "0.1em",
+										flex: 1,
+									}}
+								>
+									{idle
+										? `DOCTYPES — ${selectedDoctypes.size} of ${allDoctypes.length} selected`
+										: `PROGRESS — ${states.filter((s) =>
+												s.status === "success" || s.status === "partial",
+											).length} of ${
+												states.filter((s) => s.status !== "skipped" && s.status !== "idle").length || allDoctypes.length
+											} done`}
+								</span>
+								{idle && (
+									<button
+										className="btn btn-ghost"
+										onClick={toggleAll}
+										style={{ padding: "2px 8px", fontSize: 9 }}
+									>
+										{selectedDoctypes.size === allDoctypes.length
+											? "DESELECT ALL"
+											: "SELECT ALL"}
+									</button>
+								)}
+							</div>
+							<div
+								style={{
+									display: "flex",
+									flexDirection: "column",
+									gap: 6,
+									maxHeight: 400,
+									overflowY: "auto",
+								}}
+							>
+								{states.map((s) => (
+									<DoctypeRow
+										key={s.doctype}
+										state={s}
+										picked={selectedDoctypes.has(s.doctype)}
+										idle={idle}
+										previouslyImported={
+											idle && !forceReupload && importedDoctypes.has(s.doctype)
+										}
+										onToggle={() => toggleDoctype(s.doctype)}
+									/>
+								))}
+							</div>
+						</div>
+					)}
+					{error && (
+						<div className="mono" style={{ fontSize: 10, color: "var(--lg-coral)" }}>
+							{"> "}{error}
+						</div>
+					)}
+				</div>
+			</div>
+
+			<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+				<div className="panel">
+					<div className="panel-head">VERIFICATION</div>
+					<div className="panel-body">
+						{complete ? (
+							<VerificationList complete={complete} />
+						) : fatalError ? (
+							<div className="mono" style={{ fontSize: 10, color: "var(--lg-coral)" }}>
+								{String(fatalError.message ?? "failed")}
+							</div>
+						) : (
+							<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}>
+								Counts will appear here once import completes.
+							</div>
+						)}
+					</div>
+				</div>
+
+				{running ? (
+					<button
+						className="btn btn-primary"
+						onClick={cancel}
+						style={{ fontSize: 13, padding: "12px 14px", justifyContent: "center" }}
+					>
+						CANCEL
+					</button>
+				) : events.length === 0 ? (
+					<button
+						className={`btn btn-primary ${!running ? "pulse" : ""}`}
+						onClick={() => send()}
+						disabled={
+							!sessionId
+							|| !url || !apiKey || !apiSecret
+							|| (allDoctypes.length > 0 && selectedDoctypes.size === 0)
+						}
+						style={{ fontSize: 13, padding: "12px 14px", justifyContent: "center" }}
+					>
+						▶ SEND TO ERPNEXT
+					</button>
+				) : haltedFile ? (
+					<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+						<div
+							className="mono"
+							style={{
+								fontSize: 10,
+								color: "var(--lg-amber)",
+								padding: "8px 10px",
+								border: "1px solid var(--lg-amber)",
+								background: "rgba(199,155,0,0.08)",
+								lineHeight: 1.5,
+							}}
+						>
+							{"▼ "}HALTED on {haltedFile.doctype || haltedFile.file} ({haltedFile.reason}).
+							Click CONTINUE to skip this file and resume from the next one.
+						</div>
+						<button
+							className="btn btn-primary pulse"
+							onClick={continueFromHalt}
+							style={{ fontSize: 13, padding: "12px 14px", justifyContent: "center" }}
+						>
+							▶ CONTINUE — SKIP &amp; RESUME
+						</button>
+						<button
+							className="btn btn-ghost"
+							onClick={reset}
+							style={{ fontSize: 11, padding: "10px 14px", justifyContent: "center" }}
+						>
+							RESET — PICK AGAIN
+						</button>
+					</div>
+				) : (
+					<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+						<button
+							className="btn btn-ghost"
+							onClick={reset}
+							style={{ fontSize: 11, padding: "10px 14px", justifyContent: "center" }}
+						>
+							RESET — PICK AGAIN
+						</button>
+						<button
+							className="btn btn-primary"
+							onClick={onDone}
+							style={{ fontSize: 13, padding: "12px 14px", justifyContent: "center" }}
+						>
+							{complete ? "DONE · BACK TO PROJECTS" : "BACK TO PROJECTS"}
+						</button>
+					</div>
+				)}
+			</div>
+		</div>
+	);
+}
+
+
+function ErpnextField({
+	label,
+	value,
+	onChange,
+	placeholder,
+	type = "text",
+	disabled,
+}: {
+	label: string;
+	value: string;
+	onChange: (v: string) => void;
+	placeholder?: string;
+	type?: string;
+	disabled?: boolean;
+}) {
+	return (
+		<label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+			<span
+				className="pixel"
+				style={{ fontSize: 9, color: "var(--lg-ink-mute)", letterSpacing: "0.1em" }}
+			>
+				{label}
+			</span>
+			<input
+				type={type}
+				className="mono"
+				value={value}
+				onChange={(e) => onChange(e.target.value)}
+				placeholder={placeholder}
+				disabled={disabled}
+				autoComplete="off"
+				spellCheck={false}
+				style={{
+					background: "var(--lg-bg-2)",
+					border: "1px solid var(--lg-border-br)",
+					color: "var(--lg-ink)",
+					padding: "8px 10px",
+					fontSize: 12,
+				}}
+			/>
+		</label>
+	);
+}
+
+
+type DoctypeStatus =
+	| "idle" | "settling" | "queued" | "uploading" | "running"
+	| "success" | "partial" | "skipped" | "error";
+
+type DoctypeState = {
+	doctype: string;
+	expected: number;
+	status: DoctypeStatus;
+	imported: number;
+	failed: number;
+	warnings: string[];
+	errors: string[];
+	detail: string;
+};
+
+
+function deriveDoctypeStates(
+	events: ErpnextEvent[],
+	expected: Record<string, number>,
+): DoctypeState[] {
+	const map = new Map<string, DoctypeState>();
+	for (const dt of Object.keys(expected)) {
+		map.set(dt, {
+			doctype: dt, expected: expected[dt],
+			status: "idle", imported: 0, failed: 0,
+			warnings: [], errors: [], detail: "",
+		});
+	}
+	for (const ev of events) {
+		const dt = (ev.doctype as string | undefined) ?? "";
+		if (!dt) continue;
+		const s = map.get(dt) ?? {
+			doctype: dt, expected: 0, status: "idle" as DoctypeStatus,
+			imported: 0, failed: 0, warnings: [], errors: [], detail: "",
+		};
+		switch (ev.event) {
+			case "settling":
+				// Backend sleeps a few seconds between files so Frappe can
+				// commit the previous import before this one reads it.
+				// Stamp the next doctype row with a 'settling' state so
+				// the user sees we're not hung — just waiting.
+				if (s.status === "idle") {
+					s.status = "settling";
+					const delay = (ev.delay as number | undefined) ?? 0;
+					s.detail = delay > 0 ? `settling ${delay}s…` : "settling…";
+				}
+				break;
+			case "uploading":
+				s.status = "uploading";
+				s.detail = (ev.stage as string) ?? "uploading";
+				break;
+			case "queued":
+				s.status = "queued";
+				s.detail = "queued in Frappe";
+				break;
+			case "polling": {
+				s.status = "running";
+				s.imported = (ev.imported as number) ?? s.imported;
+				s.failed = (ev.failed as number) ?? s.failed;
+				const status = (ev.status as string | undefined) ?? "in progress";
+				s.detail = status.toLowerCase();
+				if (Array.isArray(ev.warnings)) s.warnings = ev.warnings as string[];
+				break;
+			}
+			case "done": {
+				const finalStatus = (ev.status as string | undefined) ?? "success";
+				s.status = finalStatus === "success" ? "success" : "partial";
+				s.imported = (ev.imported as number) ?? s.imported;
+				s.failed = (ev.failed as number) ?? s.failed;
+				if (Array.isArray(ev.warnings)) s.warnings = ev.warnings as string[];
+				if (Array.isArray(ev.errors)) s.errors = ev.errors as string[];
+				s.detail = finalStatus;
+				break;
+			}
+			case "skipped":
+				// Don't overwrite a previously-resolved status — a
+				// follow-up run that user-skips this file shouldn't
+				// erase the original partial / error display.
+				if (s.status === "idle") {
+					s.status = "skipped";
+					s.detail = (ev.reason as string) ?? "skipped";
+					if (typeof ev.imported === "number") s.imported = ev.imported as number;
+				}
+				break;
+			case "error":
+				s.status = "error";
+				s.detail = (ev.message as string) ?? "failed";
+				break;
+		}
+		map.set(dt, s);
+	}
+	return Array.from(map.values());
+}
+
+
+const STATUS_COLOR: Record<DoctypeStatus, string> = {
+	idle:      "var(--lg-ink-mute)",
+	settling:  "var(--lg-ink-dim)",
+	queued:    "var(--lg-amber)",
+	uploading: "var(--lg-amber)",
+	running:   "var(--lg-cyan)",
+	success:   "var(--lg-magenta)",
+	partial:   "var(--lg-amber)",
+	skipped:   "var(--lg-ink-dim)",
+	error:     "var(--lg-coral)",
+};
+
+
+function barFill(state: DoctypeState, color: string): CSSProperties {
+	const pct = state.expected > 0
+		? Math.min(100, (state.imported / state.expected) * 100)
+		: 0;
+	const isActive = state.status === "uploading" || state.status === "queued"
+		|| state.status === "running";
+
+	if (state.status === "success") {
+		return { width: "100%", background: color };
+	}
+	if (state.status === "skipped") {
+		return { width: "100%", background: color, opacity: 0.5 };
+	}
+	if (state.status === "error") {
+		return { width: "100%", background: color };
+	}
+	if (state.status === "partial") {
+		return {
+			width: `${Math.max(pct, 5)}%`,
+			background: color,
+		};
+	}
+	if (state.status === "settling") {
+		// Slim, dim, slow-pulsing bar — distinct from the active stripe-march.
+		return {
+			width: "12%",
+			background: color,
+			opacity: 0.6,
+			animation: "rl-bug-glow 1.4s ease-in-out infinite",
+		};
+	}
+	if (isActive) {
+		return {
+			width: `${Math.max(pct, 8)}%`,
+			background: `repeating-linear-gradient(45deg, ${color}, ${color} 6px, rgba(255,255,255,0.18) 6px, rgba(255,255,255,0.18) 12px)`,
+			backgroundSize: "24px 24px",
+			animation: "rl-stripe-march .8s linear infinite",
+		};
+	}
+	// idle
+	return { width: "0%", background: color };
+}
+
+
+function DoctypeRow({
+	state,
+	picked,
+	idle,
+	previouslyImported,
+	onToggle,
+}: {
+	state: DoctypeState;
+	picked: boolean;
+	idle: boolean;
+	previouslyImported: boolean;
+	onToggle: () => void;
+}) {
+	const color = STATUS_COLOR[state.status];
+	const isActive = state.status === "uploading" || state.status === "queued"
+		|| state.status === "running";
+	const dimmed = idle && !picked;
+	const fill = barFill(state, color);
+
+	return (
+		<div
+			onClick={idle ? onToggle : undefined}
+			style={{
+				border: `1px solid ${idle && picked ? "var(--lg-amber)" : "var(--lg-border)"}`,
+				background: isActive
+					? "rgba(80,180,220,0.05)"
+					: state.status === "success"
+					? "rgba(140,200,120,0.05)"
+					: state.status === "error"
+					? "rgba(220,90,90,0.05)"
+					: "transparent",
+				padding: "8px 10px",
+				display: "flex",
+				flexDirection: "column",
+				gap: 6,
+				cursor: idle ? "pointer" : "default",
+				opacity: dimmed ? 0.5 : 1,
+				animation: "rl-row-in .2s ease-out both",
+			}}
+		>
+			<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+				{idle ? (
+					<span
+						style={{
+							display: "inline-flex",
+							alignItems: "center",
+							justifyContent: "center",
+							width: 12,
+							height: 12,
+							border: "1px solid var(--lg-amber)",
+							background: picked ? "var(--lg-amber)" : "transparent",
+							color: "#0a0410",
+							flexShrink: 0,
+						}}
+					>
+						{picked && <ICheck size={6} />}
+					</span>
+				) : (
+					<span
+						style={{
+							display: "inline-block",
+							width: 8, height: 8,
+							borderRadius: "50%",
+							background: color,
+							animation: isActive ? "rl-pulse 1.1s ease-in-out infinite" : "none",
+							flexShrink: 0,
+						}}
+					/>
+				)}
+				<span
+					className="pixel"
+					style={{
+						fontSize: 11,
+						color: "var(--lg-ink)",
+						letterSpacing: "0.05em",
+						flex: 1,
+					}}
+				>
+					{state.doctype.toUpperCase()}
+				</span>
+				{previouslyImported && (
+					<span
+						className="mono"
+						title="A previous run already imported this doctype — it will be auto-skipped unless 'Re-upload everything' is checked."
+						style={{
+							fontSize: 9,
+							color: "var(--lg-green)",
+							border: "1px solid var(--lg-green)",
+							padding: "1px 6px",
+							letterSpacing: "0.1em",
+							flexShrink: 0,
+						}}
+					>
+						✓ ALREADY IMPORTED
+					</span>
+				)}
+				<span
+					className="mono"
+					style={{ fontSize: 10, color, fontVariantNumeric: "tabular-nums" }}
+				>
+					{state.status === "idle"
+						? `${state.expected.toLocaleString()} rows`
+						: state.status === "settling"
+						? state.detail
+						: state.expected > 0
+						? `${state.imported}/${state.expected}`
+						: state.imported > 0
+						? `${state.imported}`
+						: state.detail}
+					{state.failed > 0 && (
+						<span style={{ color: "var(--lg-coral)" }}>
+							{" "}· {state.failed} failed
+						</span>
+					)}
+				</span>
+			</div>
+			{!idle && (
+				<div
+					style={{
+						height: 6,
+						background: "var(--lg-bg-2)",
+						border: "1px solid var(--lg-border)",
+						position: "relative",
+						overflow: "hidden",
+					}}
+				>
+					<div
+						style={{
+							height: "100%",
+							transition: "width .25s ease-out",
+							...fill,
+						}}
+					/>
+				</div>
+			)}
+			{!idle && state.detail && state.status !== "running" && (
+				<span
+					className="mono"
+					style={{ fontSize: 9, color: "var(--lg-ink-dim)", letterSpacing: "0.05em" }}
+				>
+					{state.detail}
+				</span>
+			)}
+			{state.warnings.slice(0, 3).map((w, i) => (
+				<span key={`w${i}`} style={{ color: "var(--lg-amber)", fontSize: 9, paddingLeft: 16 }}>
+					⚠ {w}
+				</span>
+			))}
+			{state.errors.slice(0, 3).map((e, i) => (
+				<span key={`e${i}`} style={{ color: "var(--lg-coral)", fontSize: 9, paddingLeft: 16 }}>
+					✗ {e}
+				</span>
+			))}
+			{(state.warnings.length > 3 || state.errors.length > 3) && (
+				<span style={{ color: "var(--lg-ink-mute)", fontSize: 9, paddingLeft: 16 }}>
+					+ {(state.warnings.length + state.errors.length) - 3} more
+				</span>
+			)}
+		</div>
+	);
+}
+
+
+function EventRow({ ev }: { ev: ErpnextEvent }) {
+	const file = (ev.file as string | undefined) ?? "";
+	const doctype = (ev.doctype as string | undefined) ?? "";
+	const stage = (ev.stage as string | undefined) ?? "";
+	const status = (ev.status as string | undefined) ?? "";
+	const message = (ev.message as string | undefined) ?? "";
+	const reason = (ev.reason as string | undefined) ?? "";
+	const imported = (ev.imported as number | undefined) ?? null;
+	const failed = (ev.failed as number | undefined) ?? null;
+	const warnings = (ev.warnings as string[] | undefined) ?? [];
+	const errors = (ev.errors as string[] | undefined) ?? [];
+
+	const palette: Record<string, string> = {
+		begin: "var(--lg-cyan)",
+		stage: "var(--lg-cyan)",
+		preflight: "var(--lg-ink-mute)",
+		settling: "var(--lg-ink-dim)",
+		uploading: "var(--lg-amber)",
+		queued: "var(--lg-amber)",
+		polling: "var(--lg-cyan)",
+		done: "var(--lg-green)",
+		skipped: "var(--lg-amber)",
+		error: "var(--lg-coral)",
+		complete: "var(--lg-green)",
+	};
+	const color = palette[ev.event] ?? "var(--lg-ink-mute)";
+
+	let label = ev.event.toUpperCase();
+	if (ev.event === "polling" && status) label = status.toUpperCase();
+	if (file) label += ` · ${file}`;
+	else if (stage) label += ` · ${stage}`;
+	else if (doctype) label += ` · ${doctype}`;
+
+	const parts: string[] = [];
+	if (imported !== null) {
+		parts.push(`${imported} imported${failed ? `, ${failed} failed` : ""}`);
+	}
+	if (reason) parts.push(reason);
+	else if (message) parts.push(message);
+
+	return (
+		<div className="mono" style={{ fontSize: 10, display: "flex", flexDirection: "column", gap: 2, lineHeight: 1.6 }}>
+			<div style={{ display: "flex", gap: 8 }}>
+				<span className="pixel" style={{ color, letterSpacing: "0.1em", flexShrink: 0 }}>
+					{label}
+				</span>
+				{parts.length > 0 && (
+					<span style={{ color: "var(--lg-ink-dim)" }}>— {parts.join(" · ")}</span>
+				)}
+			</div>
+			{warnings.map((w, i) => (
+				<div key={`w${i}`} style={{ color: "var(--lg-amber)", fontSize: 9, paddingLeft: 16 }}>
+					⚠ {w}
+				</div>
+			))}
+			{errors.map((e, i) => (
+				<div key={`e${i}`} style={{ color: "var(--lg-coral)", fontSize: 9, paddingLeft: 16 }}>
+					✗ {e}
+				</div>
+			))}
+		</div>
+	);
+}
+
+
+function VerificationList({ complete }: { complete: ErpnextEvent }) {
+	const verification = (complete.verification as Record<string, {
+		expected: number;
+		actual: number | null;
+		error?: string;
+	}>) ?? {};
+	const entries = Object.entries(verification);
+	if (entries.length === 0) {
+		return (
+			<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}>
+				No doctypes to verify.
+			</div>
+		);
+	}
+	return (
+		<dl className="kv">
+			{entries.map(([dt, v]) => {
+				const ok = v.actual !== null && v.actual >= v.expected;
+				return (
+					<Fragment key={dt}>
+						<dt>{dt.toUpperCase()}</dt>
+						<dd
+							style={{
+								color: v.error
+									? "var(--lg-coral)"
+									: ok
+									? "var(--lg-green)"
+									: "var(--lg-amber)",
+							}}
+						>
+							{v.error ? "err" : `${v.actual ?? "?"}/${v.expected}`}
+						</dd>
+					</Fragment>
+				);
+			})}
+		</dl>
+	);
+}
+
 
 // ---------- pipeline wrapper ----------
 

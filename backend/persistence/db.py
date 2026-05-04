@@ -5,7 +5,10 @@ from pathlib import Path
 
 from definitions import (
     CHECK_PIPELINE_RUN_EXISTS,
+    CLEAR_ERPNEXT_IMPORTS,
     CREATE_AUDIT_EVENTS_TABLE,
+    CREATE_ERPNEXT_CREDS_TABLE,
+    CREATE_ERPNEXT_IMPORTS_TABLE,
     CREATE_INDEX_AUDIT_EVENTS_PROJECT,
     CREATE_INDEX_AUDIT_EVENTS_RUN,
     CREATE_INDEX_PIPELINE_RUNS_PROJECT,
@@ -14,6 +17,7 @@ from definitions import (
     DELETE_PROJECT,
     FINISH_PIPELINE_RUN,
     GET_DASHBOARD_STATS,
+    GET_ERPNEXT_CREDS,
     GET_PIPELINE_RUN,
     GET_PROJECT,
     GET_PROJECT_USERNAME,
@@ -25,6 +29,7 @@ from definitions import (
     INSERT_PIPELINE_RUN,
     INSERT_PROJECT,
     LIST_AUDIT_EVENTS,
+    LIST_ERPNEXT_IMPORTS,
     LIST_PIPELINE_RUNS,
     LIST_PROJECTS_BY_USER,
     LIST_PROJECTS_FOR_BACKFILL,
@@ -32,6 +37,8 @@ from definitions import (
     PRAGMA_JOURNAL_MODE_WAL,
     RENAME_PROJECT,
     UPDATE_PROJECT_PHASE,
+    UPSERT_ERPNEXT_CREDS,
+    UPSERT_ERPNEXT_IMPORT,
 )
 
 _DB_PATH = Path(__file__).parent.parent / "data" / "etl_studio.db"
@@ -51,9 +58,65 @@ def init_db() -> None:
         conn.execute(CREATE_PROJECTS_TABLE)
         conn.execute(CREATE_PIPELINE_RUNS_TABLE)
         conn.execute(CREATE_AUDIT_EVENTS_TABLE)
+        conn.execute(CREATE_ERPNEXT_CREDS_TABLE)
+        conn.execute(CREATE_ERPNEXT_IMPORTS_TABLE)
         conn.execute(CREATE_INDEX_PIPELINE_RUNS_PROJECT)
         conn.execute(CREATE_INDEX_AUDIT_EVENTS_PROJECT)
         conn.execute(CREATE_INDEX_AUDIT_EVENTS_RUN)
+        # Migration: company_abbr was added to erpnext_credentials after
+        # the original schema; ALTER ignores 'duplicate column' so first
+        # run on an existing DB still works.
+        try:
+            conn.execute("ALTER TABLE erpnext_credentials ADD COLUMN company_abbr TEXT")
+        except sqlite3.OperationalError:
+            pass
+
+
+def save_erpnext_credentials(
+    project_id: str,
+    url: str,
+    api_key: str,
+    api_secret: str,
+    company: str | None,
+    company_abbr: str | None = None,
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with _get_conn() as conn:
+        conn.execute(
+            UPSERT_ERPNEXT_CREDS,
+            (project_id, url, api_key, api_secret, company, company_abbr, now),
+        )
+
+
+def get_erpnext_credentials(project_id: str) -> dict | None:
+    with _get_conn() as conn:
+        row = conn.execute(GET_ERPNEXT_CREDS, (project_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def record_erpnext_import(
+    project_id: str,
+    file_name: str,
+    doctype: str,
+    imported_count: int,
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with _get_conn() as conn:
+        conn.execute(
+            UPSERT_ERPNEXT_IMPORT, (project_id, file_name, doctype, imported_count, now)
+        )
+
+
+def list_erpnext_imports(project_id: str) -> dict[str, dict]:
+    """Map file_name → {doctype, imported_count, completed_at}."""
+    with _get_conn() as conn:
+        rows = conn.execute(LIST_ERPNEXT_IMPORTS, (project_id,)).fetchall()
+        return {r["file_name"]: dict(r) for r in rows}
+
+
+def clear_erpnext_imports(project_id: str) -> None:
+    with _get_conn() as conn:
+        conn.execute(CLEAR_ERPNEXT_IMPORTS, (project_id,))
 
 
 def backfill_pipeline_runs() -> int:
@@ -92,27 +155,50 @@ def backfill_pipeline_runs() -> int:
             if phase_idx >= 1:
                 conn.execute(
                     INSERT_BACKFILLED_EXTRACT_RUN,
-                    (str(uuid.uuid4()), pid, 0, "backfilled from state", created, created),
+                    (
+                        str(uuid.uuid4()),
+                        pid,
+                        0,
+                        "backfilled from state",
+                        created,
+                        created,
+                    ),
                 )
                 backfilled += 1
 
             if phase_idx >= 3:
-                transformed = state.get("transformed") if isinstance(state.get("transformed"), dict) else {}
+                transformed = (
+                    state.get("transformed")
+                    if isinstance(state.get("transformed"), dict)
+                    else {}
+                )
                 total_rows = transformed.get("total_rows", 0) if transformed else 0
                 note_parts = []
                 if transformed.get("encoding_conversions"):
-                    note_parts.append(f"{transformed['encoding_conversions']} enc fixes")
+                    note_parts.append(
+                        f"{transformed['encoding_conversions']} enc fixes"
+                    )
                 if transformed.get("type_conversions"):
                     note_parts.append(f"{transformed['type_conversions']} type conv")
                 conn.execute(
                     INSERT_BACKFILLED_TRANSFORM_RUN,
-                    (str(uuid.uuid4()), pid, total_rows,
-                     ", ".join(note_parts) or "backfilled", updated, updated),
+                    (
+                        str(uuid.uuid4()),
+                        pid,
+                        total_rows,
+                        ", ".join(note_parts) or "backfilled",
+                        updated,
+                        updated,
+                    ),
                 )
                 backfilled += 1
 
             if phase_idx >= 4:
-                load_result = state.get("load_result") if isinstance(state.get("load_result"), dict) else {}
+                load_result = (
+                    state.get("load_result")
+                    if isinstance(state.get("load_result"), dict)
+                    else {}
+                )
                 rows_written = 0
                 if load_result and isinstance(load_result.get("rows_written"), dict):
                     rows_written = sum(load_result["rows_written"].values())
@@ -121,7 +207,15 @@ def backfill_pipeline_runs() -> int:
                 note = "; ".join(errors[:2]) if errors else "backfilled"
                 conn.execute(
                     INSERT_BACKFILLED_LOAD_RUN,
-                    (str(uuid.uuid4()), pid, status, rows_written, note, updated, updated),
+                    (
+                        str(uuid.uuid4()),
+                        pid,
+                        status,
+                        rows_written,
+                        note,
+                        updated,
+                        updated,
+                    ),
                 )
                 backfilled += 1
 
@@ -141,13 +235,40 @@ def create_project(name: str, username: str) -> dict:
 
 def list_projects(username: str) -> list[dict]:
     with _get_conn() as conn:
-        return [dict(r) for r in conn.execute(LIST_PROJECTS_BY_USER, (username,)).fetchall()]
+        rows = [
+            dict(r) for r in conn.execute(LIST_PROJECTS_BY_USER, (username,)).fetchall()
+        ]
+        for row in rows:
+            row.update(_latest_pipeline_run(conn, row["id"]))
+        return rows
 
 
 def get_project(project_id: str) -> dict | None:
     with _get_conn() as conn:
         row = conn.execute(GET_PROJECT, (project_id,)).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        out = dict(row)
+        out.update(_latest_pipeline_run(conn, project_id))
+        return out
+
+
+def _latest_pipeline_run(conn: sqlite3.Connection, project_id: str) -> dict:
+    """Last-known pipeline run status / note for a project. Used by the
+    project list to flag cards that ended their most recent run in error
+    so the UI can surface a 'BUG' state on the card."""
+    row = conn.execute(
+        "SELECT status, note, phase FROM pipeline_runs "
+        "WHERE project_id = ? ORDER BY started_at DESC, id DESC LIMIT 1",
+        (project_id,),
+    ).fetchone()
+    if not row:
+        return {"last_run_status": None, "last_run_note": None, "last_run_phase": None}
+    return {
+        "last_run_status": row["status"],
+        "last_run_note": row["note"],
+        "last_run_phase": row["phase"],
+    }
 
 
 def update_project_phase(project_id: str, phase: str) -> None:
@@ -185,7 +306,10 @@ def create_pipeline_run(project_id: str, phase: str) -> dict:
 
 
 def finish_pipeline_run(
-    run_id: str, status: str = "done", rows_affected: int = 0, note: str = "",
+    run_id: str,
+    status: str = "done",
+    rows_affected: int = 0,
+    note: str = "",
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
     with _get_conn() as conn:
@@ -194,7 +318,9 @@ def finish_pipeline_run(
 
 def list_pipeline_runs(project_id: str) -> list[dict]:
     with _get_conn() as conn:
-        return [dict(r) for r in conn.execute(LIST_PIPELINE_RUNS, (project_id,)).fetchall()]
+        return [
+            dict(r) for r in conn.execute(LIST_PIPELINE_RUNS, (project_id,)).fetchall()
+        ]
 
 
 def get_dashboard_stats(username: str) -> dict:
@@ -203,9 +329,12 @@ def get_dashboard_stats(username: str) -> dict:
 
 
 def insert_audit_event(
-    project_id: str, event_type: str,
-    table_name: str | None = None, column_name: str | None = None,
-    detail: str = "", run_id: str | None = None,
+    project_id: str,
+    event_type: str,
+    table_name: str | None = None,
+    column_name: str | None = None,
+    detail: str = "",
+    run_id: str | None = None,
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
     with _get_conn() as conn:
@@ -224,4 +353,7 @@ def insert_audit_events_batch(events: list[dict]) -> None:
 
 def list_audit_events(project_id: str, limit: int = 200) -> list[dict]:
     with _get_conn() as conn:
-        return [dict(r) for r in conn.execute(LIST_AUDIT_EVENTS, (project_id, limit)).fetchall()]
+        return [
+            dict(r)
+            for r in conn.execute(LIST_AUDIT_EVENTS, (project_id, limit)).fetchall()
+        ]

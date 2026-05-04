@@ -31,9 +31,20 @@ function phaseLabel(phase: string): string {
 }
 
 function projectStatus(p: Project): ProjectStatus {
+	if (p.last_run_status === "error") return "error";
 	if (p.phase === "stats" || p.phase === "load") return "done";
 	if (!p.phase || p.phase === "upload") return "draft";
 	return "running";
+}
+
+
+function bugMessage(p: Project): string {
+	const note = (p.last_run_note ?? "").trim();
+	const phase = (p.last_run_phase ?? "").trim().toUpperCase();
+	const head = phase ? `${phase} FAILED` : "RUN FAILED";
+	if (!note) return `! ${head}`;
+	const cleaned = note.replace(/\s+/g, " ").slice(0, 120);
+	return `! ${head} · ${cleaned}`.toUpperCase();
 }
 
 function timeAgo(iso: string): string {
@@ -311,7 +322,7 @@ function StatusBadge({ status }: { status: ProjectStatus }) {
 	if (status === "done")
 		return <span className="badge badge-solid-lime"><ICheck size={8} /> CLEARED</span>;
 	if (status === "error")
-		return <span className="badge badge-err"><IX size={8} /> ERROR</span>;
+		return <span className="rl-bug-badge"><IX size={8} /> BUG</span>;
 	return <span className="badge badge-mute">DRAFT</span>;
 }
 
@@ -353,7 +364,7 @@ function RlProjectCard({
 
 	return (
 		<div
-			className={`rl-proj corners ${kbProps?.className ?? ""}`}
+			className={`rl-proj corners ${status === "error" ? "rl-bug" : ""} ${kbProps?.className ?? ""}`}
 			onClick={() => onOpen(p)}
 			onMouseEnter={kbProps?.onMouseEnter}
 		>
@@ -381,6 +392,12 @@ function RlProjectCard({
 					STEP {stageIdx}/4
 				</span>
 			</div>
+
+			{status === "error" && (
+				<div className="rl-bug-line" title={p.last_run_note ?? ""}>
+					{bugMessage(p)}
+				</div>
+			)}
 
 			<div style={{ marginTop: 10 }}>
 				<div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--lg-cyan)", fontFamily: "var(--lg-pixel)", letterSpacing: "0.1em", marginBottom: 5 }}>

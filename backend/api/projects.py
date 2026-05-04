@@ -69,7 +69,8 @@ async def delete_project_endpoint(project_id: str):
     if not project:
         raise HTTPException(404, "Project not found")
     to_remove = [
-        sid for sid, s in (await session_store.all_sessions()).items()
+        sid
+        for sid, s in (await session_store.all_sessions()).items()
         if s.get("project_id") == project_id
     ]
     for sid in to_remove:
@@ -112,19 +113,27 @@ async def resume_project(project_id: str):
                 if sess.get("project_id") == project_id and sess.get("raw"):
                     tables = sess["raw"].get("tables", {})
                     table_names = list(tables.keys())
-                    yield encode({
-                        "event": "start", "project": project,
-                        "tables": table_names, "total": len(table_names), "warm": True,
-                    })
+                    yield encode(
+                        {
+                            "event": "start",
+                            "project": project,
+                            "tables": table_names,
+                            "total": len(table_names),
+                            "warm": True,
+                        }
+                    )
                     await asyncio.sleep(0)
                     table_done_count_warm = 0
                     for name in table_names:
                         rows = tables.get(name, [])
-                        yield encode({
-                            "event": "table_done", "name": name,
-                            "rowCount": len(rows),
-                            "columns": list(rows[0].keys()) if rows else [],
-                        })
+                        yield encode(
+                            {
+                                "event": "table_done",
+                                "name": name,
+                                "rowCount": len(rows),
+                                "columns": list(rows[0].keys()) if rows else [],
+                            }
+                        )
                         # Pace every 4 events by 2ms so the wire/UI advances
                         # visibly instead of TCP-coalescing into one chunk.
                         table_done_count_warm += 1

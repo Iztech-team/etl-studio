@@ -5,6 +5,7 @@ These are the lookups every other domain depends on; they get emitted
 first so subsequent slices can reference them by name. Each `emit_*`
 helper handles one doctype, no cross-talk.
 """
+
 from core.strategies.erpnext_shared.common import (
     ERPNEXT_BUILTIN_UOMS,
     clean_str,
@@ -36,17 +37,29 @@ PRICE_LIST_FALLBACK_NAMES = {
 
 
 def emit_masters(ctx: Context) -> None:
-    """Top-level master emit — invoked once at the start of transform."""
+    """Emit every reference master. Prefer the per-entity entry points
+    (`emit_item_masters`, `emit_bank_masters`) when running a partial
+    migration so unselected doctypes don't appear in the output.
+    """
+    emit_item_masters(ctx)
+    emit_bank_masters(ctx)
+
+
+def emit_item_masters(ctx: Context) -> None:
     emit_uoms(ctx)
     emit_item_group(ctx)
     emit_warehouses(ctx)
     emit_price_lists(ctx)
     emit_brands(ctx)
+
+
+def emit_bank_masters(ctx: Context) -> None:
     emit_banks(ctx)
     emit_bank_accounts(ctx)
 
 
 # -- UOM ----------------------------------------------------------------------
+
 
 def emit_uoms(ctx: Context) -> None:
     """Emit UOM records ONLY for legacy units that v16 doesn't ship.
@@ -85,27 +98,35 @@ def _emit_uom(
     if name in seen:
         return
     seen.add(name)
-    ctx.result.emit("UOM", {
-        "name": name,
-        "uom_name": name,
-        "enabled": 1,
-        "must_be_whole_number": 1,
-    })
+    ctx.result.emit(
+        "UOM",
+        {
+            "name": name,
+            "uom_name": name,
+            "enabled": 1,
+            "must_be_whole_number": 1,
+        },
+    )
 
 
 # -- Item Group ---------------------------------------------------------------
 
+
 def emit_item_group(ctx: Context) -> None:
-    ctx.result.emit("Item Group", {
-        "name": ITEM_GROUP_NAME,
-        "item_group_name": ITEM_GROUP_NAME,
-        "parent_item_group": ROOT_ITEM_GROUP,
-        "is_group": 0,
-    })
+    ctx.result.emit(
+        "Item Group",
+        {
+            "name": ITEM_GROUP_NAME,
+            "item_group_name": ITEM_GROUP_NAME,
+            "parent_item_group": ROOT_ITEM_GROUP,
+            "is_group": 0,
+        },
+    )
     ctx.result.bump("item_groups_emitted")
 
 
 # -- Warehouse ----------------------------------------------------------------
+
 
 def emit_warehouses(ctx: Context) -> None:
     for row in ctx.table("STORET"):
@@ -120,13 +141,16 @@ def _emit_warehouse(ctx: Context, row: dict) -> None:
     # leaf warehouses, and assuming a global "All Warehouses" root fails
     # in fresh-company setups where that group hasn't been created yet.
     # Admin can re-parent post-import via UI if a hierarchy is desired.
-    ctx.result.emit("Warehouse", {
-        "name": ctx.with_abbr(name),
-        "warehouse_name": name,
-        "company": ctx.config.company_name,
-        "is_group": 0,
-        "legacy_storeid": clean_str(row.get("STOREID")),
-    })
+    ctx.result.emit(
+        "Warehouse",
+        {
+            "name": ctx.with_abbr(name),
+            "warehouse_name": name,
+            "company": ctx.config.company_name,
+            "is_group": 0,
+            "legacy_storeid": clean_str(row.get("STOREID")),
+        },
+    )
     ctx.result.bump("warehouses_emitted")
 
 
@@ -141,6 +165,7 @@ def warehouse_for_store(ctx: Context, store_id) -> str:
 
 
 # -- Price List ---------------------------------------------------------------
+
 
 def emit_price_lists(ctx: Context) -> None:
     seen: set[str] = set()
@@ -159,15 +184,18 @@ def _emit_price_list(ctx: Context, row: dict, seen: set[str]) -> None:
     if name in seen:
         return
     seen.add(name)
-    ctx.result.emit("Price List", {
-        "name": name,
-        "price_list_name": name,
-        "currency": ctx.config.default_currency,
-        "selling": 1,
-        "buying": 0,
-        "enabled": 1,
-        "legacy_priceid": clean_str(row.get("PRICEID")),
-    })
+    ctx.result.emit(
+        "Price List",
+        {
+            "name": name,
+            "price_list_name": name,
+            "currency": ctx.config.default_currency,
+            "selling": 1,
+            "buying": 0,
+            "enabled": 1,
+            "legacy_priceid": clean_str(row.get("PRICEID")),
+        },
+    )
     ctx.result.bump("price_lists_emitted")
 
 
@@ -184,6 +212,7 @@ def price_list_name(ctx: Context, legacy_price_id) -> str:
 
 # -- Brand --------------------------------------------------------------------
 
+
 def emit_brands(ctx: Context) -> None:
     """Each unique CATEGORYT.MANUFACTURER becomes a Brand record."""
     seen: set[str] = set()
@@ -198,6 +227,7 @@ def emit_brands(ctx: Context) -> None:
 
 # -- Bank / Bank Account ------------------------------------------------------
 
+
 def emit_banks(ctx: Context) -> None:
     seen: set[str] = set()
     for row in ctx.table("BANKT"):
@@ -205,11 +235,14 @@ def emit_banks(ctx: Context) -> None:
         if not name or name in seen:
             continue
         seen.add(name)
-        ctx.result.emit("Bank", {
-            "name": name,
-            "bank_name": name,
-            "legacy_bankid": clean_str(row.get("BANKID")),
-        })
+        ctx.result.emit(
+            "Bank",
+            {
+                "name": name,
+                "bank_name": name,
+                "legacy_bankid": clean_str(row.get("BANKID")),
+            },
+        )
     ctx.result.bump("banks_emitted", len(seen))
 
 
@@ -263,12 +296,19 @@ def _emit_bank_account(
         # Legacy placeholder row — emit a single record without a GL link
         # so cheque references resolve. No leaf expansion needed.
         _emit_one_bank_account(
-            ctx, row, base_label, gl_account="", currency="",
-            seen_labels=seen_labels, legacy_gl_acctid="",
+            ctx,
+            row,
+            base_label,
+            gl_account="",
+            currency="",
+            seen_labels=seen_labels,
+            legacy_gl_acctid="",
         )
         return
 
-    typea_leaves = _expand_to_leaves(ctx, clean_str(row.get("TYPEA")), children_by_father)
+    typea_leaves = _expand_to_leaves(
+        ctx, clean_str(row.get("TYPEA")), children_by_father
+    )
     if not typea_leaves:
         ctx.result.warn(
             "BankAccount",
@@ -276,12 +316,18 @@ def _emit_bank_account(
             legacy_bankaccid=clean_str(row.get("BANKACCID")),
         )
         _emit_one_bank_account(
-            ctx, row, base_label, gl_account="", currency="",
-            seen_labels=seen_labels, legacy_gl_acctid="",
+            ctx,
+            row,
+            base_label,
+            gl_account="",
+            currency="",
+            seen_labels=seen_labels,
+            legacy_gl_acctid="",
         )
         return
 
     from core.strategies.erpnext_shared.common import account_full_name
+
     multi_currency = len(typea_leaves) > 1
     for leaf_acctid in typea_leaves:
         leaf_row = ctx.accounts_by_id.get(leaf_acctid, {})
@@ -290,8 +336,13 @@ def _emit_bank_account(
         label = f"{base_label}{suffix}"
         gl_account = account_full_name(ctx, leaf_acctid)
         _emit_one_bank_account(
-            ctx, row, label, gl_account=gl_account, currency=currency,
-            seen_labels=seen_labels, legacy_gl_acctid=leaf_acctid,
+            ctx,
+            row,
+            label,
+            gl_account=gl_account,
+            currency=currency,
+            seen_labels=seen_labels,
+            legacy_gl_acctid=leaf_acctid,
         )
 
 
@@ -308,12 +359,19 @@ def _emit_one_bank_account(
         ctx.result.bump("bank_accounts_skipped_duplicate")
         return
     seen_labels.add(label)
+    # `account_currency` is intentionally NOT emitted: in v16 it's a
+    # read-only fetched field on Bank Account that mirrors the linked
+    # Account's currency. Frappe Data Import warns 'cannot match
+    # column account_currency' if we send it, even though the value
+    # would be correct.
     payload = {
         "name": label,
         "account_name": label,
         "bank": pick(
             ctx.banks_by_id.get(clean_str(row.get("BANKID")), {}),
-            "BANKNAME", "BANKNAMEE", "BANKNAMEH",
+            "BANKNAME",
+            "BANKNAMEE",
+            "BANKNAMEH",
         ),
         "account": gl_account,
         "is_company_account": 1 if gl_account else 0,
@@ -323,8 +381,6 @@ def _emit_one_bank_account(
         "legacy_bankaccid": clean_str(row.get("BANKACCID")),
         "legacy_gl_acctid": legacy_gl_acctid,
     }
-    if currency:
-        payload["account_currency"] = currency
     ctx.result.emit("Bank Account", payload)
     ctx.result.bump("bank_accounts_emitted")
 

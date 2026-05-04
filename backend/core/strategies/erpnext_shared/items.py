@@ -9,6 +9,7 @@ Critical preservation requirements (per planning doc):
 - CATEQUATIONT (item-equivalence) is OUT of scope here — those are
   inter-item relationships, not unit conversions on a single item.
 """
+
 from typing import Iterable
 
 from core.strategies.erpnext_shared.common import (
@@ -40,19 +41,38 @@ def emit_items(ctx: Context) -> None:
     synonyms = group_by(ctx.table("CATESYNONYMT"), "CATID")
     suppliers = group_by(ctx.table("CATSUPPLIERT"), "CATID")
     default_warehouse = _default_warehouse(ctx)
+    global_barcodes: set[str] = set()
     for row in ctx.iter_streamed("CATEGORYT"):
         catid = clean_str(row.get("CATID"))
         if not catid or catid in deleted:
             ctx.result.bump("items_skipped_deleted")
             continue
-        _emit_item(ctx, row, descriptions, synonyms, suppliers, default_warehouse)
+        _emit_item(
+            ctx,
+            row,
+            descriptions,
+            synonyms,
+            suppliers,
+            default_warehouse,
+            global_barcodes,
+        )
 
 
 def emit_item_prices(ctx: Context) -> None:
     # Build CATID → stock_uom lookup once so each price row can carry the
-    # correct uom (Item Price.uom is required on v16).
+    # correct uom (Item Price.uom is required on v16). The uom map's
+    # keys also tell us which items the strategy actually knows about,
+    # so we drop prices that reference deleted / unknown items —
+    # otherwise Frappe rejects the row with 'Value ALA-176 missing for
+    # Item' on import.
     item_uom_by_catid = _index_item_uoms(ctx)
+    deleted = _deleted_catids(ctx)
+    valid_catids = set(item_uom_by_catid.keys()) - deleted
     for row in ctx.table("CATPRICET"):
+        catid = clean_str(row.get("CATID"))
+        if not catid or catid not in valid_catids:
+            ctx.result.bump("item_prices_skipped_missing_item")
+            continue
         _emit_item_price(ctx, row, item_uom_by_catid)
 
 
@@ -67,6 +87,7 @@ def _index_item_uoms(ctx: Context) -> dict[str, str]:
 
 # -- Item ---------------------------------------------------------------------
 
+
 def _emit_item(
     ctx: Context,
     row: dict,
@@ -74,32 +95,38 @@ def _emit_item(
     synonyms: dict[str, list[dict]],
     suppliers: dict[str, list[dict]],
     default_warehouse: str,
+    global_barcodes: set[str],
 ) -> None:
     catid = clean_str(row.get("CATID"))
     item_syns = synonyms.get(catid, [])
-    barcodes, aliases = _collect_barcodes(catid, row.get("BARCODE"), item_syns)
+    barcodes, aliases = _collect_barcodes(
+        catid, row.get("BARCODE"), item_syns, global_barcodes
+    )
 
-    ctx.result.emit("Item", {
-        "name": item_id(catid),
-        "item_code": item_id(catid),
-        "item_name": pick(row, "CATNAME", "CATNAMEE", "CATNAMEH"),
-        "description": _build_description(row, descriptions, aliases),
-        "item_group": ITEM_GROUP_NAME,
-        "stock_uom": _stock_uom(row),
-        "is_stock_item": 1,
-        "is_sales_item": 1,
-        "is_purchase_item": 1,
-        "disabled": 0 if _is_active(row) else 1,
-        "has_batch_no": 1 if is_truthy(row.get("NEEDBATCH")) else 0,
-        "has_serial_no": 1 if is_truthy(row.get("HAVESERIAL")) else 0,
-        "weight_per_unit": parse_decimal(row.get("WEIGHT")),
-        "brand": clean_str(row.get("MANUFACTURER")),
-        "barcodes": barcodes,
-        "uoms": _uom_conversions(row),
-        "supplier_items": _supplier_items(ctx, suppliers.get(catid, [])),
-        "item_defaults": _item_defaults(ctx, default_warehouse),
-        "legacy_catid": catid,
-    })
+    ctx.result.emit(
+        "Item",
+        {
+            "name": item_id(catid),
+            "item_code": item_id(catid),
+            "item_name": pick(row, "CATNAME", "CATNAMEE", "CATNAMEH"),
+            "description": _build_description(row, descriptions, aliases),
+            "item_group": ITEM_GROUP_NAME,
+            "stock_uom": _stock_uom(row),
+            "is_stock_item": 1,
+            "is_sales_item": 1,
+            "is_purchase_item": 1,
+            "disabled": 0 if _is_active(row) else 1,
+            "has_batch_no": 1 if is_truthy(row.get("NEEDBATCH")) else 0,
+            "has_serial_no": 1 if is_truthy(row.get("HAVESERIAL")) else 0,
+            "weight_per_unit": parse_decimal(row.get("WEIGHT")),
+            "brand": clean_str(row.get("MANUFACTURER")),
+            "barcodes": barcodes,
+            "uoms": _uom_conversions(row),
+            "supplier_items": _supplier_items(ctx, suppliers.get(catid, [])),
+            "item_defaults": _item_defaults(ctx, default_warehouse),
+            "legacy_catid": catid,
+        },
+    )
     ctx.result.bump("items_emitted")
     ctx.result.bump("barcodes_emitted", len(barcodes))
 
@@ -134,44 +161,47 @@ def _build_description(
 
 # -- Barcodes -----------------------------------------------------------------
 
+
 def _collect_barcodes(
     catid: str,
     barcode_field,
     synonyms: list[dict],
+    global_barcodes: set[str],
 ) -> tuple[list[dict], list[str]]:
     """Return (barcode rows, non-barcode alias strings).
 
     Three sources are considered in priority order: CATID itself (primary),
     the CATEGORYT.BARCODE field (if it differs), and CATESYNONYMT.SYNCATID.
-    Each value is deduped across sources so we never emit the same barcode
-    twice for the same item.
+    Each value is deduped both within-item and across-items (via
+    global_barcodes) so ERPnext's global barcode uniqueness constraint
+    is never violated.
     """
     seen: set[str] = set()
     barcodes: list[dict] = []
     aliases: list[str] = []
-    _add_barcode(catid, seen, barcodes)
+    _add_barcode(catid, seen, barcodes, global_barcodes)
     secondary = clean_str(barcode_field)
     if secondary and secondary != catid:
-        _add_barcode(secondary, seen, barcodes)
+        _add_barcode(secondary, seen, barcodes, global_barcodes)
     for syn in synonyms:
         value = clean_str(syn.get("SYNCATID"))
         if not value or value in seen:
             continue
         if _is_barcode_shaped(value):
-            _add_barcode(value, seen, barcodes)
+            _add_barcode(value, seen, barcodes, global_barcodes)
         else:
             aliases.append(value)
     return barcodes, aliases
 
 
-def _add_barcode(value: str, seen: set[str], out: list[dict]) -> None:
-    if not value or value in seen:
+def _add_barcode(
+    value: str, seen: set[str], out: list[dict], global_barcodes: set[str]
+) -> None:
+    if not value or value in seen or value in global_barcodes:
         return
     seen.add(value)
-    out.append({
-        "barcode": value,
-        "barcode_type": BARCODE_TYPES.get(len(value), ""),
-    })
+    global_barcodes.add(value)
+    out.append({"barcode": value})
 
 
 def _is_barcode_shaped(value: str) -> bool:
@@ -179,6 +209,7 @@ def _is_barcode_shaped(value: str) -> bool:
 
 
 # -- Item child tables --------------------------------------------------------
+
 
 def _uom_conversions(row: dict) -> list[dict]:
     """Stock UOM = self conversion factor 1.0; add WMUNIT if it differs."""
@@ -215,10 +246,12 @@ def _supplier_items(ctx: Context, supplier_rows: Iterable[dict]) -> list[dict]:
 
 
 def _item_defaults(ctx: Context, default_warehouse: str) -> list[dict]:
-    return [{
-        "company": ctx.config.company_name,
-        "default_warehouse": default_warehouse,
-    }]
+    return [
+        {
+            "company": ctx.config.company_name,
+            "default_warehouse": default_warehouse,
+        }
+    ]
 
 
 def _default_warehouse(ctx: Context) -> str:
@@ -240,7 +273,10 @@ def _deleted_catids(ctx: Context) -> set[str]:
 
 # -- Item Price ---------------------------------------------------------------
 
-def _emit_item_price(ctx: Context, row: dict, item_uom_by_catid: dict[str, str]) -> None:
+
+def _emit_item_price(
+    ctx: Context, row: dict, item_uom_by_catid: dict[str, str]
+) -> None:
     rate = parse_decimal(row.get("SALEPRICE"))
     if rate <= 0:
         ctx.result.bump("item_prices_skipped_zero")
@@ -250,14 +286,17 @@ def _emit_item_price(ctx: Context, row: dict, item_uom_by_catid: dict[str, str])
         ctx.result.bump("item_prices_skipped_no_catid")
         return
     legacy_priceid = clean_str(row.get("PRICEID"))
-    ctx.result.emit("Item Price", {
-        "name": f"PRC-LEG-{legacy_priceid}-{catid}",
-        "item_code": item_id(catid),
-        "price_list": price_list_name(ctx, row.get("PRICEID")),
-        "price_list_rate": rate,
-        "currency": currency_iso(row.get("SALECUR")),
-        "uom": item_uom_by_catid.get(catid, ""),
-        "valid_from": parse_date(row.get("CHANGEDATE")),
-        "legacy_priceid": legacy_priceid,
-    })
+    ctx.result.emit(
+        "Item Price",
+        {
+            "name": f"PRC-LEG-{legacy_priceid}-{catid}",
+            "item_code": item_id(catid),
+            "price_list": price_list_name(ctx, row.get("PRICEID")),
+            "price_list_rate": rate,
+            "currency": currency_iso(row.get("SALECUR")),
+            "uom": item_uom_by_catid.get(catid, ""),
+            "valid_from": parse_date(row.get("CHANGEDATE")),
+            "legacy_priceid": legacy_priceid,
+        },
+    )
     ctx.result.bump("item_prices_emitted")

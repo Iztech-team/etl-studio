@@ -656,6 +656,63 @@ dialog.rl-col-dialog::backdrop {
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.35; }
 }
+@keyframes rl-stripe-march {
+  0%   { background-position: 0 0; }
+  100% { background-position: 24px 0; }
+}
+@keyframes rl-row-in {
+  from { opacity: 0; transform: translateX(-4px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes rl-bug-shake {
+  0%, 100%        { transform: translateX(0); }
+  20%, 60%        { transform: translateX(-1px); }
+  40%, 80%        { transform: translateX(1px); }
+}
+@keyframes rl-bug-glow {
+  0%, 100% { box-shadow: 0 0 0 rgba(255,90,90,0); }
+  50%      { box-shadow: 0 0 14px rgba(255,90,90,0.35); }
+}
+
+/* Project card — failure state */
+.rl-proj.rl-bug {
+  border-color: var(--lg-coral);
+  background:
+    linear-gradient(rgba(255,90,90,0.04), rgba(255,90,90,0.04)),
+    var(--lg-bg-1, #11091a);
+  animation: rl-card-in .28s ease-out both, rl-bug-glow 3.2s ease-in-out infinite;
+}
+.rl-proj.rl-bug:hover { border-color: var(--lg-coral); }
+.rl-proj.rl-bug > .corner-tl,
+.rl-proj.rl-bug > .corner-tr,
+.rl-proj.rl-bug > .corner-bl,
+.rl-proj.rl-bug > .corner-br { background: var(--lg-coral); }
+.rl-proj.rl-bug .progress > span { background: var(--lg-coral); }
+.rl-bug-line {
+  font-family: var(--lg-mono);
+  font-size: 10px;
+  color: var(--lg-coral);
+  letter-spacing: 0.04em;
+  margin-top: 8px;
+  padding: 4px 6px;
+  border-left: 2px solid var(--lg-coral);
+  background: rgba(255,90,90,0.06);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rl-bug-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--lg-pixel);
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  color: var(--lg-coral);
+  border: 1px solid var(--lg-coral);
+  padding: 2px 6px;
+  animation: rl-bug-shake .9s ease-in-out infinite;
+}
 @keyframes rl-amber-glow {
   0%, 100% { box-shadow: 2px 2px 0 var(--lg-amber-dim), 0 0 0 rgba(176,102,255,0); }
   50%      { box-shadow: 2px 2px 0 var(--lg-amber-dim), 0 0 12px rgba(176,102,255,0.45); }

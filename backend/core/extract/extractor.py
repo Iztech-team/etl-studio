@@ -164,8 +164,9 @@ class Extractor:
         sample: List[Dict] = []  # up to 50 rows used for type inference
         row_count = 0
         columns: List[str] = []
-        with open(path, "r", encoding=encoding, errors="replace", newline="") as src, \
-             open(staging, "w", encoding="utf-8") as dst:
+        with open(
+            path, "r", encoding=encoding, errors="replace", newline=""
+        ) as src, open(staging, "w", encoding="utf-8") as dst:
             reader = csv.DictReader(src)
             for raw in reader:
                 cleaned = self._clean_row(raw, table_name)

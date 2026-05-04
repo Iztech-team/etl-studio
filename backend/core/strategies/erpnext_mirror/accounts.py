@@ -16,27 +16,19 @@ Three load-bearing decisions live here:
    reference (which uses the parent's autonamed form `{name} - {abbr}`)
    resolves to a row that already exists.
 """
+
 from typing import Iterable
 
 from core.strategies.erpnext_shared.common import (
+    ROOT_TYPE_BY_ID,
+    account_full_name,
     clean_str,
     currency_iso,
     pick,
+    safe_account_name,
+    walk_to_root,
 )
 from core.strategies.erpnext_shared.context import Context
-
-# 6 real roots + the ACCOUNTID=0 placeholder. Maps ACCOUNTID → (root_type,
-# report_type). The Arabic names live in ACCOUNTT.NAME so we don't repeat
-# them here.
-ROOT_TYPE_BY_ID: dict[str, tuple[str, str]] = {
-    "0": ("Asset", "Balance Sheet"),     # غير محدد (placeholder)
-    "1": ("Asset", "Balance Sheet"),     # الموجودات
-    "2": ("Liability", "Balance Sheet"), # المطلوبات
-    "3": ("Equity", "Balance Sheet"),    # راس المال
-    "4": ("Expense", "Profit and Loss"), # المشتريات والمصاريف
-    "5": ("Income", "Profit and Loss"),  # الايرادات
-    "6": ("Asset", "Balance Sheet"),     # الذمم (memo / receivables)
-}
 
 # Per-leaf account_type derived from ACCCLASST.CLASSID. Optional but lets
 # ERPnext recognize Cash / Bank / Tax / Stock accounts and do the right
@@ -63,7 +55,7 @@ ACCOUNT_TYPE_BY_CLASS: dict[str, str] = {
     "32": "Income Account",
     "44": "Income Account",
     "33": "Income Account",
-    "51": "Round Off",
+    "51": "Expense Account",
 }
 
 # These two CLASS values represent customer / supplier individual accounts.
@@ -79,7 +71,8 @@ def emit_accounts(ctx: Context) -> None:
     rows.sort(key=_sort_key)
     root_for = _root_id_for_each(ctx)
     for row in rows:
-        _emit_account(ctx, row, parent_ids, root_for)
+        _emit_account(ctx, row, parent_ids, root_for, force_disabled=False)
+    _emit_deleted_accounts(ctx, deleted, parent_ids, root_for)
     _emit_party_leaf_accounts(ctx)
 
 
@@ -102,57 +95,100 @@ def _emit_party_leaf_accounts(ctx: Context) -> None:
       individual outstanding-cheque opening JEs. Lives under الموجودات
       المتداولة (Current Assets).
     """
-    abbr_or_id = lambda acctid, fallback: account_full_name(ctx, acctid) or ctx.with_abbr(fallback)
+    abbr_or_id = lambda acctid, fallback: account_full_name(
+        ctx, acctid
+    ) or ctx.with_abbr(fallback)
     equity_parent = abbr_or_id("3", "راس المال")
     current_assets_parent = abbr_or_id("11", "الموجودات المتداولة")
     receivable_parent = abbr_or_id("6", "الذمم")
     payable_parent = abbr_or_id("2", "المطلوبات")
 
-    ctx.result.emit("Account", {
-        "name": ctx.with_abbr("Debtors"),
-        "account_name": "Debtors",
-        "company": ctx.config.company_name,
-        "parent_account": receivable_parent,
-        "is_group": 0,
-        "account_currency": ctx.config.default_currency,
-        "root_type": "Asset",
-        "report_type": "Balance Sheet",
-        "account_type": "Receivable",
-    })
-    ctx.result.emit("Account", {
-        "name": ctx.with_abbr("Creditors"),
-        "account_name": "Creditors",
-        "company": ctx.config.company_name,
-        "parent_account": payable_parent,
-        "is_group": 0,
-        "account_currency": ctx.config.default_currency,
-        "root_type": "Liability",
-        "report_type": "Balance Sheet",
-        "account_type": "Payable",
-    })
-    ctx.result.emit("Account", {
-        "name": ctx.with_abbr("Temporary Opening"),
-        "account_name": "Temporary Opening",
-        "company": ctx.config.company_name,
-        "parent_account": equity_parent,
-        "is_group": 0,
-        "account_currency": ctx.config.default_currency,
-        "root_type": "Equity",
-        "report_type": "Balance Sheet",
-        "account_type": "Temporary",
-    })
-    ctx.result.emit("Account", {
-        "name": ctx.with_abbr("Cheques in Hand"),
-        "account_name": "Cheques in Hand",
-        "company": ctx.config.company_name,
-        "parent_account": current_assets_parent,
-        "is_group": 0,
-        "account_currency": ctx.config.default_currency,
-        "root_type": "Asset",
-        "report_type": "Balance Sheet",
-        "account_type": "Cash",
-    })
-    ctx.result.bump("party_leaf_accounts_emitted", 4)
+    ctx.result.emit(
+        "Account",
+        {
+            "name": ctx.with_abbr("Debtors"),
+            "account_name": "Debtors",
+            "company": ctx.config.company_name,
+            "parent_account": receivable_parent,
+            "is_group": 0,
+            "account_currency": ctx.config.default_currency,
+            "root_type": "Asset",
+            "report_type": "Balance Sheet",
+            "account_type": "Receivable",
+        },
+    )
+    ctx.result.emit(
+        "Account",
+        {
+            "name": ctx.with_abbr("Creditors"),
+            "account_name": "Creditors",
+            "company": ctx.config.company_name,
+            "parent_account": payable_parent,
+            "is_group": 0,
+            "account_currency": ctx.config.default_currency,
+            "root_type": "Liability",
+            "report_type": "Balance Sheet",
+            "account_type": "Payable",
+        },
+    )
+    ctx.result.emit(
+        "Account",
+        {
+            "name": ctx.with_abbr("Temporary Opening"),
+            "account_name": "Temporary Opening",
+            "company": ctx.config.company_name,
+            "parent_account": equity_parent,
+            "is_group": 0,
+            "account_currency": ctx.config.default_currency,
+            "root_type": "Equity",
+            "report_type": "Balance Sheet",
+            "account_type": "Temporary",
+        },
+    )
+    ctx.result.emit(
+        "Account",
+        {
+            "name": ctx.with_abbr("Cheques in Hand"),
+            "account_name": "Cheques in Hand",
+            "company": ctx.config.company_name,
+            "parent_account": current_assets_parent,
+            "is_group": 0,
+            "account_currency": ctx.config.default_currency,
+            "root_type": "Asset",
+            "report_type": "Balance Sheet",
+            "account_type": "Cash",
+        },
+    )
+    expense_parent = abbr_or_id("4", "المشتريات والمصاريف")
+    ctx.result.emit(
+        "Account",
+        {
+            "name": ctx.with_abbr("Round Off"),
+            "account_name": "Round Off",
+            "company": ctx.config.company_name,
+            "parent_account": expense_parent,
+            "is_group": 0,
+            "account_currency": ctx.config.default_currency,
+            "root_type": "Expense",
+            "report_type": "Profit and Loss",
+            "account_type": "Round Off",
+        },
+    )
+    ctx.result.emit(
+        "Account",
+        {
+            "name": ctx.with_abbr("Stock Adjustment"),
+            "account_name": "Stock Adjustment",
+            "company": ctx.config.company_name,
+            "parent_account": expense_parent,
+            "is_group": 0,
+            "account_currency": ctx.config.default_currency,
+            "root_type": "Expense",
+            "report_type": "Profit and Loss",
+            "account_type": "Stock Adjustment",
+        },
+    )
+    ctx.result.bump("party_leaf_accounts_emitted", 6)
 
 
 def _root_id_for_each(ctx: Context) -> dict[str, str]:
@@ -164,55 +200,70 @@ def _root_id_for_each(ctx: Context) -> dict[str, str]:
     """
     out: dict[str, str] = {}
     by_id = ctx.accounts_by_id
-    for aid, row in by_id.items():
-        out[aid] = _walk_to_root(aid, by_id)
+    for aid in by_id:
+        out[aid] = walk_to_root(aid, by_id)
     return out
 
 
-def _walk_to_root(account_id: str, by_id: dict) -> str:
-    cur = account_id
-    seen: set[str] = set()
-    for _ in range(20):  # depth-cap; legacy ALEVEL maxes at 4
-        if not cur or cur in seen:
-            break
-        seen.add(cur)
-        if cur in ROOT_TYPE_BY_ID:
-            return cur
-        father = clean_str((by_id.get(cur) or {}).get("FATHERID"))
-        if not father or father == cur:
-            break
-        cur = father
-    return account_id  # fallback to self if no root found
-
-
 # -- Emission -----------------------------------------------------------------
+
+
+def _emit_deleted_accounts(
+    ctx: Context,
+    deleted: set[str],
+    parent_ids: set[str],
+    root_for: dict[str, str],
+) -> None:
+    """Emit deleted accounts as disabled so opening JEs can still reference them."""
+    for row in ctx.table("ACCOUNTT"):
+        account_id = clean_str(row.get("ACCOUNTID"))
+        if not account_id or account_id not in deleted:
+            continue
+        cls = clean_str(row.get("CLASS"))
+        if cls in SKIP_CLASSES:
+            continue
+        _emit_account(ctx, row, parent_ids, root_for, force_disabled=True)
+    ctx.result.bump("deleted_accounts_restored", len(deleted))
+
 
 def _emit_account(
     ctx: Context,
     row: dict,
     parent_ids: set[str],
     root_for: dict[str, str],
+    force_disabled: bool = False,
 ) -> None:
     account_id = clean_str(row.get("ACCOUNTID"))
-    name = pick(row, "NAME", "NAMEE", "NAMEH")
+    raw_name = pick(row, "NAME", "NAMEE", "NAMEH")
+    name = safe_account_name(raw_name)
     if not name:
         ctx.result.warn("Account", "missing NAME", legacy_acctid=account_id)
         return
     is_root = account_id in ROOT_TYPE_BY_ID
     root_id = root_for.get(account_id, account_id)
     root_type, report_type = ROOT_TYPE_BY_ID.get(
-        root_id, ("Asset", "Balance Sheet"),
+        root_id,
+        ("Asset", "Balance Sheet"),
     )
+    # account_number = legacy ACCOUNTID gives Frappe a stable ASCII
+    # prefix in the autoname ('{number} - {name} - {abbr}'). Without
+    # it, accounts whose name carries Arabic text + special chars
+    # (e.g. backslash/slash separators in 'صندوق نقدي\شيكل') hit a
+    # validate_link_and_fetch lookup mismatch — search finds the
+    # account but validator can't match by name. The numeric prefix
+    # sidesteps that entirely. Name must use safe_account_name() to
+    # normalize separators so Bank Account and JE links can find it.
     payload = {
-        "name": ctx.with_abbr(name),
+        "name": _autoname_with_number(account_id, name, ctx.config.company_abbr),
         "account_name": name,
+        "account_number": account_id,
         "company": ctx.config.company_name,
         "parent_account": _parent_account_name(ctx, row, is_root),
         "is_group": 1 if account_id in parent_ids else 0,
         "account_currency": currency_iso(row.get("CURID")),
         "root_type": root_type,
         "report_type": report_type,
-        "disabled": 0 if _is_active(row) else 1,
+        "disabled": 1 if force_disabled else (0 if _is_active(row) else 1),
         "legacy_acctid": account_id,
         "legacy_class": clean_str(row.get("CLASS")),
     }
@@ -230,8 +281,23 @@ def _parent_account_name(ctx: Context, row: dict, is_root: bool) -> str:
     parent = ctx.accounts_by_id.get(parent_id)
     if not parent:
         return ""
-    parent_name = pick(parent, "NAME", "NAMEE", "NAMEH")
-    return ctx.with_abbr(parent_name) if parent_name else ""
+    parent_name = safe_account_name(pick(parent, "NAME", "NAMEE", "NAMEH"))
+    if not parent_name:
+        return ""
+    return _autoname_with_number(parent_id, parent_name, ctx.config.company_abbr)
+
+
+def _autoname_with_number(account_id: str, name: str, abbr: str) -> str:
+    """Mirror of erpnext.accounts.utils.get_autoname_with_number — when an
+    account_number is present, the autoname becomes
+    '{number} - {name} - {abbr}'. We construct cross-references to the
+    same shape so Bank Account / JE links validate correctly."""
+    parts = [clean_str(account_id), clean_str(name)]
+    parts = [p for p in parts if p]
+    suffix = clean_str(abbr)
+    if suffix and suffix not in parts[-1]:
+        parts.append(suffix)
+    return " - ".join(parts)
 
 
 def _account_type_for(row: dict, is_group: int) -> str:
@@ -247,6 +313,7 @@ def _is_active(row: dict) -> bool:
 
 
 # -- Filtering ----------------------------------------------------------------
+
 
 def _emittable_accounts(ctx: Context, deleted: set[str]) -> list[dict]:
     out: list[dict] = []
@@ -295,5 +362,3 @@ def _deleted_account_ids(ctx: Context) -> set[str]:
         for r in ctx.table("DELETEDACCOUNTT")
         if clean_str(r.get("ACCOUNTID"))
     }
-
-

@@ -10,9 +10,14 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 from core.extract.extractor import Extractor
+from core.strategies.erpnext_shared.entities import (
+    descriptors as entity_descriptors,
+    resolve_dependencies,
+)
 from helpers import _auto_save, _excluded_set, _flush_audit_events
 from models.schemas import (
     DB_TYPE_EXTENSIONS,
+    EntitySelectionRequest,
     PreExtractFileInfo,
     PreExtractResponse,
     TableSelectionRequest,
@@ -63,11 +68,13 @@ def _safe_next_factory(sentinel: object):
     RuntimeError, so we catch inside the worker thread and signal
     end-of-stream via a unique sentinel.
     """
+
     def safe_next(gen):
         try:
             return next(gen)
         except StopIteration:
             return sentinel
+
     return safe_next
 
 
@@ -99,16 +106,25 @@ async def upload_db(
 
     file_size = os.path.getsize(dest)
     file_info = PreExtractFileInfo(
-        name=file.filename, path=dest, size=file_size, db_type=db_type,
+        name=file.filename,
+        path=dest,
+        size=file_size,
+        db_type=db_type,
     )
 
-    await session_store.put(session_id, {
-        "project_id": project_id,
-        "pending_db": {
-            "file_path": dest, "session_dir": session_dir,
-            "filename": file.filename, "size": file_size, "db_type": db_type,
+    await session_store.put(
+        session_id,
+        {
+            "project_id": project_id,
+            "pending_db": {
+                "file_path": dest,
+                "session_dir": session_dir,
+                "filename": file.filename,
+                "size": file_size,
+                "db_type": db_type,
+            },
         },
-    })
+    )
     state = _new_extraction_state()
     state["filename"] = file.filename
     state["project_id"] = project_id
@@ -118,7 +134,8 @@ async def upload_db(
 
 @router.post("/extract/{session_id}")
 async def start_extract(
-    session_id: str, password: str | None = Form(None),
+    session_id: str,
+    password: str | None = Form(None),
 ):
     """Kick off extraction. Idempotent — returns current status if already running."""
     if not await session_store.exists(session_id):
@@ -139,7 +156,9 @@ async def start_extract(
     new_state = _new_extraction_state()
     new_state["status"] = "extracting"
     new_state["started_at"] = _dt.now(timezone.utc).isoformat()
-    new_state["filename"] = (pending or {}).get("filename") or (state or {}).get("filename")
+    new_state["filename"] = (pending or {}).get("filename") or (state or {}).get(
+        "filename"
+    )
     new_state["project_id"] = s.get("project_id")
     await extraction_store.put(session_id, new_state)
     asyncio.create_task(_run_extraction(session_id, password))
@@ -250,8 +269,10 @@ async def _run_extraction(session_id: str, password: str | None) -> None:
 
     try:
         gen = extract_db_to_csvs_iter(
-            pending["file_path"], pending["db_type"],
-            pending["session_dir"], password,
+            pending["file_path"],
+            pending["db_type"],
+            pending["session_dir"],
+            password,
         )
         csv_files: List[str] = []
 
@@ -307,34 +328,41 @@ async def _run_extraction(session_id: str, password: str | None) -> None:
         ]
 
         file_info = PreExtractFileInfo(
-            name=pending["filename"], path=pending["file_path"],
-            size=pending["size"], db_type=pending["db_type"],
+            name=pending["filename"],
+            path=pending["file_path"],
+            size=pending["size"],
+            db_type=pending["db_type"],
         )
 
         sess = await session_store.require(session_id)
-        sess.update({
-            "pre_extract": {
-                "file": file_info.dict(),
-                "password": password is not None,
-                "db_type": pending["db_type"],
-            },
-            "extractor": extractor,
-            "raw": result,
-            "files": saved_files,
-            "audit_trail": audit_trail,
-        })
+        sess.update(
+            {
+                "pre_extract": {
+                    "file": file_info.dict(),
+                    "password": password is not None,
+                    "db_type": pending["db_type"],
+                },
+                "extractor": extractor,
+                "raw": result,
+                "files": saved_files,
+                "audit_trail": audit_trail,
+            }
+        )
         sess.pop("pending_db", None)
         project_id_for_cache = sess.get("project_id")
         if project_id_for_cache:
             try:
                 from utils import extract_cache as _ec
+
                 _ec.write(project_id_for_cache, result, pending["session_dir"])
             except Exception:
                 pass
         await _auto_save(session_id, "pre-extract")
 
         done_payload = PreExtractResponse(
-            ok=True, session_id=session_id, file=file_info,
+            ok=True,
+            session_id=session_id,
+            file=file_info,
             tables_extracted=list(result.get("tables", {}).keys()),
             csv_files=csv_files,
             preview=result.get("preview", {}),
@@ -397,20 +425,54 @@ async def pre_extract_select(session_id: str, body: TableSelectionRequest):
         if audit_trail:
             try:
                 from datetime import datetime as _dt
-                audit_trail.events.append({
-                    "type": "tables_reselected",
-                    "table": None, "column": None,
-                    "description": f"included={sorted(selected)}, excluded={sorted(new_excluded)}",
-                    "timestamp": _dt.now(timezone.utc).isoformat(),
-                })
+
+                audit_trail.events.append(
+                    {
+                        "type": "tables_reselected",
+                        "table": None,
+                        "column": None,
+                        "description": f"included={sorted(selected)}, excluded={sorted(new_excluded)}",
+                        "timestamp": _dt.now(timezone.utc).isoformat(),
+                    }
+                )
             except Exception:
                 pass
 
     await _auto_save(session_id, "edit")
     return {
-        "ok": True, "changed": changed,
-        "kept": sorted(selected), "excluded": sorted(new_excluded),
+        "ok": True,
+        "changed": changed,
+        "kept": sorted(selected),
+        "excluded": sorted(new_excluded),
     }
+
+
+@router.get("/entities")
+async def list_entities():
+    """Return the entity menu the extract UI renders."""
+    return {"entities": entity_descriptors()}
+
+
+@router.post("/select-entities/{session_id}")
+async def select_entities(session_id: str, body: EntitySelectionRequest):
+    """Persist the user's entity selection on the session.
+
+    Stale transform / load artefacts are dropped if the selection
+    changed so the next /api/transform run respects the new scope.
+    """
+    if not await session_store.exists(session_id):
+        raise HTTPException(404, "Session not found")
+    s = await session_store.require(session_id)
+    resolved = sorted(resolve_dependencies(body.entities))
+    prev = sorted(s.get("selected_entities") or [])
+    changed = resolved != prev
+    s["selected_entities"] = resolved
+    if changed:
+        s.pop("transformed", None)
+        s.pop("transformer", None)
+        s.pop("load_result", None)
+    await _auto_save(session_id, "edit")
+    return {"ok": True, "changed": changed, "selected": resolved}
 
 
 @router.post("/upload")
@@ -469,7 +531,9 @@ async def upload_files(
         saved = [s for s in saved if s["path"] != db_file_info["path"]]
         for csv_name in csv_files:
             csv_path = os.path.join(session_dir, csv_name)
-            saved.append({"name": csv_name, "path": csv_path, "size": os.path.getsize(csv_path)})
+            saved.append(
+                {"name": csv_name, "path": csv_path, "size": os.path.getsize(csv_path)}
+            )
 
     extractor = Extractor(session_dir, audit_trail)
     result = extractor.extract_all()
@@ -479,17 +543,21 @@ async def upload_files(
             list(result.get("tables", {}).keys()),
             sum(len(rows) for rows in result.get("tables", {}).values()),
         )
-    await session_store.put(session_id, {
-        "project_id": project_id,
-        "extractor": extractor,
-        "raw": result,
-        "files": saved,
-        "audit_trail": audit_trail,
-    })
+    await session_store.put(
+        session_id,
+        {
+            "project_id": project_id,
+            "extractor": extractor,
+            "raw": result,
+            "files": saved,
+            "audit_trail": audit_trail,
+        },
+    )
 
     if project_id:
         try:
             from utils import extract_cache as _ec
+
             _ec.write(project_id, result, session_dir)
         except Exception:
             pass
@@ -500,7 +568,9 @@ async def upload_files(
         total_rows = sum(len(rows) for rows in result.get("tables", {}).values())
         table_count = len(result.get("tables", {}))
         run = create_pipeline_run(project_id, "extract")
-        finish_pipeline_run(run["id"], "done", total_rows, f"{table_count} tables extracted")
+        finish_pipeline_run(
+            run["id"], "done", total_rows, f"{table_count} tables extracted"
+        )
         _flush_audit_events(project_id, audit_trail, run["id"])
 
     return {
