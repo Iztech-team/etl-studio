@@ -40,12 +40,13 @@ def emit_items(ctx: Context) -> None:
     synonyms = group_by(ctx.table("CATESYNONYMT"), "CATID")
     suppliers = group_by(ctx.table("CATSUPPLIERT"), "CATID")
     default_warehouse = _default_warehouse(ctx)
+    global_barcodes: set[str] = set()
     for row in ctx.iter_streamed("CATEGORYT"):
         catid = clean_str(row.get("CATID"))
         if not catid or catid in deleted:
             ctx.result.bump("items_skipped_deleted")
             continue
-        _emit_item(ctx, row, descriptions, synonyms, suppliers, default_warehouse)
+        _emit_item(ctx, row, descriptions, synonyms, suppliers, default_warehouse, global_barcodes)
 
 
 def emit_item_prices(ctx: Context) -> None:
@@ -84,10 +85,11 @@ def _emit_item(
     synonyms: dict[str, list[dict]],
     suppliers: dict[str, list[dict]],
     default_warehouse: str,
+    global_barcodes: set[str],
 ) -> None:
     catid = clean_str(row.get("CATID"))
     item_syns = synonyms.get(catid, [])
-    barcodes, aliases = _collect_barcodes(catid, row.get("BARCODE"), item_syns)
+    barcodes, aliases = _collect_barcodes(catid, row.get("BARCODE"), item_syns, global_barcodes)
 
     ctx.result.emit("Item", {
         "name": item_id(catid),
@@ -148,42 +150,40 @@ def _collect_barcodes(
     catid: str,
     barcode_field,
     synonyms: list[dict],
+    global_barcodes: set[str],
 ) -> tuple[list[dict], list[str]]:
     """Return (barcode rows, non-barcode alias strings).
 
     Three sources are considered in priority order: CATID itself (primary),
     the CATEGORYT.BARCODE field (if it differs), and CATESYNONYMT.SYNCATID.
-    Each value is deduped across sources so we never emit the same barcode
-    twice for the same item.
+    Each value is deduped both within-item and across-items (via
+    global_barcodes) so ERPnext's global barcode uniqueness constraint
+    is never violated.
     """
     seen: set[str] = set()
     barcodes: list[dict] = []
     aliases: list[str] = []
-    _add_barcode(catid, seen, barcodes)
+    _add_barcode(catid, seen, barcodes, global_barcodes)
     secondary = clean_str(barcode_field)
     if secondary and secondary != catid:
-        _add_barcode(secondary, seen, barcodes)
+        _add_barcode(secondary, seen, barcodes, global_barcodes)
     for syn in synonyms:
         value = clean_str(syn.get("SYNCATID"))
         if not value or value in seen:
             continue
         if _is_barcode_shaped(value):
-            _add_barcode(value, seen, barcodes)
+            _add_barcode(value, seen, barcodes, global_barcodes)
         else:
             aliases.append(value)
     return barcodes, aliases
 
 
-def _add_barcode(value: str, seen: set[str], out: list[dict]) -> None:
-    if not value or value in seen:
+def _add_barcode(value: str, seen: set[str], out: list[dict], global_barcodes: set[str]) -> None:
+    if not value or value in seen or value in global_barcodes:
         return
     seen.add(value)
-    out.append({
-        "barcode": value,
-        # Skip barcode_type to bypass ERPnext validation — allows invalid/non-standard
-        # barcodes (failed checksums, duplicates) to import as-is so POS scanning
-        # works with physical product barcodes even if they're non-compliant.
-    })
+    global_barcodes.add(value)
+    out.append({"barcode": value})
 
 
 def _is_barcode_shaped(value: str) -> bool:
