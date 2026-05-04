@@ -156,7 +156,18 @@ def _emit_party_leaf_accounts(ctx: Context) -> None:
         "report_type": "Profit and Loss",
         "account_type": "Round Off",
     })
-    ctx.result.bump("party_leaf_accounts_emitted", 5)
+    ctx.result.emit("Account", {
+        "name": ctx.with_abbr("Stock Adjustment"),
+        "account_name": "Stock Adjustment",
+        "company": ctx.config.company_name,
+        "parent_account": expense_parent,
+        "is_group": 0,
+        "account_currency": ctx.config.default_currency,
+        "root_type": "Expense",
+        "report_type": "Profit and Loss",
+        "account_type": "Stock Adjustment",
+    })
+    ctx.result.bump("party_leaf_accounts_emitted", 6)
 
 
 def _root_id_for_each(ctx: Context) -> dict[str, str]:
