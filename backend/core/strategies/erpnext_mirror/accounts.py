@@ -54,7 +54,7 @@ ACCOUNT_TYPE_BY_CLASS: dict[str, str] = {
     "32": "Income Account",
     "44": "Income Account",
     "33": "Income Account",
-    "51": "Round Off",
+    "51": "Expense Account",
 }
 
 # These two CLASS values represent customer / supplier individual accounts.
@@ -144,7 +144,19 @@ def _emit_party_leaf_accounts(ctx: Context) -> None:
         "report_type": "Balance Sheet",
         "account_type": "Cash",
     })
-    ctx.result.bump("party_leaf_accounts_emitted", 4)
+    expense_parent = abbr_or_id("4", "المشتريات والمصاريف")
+    ctx.result.emit("Account", {
+        "name": ctx.with_abbr("Round Off"),
+        "account_name": "Round Off",
+        "company": ctx.config.company_name,
+        "parent_account": expense_parent,
+        "is_group": 0,
+        "account_currency": ctx.config.default_currency,
+        "root_type": "Expense",
+        "report_type": "Profit and Loss",
+        "account_type": "Round Off",
+    })
+    ctx.result.bump("party_leaf_accounts_emitted", 5)
 
 
 def _root_id_for_each(ctx: Context) -> dict[str, str]:
