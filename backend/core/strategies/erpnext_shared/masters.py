@@ -113,16 +113,44 @@ def _emit_uom(
 
 
 def emit_item_group(ctx: Context) -> None:
+    """Emit a parent 'Products' group and one child per CATBASICSETST row."""
     ctx.result.emit(
         "Item Group",
         {
             "name": ITEM_GROUP_NAME,
             "item_group_name": ITEM_GROUP_NAME,
             "parent_item_group": ROOT_ITEM_GROUP,
-            "is_group": 0,
+            "is_group": 1,
         },
     )
     ctx.result.bump("item_groups_emitted")
+    for row in ctx.table("CATBASICSETST"):
+        name = pick(row, "SETNAME", "SETNAMEE", "SETNAMEH")
+        if not name:
+            continue
+        ctx.result.emit(
+            "Item Group",
+            {
+                "name": name,
+                "item_group_name": name,
+                "parent_item_group": ITEM_GROUP_NAME,
+                "is_group": 0,
+            },
+        )
+        ctx.result.bump("item_groups_emitted")
+
+
+def item_group_for(ctx: Context, setno: str) -> str:
+    """Resolve a CATEGORYT.SETNO to its Item Group name."""
+    if not hasattr(ctx, "_item_group_by_setno"):
+        lookup: dict[str, str] = {}
+        for row in ctx.table("CATBASICSETST"):
+            setid = clean_str(row.get("SETID"))
+            name = pick(row, "SETNAME", "SETNAMEE", "SETNAMEH")
+            if setid and name:
+                lookup[setid] = name
+        ctx._item_group_by_setno = lookup
+    return ctx._item_group_by_setno.get(setno, ITEM_GROUP_NAME)
 
 
 # -- Warehouse ----------------------------------------------------------------
