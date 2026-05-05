@@ -13,7 +13,7 @@ from core.strategies.erpnext_shared.stock_moves import emit_stock_opening
 
 
 class ErpnextNativeStrategy(TransformStrategy):
-    """Convert Al Arabi legacy schema → ERPnext v16, using ERPnext's
+    """Convert legacy schema → ERPnext v16, using ERPnext's
     standard (modular) chart of accounts.
 
     Each legacy leaf is classified into one of ERPnext's standard

@@ -28,6 +28,7 @@ from core.strategies.erpnext_shared.common import (
 from core.strategies.erpnext_shared.context import Context
 from core.strategies.erpnext_shared.masters import (
     ITEM_GROUP_NAME,
+    item_group_for,
     price_list_name,
     warehouse_for_store,
 )
@@ -110,7 +111,7 @@ def _emit_item(
             "item_code": item_id(catid),
             "item_name": pick(row, "CATNAME", "CATNAMEE", "CATNAMEH"),
             "description": _build_description(row, descriptions, aliases),
-            "item_group": ITEM_GROUP_NAME,
+            "item_group": item_group_for(ctx, clean_str(row.get("SETNO"))),
             "stock_uom": _stock_uom(row),
             "is_stock_item": 1,
             "is_sales_item": 1,

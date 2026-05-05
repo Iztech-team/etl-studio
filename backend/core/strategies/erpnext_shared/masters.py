@@ -24,15 +24,15 @@ ROOT_SUPPLIER_GROUP = "All Supplier Groups"
 
 # Names our other doctypes will reference — keep these in one place so
 # items.py and parties.py don't drift.
-ITEM_GROUP_NAME = "Al Arabi Imported"
+ITEM_GROUP_NAME = "Products"
 TERRITORY_NAME = "All Territories"
 CUSTOMER_GROUP_NAME = "Commercial"
 SUPPLIER_GROUP_NAME = "Local"
 
 PRICE_LIST_FALLBACK_NAMES = {
-    "1": "Al Arabi Standard Selling",
-    "2": "Al Arabi Wholesale",
-    "3": "Al Arabi Tertiary",
+    "1": "Standard Selling",
+    "2": "Wholesale",
+    "3": "Tertiary",
 }
 
 
@@ -113,16 +113,44 @@ def _emit_uom(
 
 
 def emit_item_group(ctx: Context) -> None:
+    """Emit a parent 'Products' group and one child per CATBASICSETST row."""
     ctx.result.emit(
         "Item Group",
         {
             "name": ITEM_GROUP_NAME,
             "item_group_name": ITEM_GROUP_NAME,
             "parent_item_group": ROOT_ITEM_GROUP,
-            "is_group": 0,
+            "is_group": 1,
         },
     )
     ctx.result.bump("item_groups_emitted")
+    for row in ctx.table("CATBASICSETST"):
+        name = pick(row, "SETNAME", "SETNAMEE", "SETNAMEH")
+        if not name:
+            continue
+        ctx.result.emit(
+            "Item Group",
+            {
+                "name": name,
+                "item_group_name": name,
+                "parent_item_group": ITEM_GROUP_NAME,
+                "is_group": 0,
+            },
+        )
+        ctx.result.bump("item_groups_emitted")
+
+
+def item_group_for(ctx: Context, setno: str) -> str:
+    """Resolve a CATEGORYT.SETNO to its Item Group name."""
+    if not hasattr(ctx, "_item_group_by_setno"):
+        lookup: dict[str, str] = {}
+        for row in ctx.table("CATBASICSETST"):
+            setid = clean_str(row.get("SETID"))
+            name = pick(row, "SETNAME", "SETNAMEE", "SETNAMEH")
+            if setid and name:
+                lookup[setid] = name
+        ctx._item_group_by_setno = lookup
+    return ctx._item_group_by_setno.get(setno, ITEM_GROUP_NAME)
 
 
 # -- Warehouse ----------------------------------------------------------------
@@ -179,7 +207,7 @@ def _emit_price_list(ctx: Context, row: dict, seen: set[str]) -> None:
         # Use a stable English fallback so cross-doctype references resolve.
         name = PRICE_LIST_FALLBACK_NAMES.get(
             clean_str(row.get("PRICEID")),
-            "Al Arabi Price List",
+            "Standard Price List",
         )
     if name in seen:
         return
@@ -207,7 +235,7 @@ def price_list_name(ctx: Context, legacy_price_id) -> str:
             chosen = pick(row, "PRICENAME")
             if chosen:
                 return chosen
-    return PRICE_LIST_FALLBACK_NAMES.get(pid, "Al Arabi Price List")
+    return PRICE_LIST_FALLBACK_NAMES.get(pid, "Standard Price List")
 
 
 # -- Brand --------------------------------------------------------------------

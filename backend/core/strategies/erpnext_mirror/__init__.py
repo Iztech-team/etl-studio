@@ -13,10 +13,10 @@ from core.strategies.erpnext_shared.stock_moves import emit_stock_opening
 
 
 class ErpnextMirrorStrategy(TransformStrategy):
-    """Convert Al Arabi legacy schema → ERPnext v16, preserving the legacy
+    """Convert legacy schema → ERPnext v16, preserving the legacy
     chart of accounts as-is.
 
-    The Al Arabi tree (~3,500 accounts, hierarchical Arabic naming) is
+    The full tree (~3,500 accounts, hierarchical Arabic naming) is
     emitted unchanged; opening balances are posted per-account with a
     1:1 correspondence to legacy `ACCOUNTT`.
     """
@@ -24,7 +24,7 @@ class ErpnextMirrorStrategy(TransformStrategy):
     name = "erpnext_mirror"
     label = "ERPnext Mirror"
     description = (
-        "Mirrors the Al Arabi chart of accounts into ERPnext, preserving "
+        "Mirrors the legacy chart of accounts into ERPnext, preserving "
         "the Arabic hierarchy. Opening balances are emitted per-leaf so "
         "every legacy ACCOUNTID round-trips to a real GL account."
     )

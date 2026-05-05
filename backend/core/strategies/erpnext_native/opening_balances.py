@@ -148,7 +148,7 @@ def _build_bank_je(
     bank_account: str | None,
 ) -> dict[str, Any]:
     abs_amt = round(abs(balance), 2)
-    abs_company = round(abs(company_amount), 2)
+    abs_company = round(abs_amt * exchange_rate, 2)
     main_line: dict[str, Any] = {"account": account}
     if bank_account:
         main_line["bank_account"] = bank_account

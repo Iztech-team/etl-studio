@@ -39,7 +39,7 @@ class Config:
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "Config":
         return cls(
-            company_name=clean_str(raw.get("company_name")) or "Al Arabi",
+            company_name=clean_str(raw.get("company_name")) or "My Company",
             company_abbr=clean_str(raw.get("company_abbr")) or "ALA",
             country=clean_str(raw.get("country")) or "Palestinian Territory, Occupied",
             default_currency=clean_str(raw.get("default_currency")) or DEFAULT_CURRENCY,
