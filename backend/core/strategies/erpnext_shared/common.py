@@ -421,7 +421,7 @@ def account_full_name(ctx, account_id) -> str:
 # -- legacy tree walk (shared: mirror emits the tree, native classifies) ------
 
 # Map from legacy ROOT ACCOUNTID → ERPnext (root_type, report_type). These are
-# the 6 hand-curated Al Arabi roots plus the ACCOUNTID=0 placeholder (treated
+# the 6 hand-curated roots plus the ACCOUNTID=0 placeholder (treated
 # as Asset). Used both to build the mirror CoA and to classify legacy accounts
 # into ERPnext buckets in native.
 ROOT_TYPE_BY_ID: dict[str, tuple[str, str]] = {

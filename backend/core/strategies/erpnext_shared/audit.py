@@ -191,7 +191,7 @@ _NEGATIVE_BLURB = (
 )
 
 
-_CHECKLIST_TEMPLATE = """# Migration Setup Checklist — Al Arabi → ERPnext v16
+_CHECKLIST_TEMPLATE = """# Migration Setup Checklist — ERPnext v16
 
 This is a one-time setup the ERPnext admin runs **before** importing
 the data CSVs. Each step is required for the imports to succeed.
