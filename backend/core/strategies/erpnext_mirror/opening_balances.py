@@ -21,10 +21,12 @@ from typing import Any
 
 from core.strategies.erpnext_shared.common import (
     DEFAULT_CURRENCY,
+    ROOT_TYPE_BY_ID,
     account_full_name,
     clean_str,
     parse_decimal,
     pick,
+    walk_to_root,
 )
 from core.strategies.erpnext_shared.context import Context
 from core.strategies.erpnext_shared.opening_balances import (
@@ -87,8 +89,9 @@ def _emit_gl_balances(
     bank_gl_to_label: dict[str, str],
 ) -> None:
     """Emit JE per leaf GL account with non-zero balance."""
+    by_id = ctx.accounts_by_id
     for row in ctx.table("ACCOUNTT"):
-        if not _is_emittable_gl(row, parent_ids):
+        if not _is_emittable_gl(row, parent_ids, by_id):
             continue
         balance = parse_decimal(row.get("AACCBALANCE"))
         if abs(balance) < BALANCE_THRESHOLD:
@@ -136,7 +139,7 @@ def _emit_gl_balances(
         ctx.result.bump("opening_gl_balances_emitted")
 
 
-def _is_emittable_gl(row: dict, parent_ids: set[str]) -> bool:
+def _is_emittable_gl(row: dict, parent_ids: set[str], by_id: dict) -> bool:
     account_id = clean_str(row.get("ACCOUNTID"))
     if not account_id or account_id in SPECIAL_HANDLED_IDS:
         return False
@@ -147,8 +150,10 @@ def _is_emittable_gl(row: dict, parent_ids: set[str]) -> bool:
         return False  # handled by party-balance branch
     if cls in INVENTORY_CLASSES:
         return False  # handled by Stock Reconciliation
-    if account_id[0] in ("4", "5"):
-        return False  # P&L accumulators close annually, don't carry
+    root_id = walk_to_root(account_id, by_id)
+    root_type, report_type = ROOT_TYPE_BY_ID.get(root_id, ("Asset", "Balance Sheet"))
+    if report_type == "Profit and Loss":
+        return False  # P&L accounts not allowed in opening entries
     return True
 
 
@@ -167,7 +172,10 @@ def _build_gl_je(
 ) -> dict[str, Any]:
     """GL opening JE — main line in account's native currency, counter in default."""
     abs_amt = round(abs(balance), 2)
-    abs_company = round(abs(company_amount), 2)
+    # Derive company amount from the rounded foreign amount so ERPnext's
+    # internal multiplication (abs_amt * exchange_rate) matches exactly —
+    # prevents auto-insertion of a Round Off line.
+    abs_company = round(abs_amt * exchange_rate, 2)
     main_line: dict[str, Any] = {"account": account}
     if bank_account:
         main_line["bank_account"] = bank_account
