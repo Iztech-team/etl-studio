@@ -3805,6 +3805,7 @@ function ErpnextLiveExport({
 	const [companyAbbr, setCompanyAbbr] = useState("");
 	const [forceReupload, setForceReupload] = useState(false);
 	const [autoContinue, setAutoContinue] = useState(false);
+	const [updateExisting, setUpdateExisting] = useState(false);
 	const [skipFiles, setSkipFiles] = useState<Set<string>>(() => new Set());
 	const [haltedFile, setHaltedFile] = useState<{
 		file: string;
@@ -3919,6 +3920,7 @@ function ErpnextLiveExport({
 					company, company_abbr: companyAbbr,
 					force_reupload: forceReupload && !isResume,
 					halt_on_failure: !autoContinue,
+					update_existing: updateExisting,
 					selected_doctypes: allDoctypes.length > 0
 						? Array.from(selectedDoctypes)
 						: null,
@@ -4134,6 +4136,26 @@ function ErpnextLiveExport({
 							disabled={running}
 						/>
 						<span>Auto-continue past failures</span>
+					</label>
+					<label
+						className="mono"
+						style={{
+							display: "flex",
+							alignItems: "center",
+							gap: 10,
+							fontSize: 11,
+							color: "var(--lg-ink)",
+							cursor: running ? "not-allowed" : "pointer",
+						}}
+						title="Use 'Update Existing Records' instead of 'Insert New Records' in Data Import. Use this to update items/accounts that were already imported previously."
+					>
+						<input
+							type="checkbox"
+							checked={updateExisting}
+							onChange={(e) => setUpdateExisting(e.target.checked)}
+							disabled={running}
+						/>
+						<span>Update existing records</span>
 					</label>
 					{loadingDoctypes && allDoctypes.length === 0 && (
 						<div

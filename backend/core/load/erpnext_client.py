@@ -84,13 +84,15 @@ class ErpnextClient:
         resp = self._request("POST", "/api/method/upload_file", files=files)
         return ((resp or {}).get("message") or {}).get("file_url", "")
 
-    def create_data_import(self, doctype: str, file_url: str) -> str:
+    def create_data_import(
+        self, doctype: str, file_url: str, import_type: str = "Insert New Records",
+    ) -> str:
         """POST /api/resource/Data Import → returns Data Import name."""
         resp = self.post(
             "/api/resource/Data Import",
             {
                 "reference_doctype": doctype,
-                "import_type": "Insert New Records",
+                "import_type": import_type,
                 "import_file": file_url,
                 "mute_emails": 1,
             },
