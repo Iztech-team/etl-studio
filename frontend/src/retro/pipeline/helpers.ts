@@ -5,49 +5,49 @@ import type {
 	ExtractEvent,
 	UploadProgress,
 	ExtractedTable,
-} from "./types";
+} from './types';
 
 export const DB_EXTENSIONS = new Set([
-	"ib",
-	"sqlite",
-	"sqlite3",
-	"db",
-	"fdb",
-	"gdb",
-	"mdb",
-	"accdb",
-	"dbf",
+	'ib',
+	'sqlite',
+	'sqlite3',
+	'db',
+	'fdb',
+	'gdb',
+	'mdb',
+	'accdb',
+	'dbf',
 ]);
 
 export const ACCEPT =
-	".ib,.sqlite,.sqlite3,.db,.fdb,.gdb,.mdb,.accdb,.dbf,.csv,.tsv,.json,.jsonl,.ndjson,.sql,.xlsx,.xls,text/csv,application/json,application/sql";
+	'.ib,.sqlite,.sqlite3,.db,.fdb,.gdb,.mdb,.accdb,.dbf,.csv,.tsv,.json,.jsonl,.ndjson,.sql,.xlsx,.xls,text/csv,application/json,application/sql';
 
 // localStorage key prefixes — defined here so both UploadStage and TransformStage can import from one place
-export const ACTIVE_EXTRACTION_LS_PREFIX = "etl_studio.active_extraction.";
-export const ACTIVE_TRANSFORM_LS_PREFIX = "etl_studio.active_transform.";
+export const ACTIVE_EXTRACTION_LS_PREFIX = 'etl_studio.active_extraction.';
+export const ACTIVE_TRANSFORM_LS_PREFIX = 'etl_studio.active_transform.';
 
 export function detectKind(name: string): FileKind {
-	const ext = name.toLowerCase().split(".").pop() ?? "";
-	if (ext === "csv") return "csv";
-	if (ext === "tsv") return "tsv";
-	if (["json", "jsonl", "ndjson"].includes(ext)) return "json";
-	if (ext === "sql") return "sql";
-	if (["xlsx", "xls"].includes(ext)) return "xlsx";
-	if (ext === "ib") return "ib";
-	if (["sqlite", "sqlite3", "db"].includes(ext)) return "sqlite";
-	return "unknown";
+	const ext = name.toLowerCase().split('.').pop() ?? '';
+	if (ext === 'csv') return 'csv';
+	if (ext === 'tsv') return 'tsv';
+	if (['json', 'jsonl', 'ndjson'].includes(ext)) return 'json';
+	if (ext === 'sql') return 'sql';
+	if (['xlsx', 'xls'].includes(ext)) return 'xlsx';
+	if (ext === 'ib') return 'ib';
+	if (['sqlite', 'sqlite3', 'db'].includes(ext)) return 'sqlite';
+	return 'unknown';
 }
 
 export function isDbFile(name: string): boolean {
-	const ext = name.toLowerCase().split(".").pop() ?? "";
+	const ext = name.toLowerCase().split('.').pop() ?? '';
 	return DB_EXTENSIONS.has(ext);
 }
 
 export function fmtSize(n: number): string {
-	if (n < 1024) return n + " B";
-	if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
-	if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + " MB";
-	return (n / (1024 * 1024 * 1024)).toFixed(1) + " GB";
+	if (n < 1024) return n + ' B';
+	if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+	if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
+	return (n / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
 }
 
 // We're in the "uploading bytes" phase iff progress is non-null AND we
@@ -93,7 +93,7 @@ export async function consumeExtractStream(
 	}
 	const reader = res.body.getReader();
 	const decoder = new TextDecoder();
-	let buffer = "";
+	let buffer = '';
 	let finalPayload: DonePayload | null = null;
 	let streamError: string | null = null;
 
@@ -102,7 +102,7 @@ export async function consumeExtractStream(
 		if (done) break;
 		buffer += decoder.decode(value, { stream: true });
 		let nl: number;
-		while ((nl = buffer.indexOf("\n")) >= 0) {
+		while ((nl = buffer.indexOf('\n')) >= 0) {
 			const line = buffer.slice(0, nl).trim();
 			buffer = buffer.slice(nl + 1);
 			if (!line) continue;
@@ -112,11 +112,11 @@ export async function consumeExtractStream(
 			} catch {
 				continue;
 			}
-			if (evt.event === "error") {
-				streamError = String(evt.message ?? "Extraction failed");
+			if (evt.event === 'error') {
+				streamError = String(evt.message ?? 'Extraction failed');
 				break;
 			}
-			if (evt.event === "done") {
+			if (evt.event === 'done') {
 				const { event: _e, ...rest } = evt;
 				finalPayload = rest as unknown as DonePayload;
 				if (onEvent) onEvent(evt as unknown as ExtractEvent);
@@ -128,7 +128,7 @@ export async function consumeExtractStream(
 	}
 
 	if (streamError) throw new Error(streamError);
-	if (!finalPayload) throw new Error("Stream ended without a final result");
+	if (!finalPayload) throw new Error('Stream ended without a final result');
 	return finalPayload;
 }
 
@@ -144,7 +144,7 @@ export function xhrUpload(
 ): Promise<Response> {
 	return new Promise((resolve, reject) => {
 		const xhr = new XMLHttpRequest();
-		xhr.open("POST", url);
+		xhr.open('POST', url);
 		if (options.onProgress) {
 			xhr.upload.onprogress = (e) => {
 				if (e.lengthComputable) {
@@ -154,8 +154,8 @@ export function xhrUpload(
 		}
 		xhr.onload = () => {
 			const headers = new Headers();
-			const ct = xhr.getResponseHeader("Content-Type");
-			if (ct) headers.set("Content-Type", ct);
+			const ct = xhr.getResponseHeader('Content-Type');
+			if (ct) headers.set('Content-Type', ct);
 			resolve(
 				new Response(xhr.responseText, {
 					status: xhr.status,
@@ -164,14 +164,14 @@ export function xhrUpload(
 				}),
 			);
 		};
-		xhr.onerror = () => reject(new Error("Network error"));
-		xhr.onabort = () => reject(new DOMException("Aborted", "AbortError"));
+		xhr.onerror = () => reject(new Error('Network error'));
+		xhr.onabort = () => reject(new DOMException('Aborted', 'AbortError'));
 		if (options.signal) {
 			if (options.signal.aborted) {
 				xhr.abort();
 				return;
 			}
-			options.signal.addEventListener("abort", () => xhr.abort());
+			options.signal.addEventListener('abort', () => xhr.abort());
 		}
 		xhr.send(body);
 	});
@@ -194,9 +194,9 @@ export async function uploadToBackend(
 	if (dbFile) {
 		// Step 1 — upload
 		const uploadForm = new FormData();
-		uploadForm.append("file", dbFile);
-		if (projectId) uploadForm.append("project_id", projectId);
-		const upRes = await xhrUpload("/api/upload-db", uploadForm, {
+		uploadForm.append('file', dbFile);
+		if (projectId) uploadForm.append('project_id', projectId);
+		const upRes = await xhrUpload('/api/upload-db', uploadForm, {
 			onProgress: onUploadProgress,
 			signal,
 		});
@@ -210,9 +210,9 @@ export async function uploadToBackend(
 
 		// Step 2 — kick off extraction (returns immediately)
 		const extractForm = new FormData();
-		if (password) extractForm.append("password", password);
+		if (password) extractForm.append('password', password);
 		const exRes = await fetch(`/api/extract/${sessionId}`, {
-			method: "POST",
+			method: 'POST',
 			body: extractForm,
 			signal,
 		});
@@ -228,15 +228,15 @@ export async function uploadToBackend(
 
 	// Flat files — use /api/upload
 	const form = new FormData();
-	for (const f of files) form.append("files", f);
-	if (projectId) form.append("project_id", projectId);
-	const res = await xhrUpload("/api/upload", form, {
+	for (const f of files) form.append('files', f);
+	if (projectId) form.append('project_id', projectId);
+	const res = await xhrUpload('/api/upload', form, {
 		onProgress: onUploadProgress,
 		signal,
 	});
 	if (!res.ok) {
 		const err = await res.json().catch(() => null);
-		throw new Error(err?.detail || "Upload failed");
+		throw new Error(err?.detail || 'Upload failed');
 	}
 	const data = await res.json();
 	const schema: Record<string, Record<string, unknown>> = data.inferred_schema ?? {};

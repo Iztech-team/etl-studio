@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode } from 'react';
 
 type IconProps = { size?: number };
 
@@ -126,10 +126,10 @@ export const IKeyboard = ({ size = 12 }: IconProps) => (
 	</PX>
 );
 
-export const IDot = ({ size = 8, c = "currentColor" }: { size?: number; c?: string }) => (
+export const IDot = ({ size = 8, c = 'currentColor' }: { size?: number; c?: string }) => (
 	<span
 		style={{
-			display: "inline-block",
+			display: 'inline-block',
 			width: size,
 			height: size,
 			background: c,

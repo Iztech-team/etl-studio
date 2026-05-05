@@ -1,14 +1,14 @@
-import { useState, useEffect } from "react";
-import { IX } from "../icons";
-import { usePipelineCtx } from "./context";
-import { ACTIVE_TRANSFORM_LS_PREFIX } from "./helpers";
+import { useState, useEffect } from 'react';
+import { IX } from '../icons';
+import { usePipelineCtx } from './context';
+import { ACTIVE_TRANSFORM_LS_PREFIX } from './helpers';
 import type {
 	StrategyDescriptor,
 	StrategyConfigField,
 	TransformResult,
 	AuditCheck,
 	StrategyStats,
-} from "./types";
+} from './types';
 
 export function RlTransform({ onNext }: { onNext: () => void }) {
 	const { uploadResult, transformResult, setTransformResult, projectId, projectName } =
@@ -30,14 +30,14 @@ export function RlTransform({ onNext }: { onNext: () => void }) {
 		let cancelled = false;
 		const run = async () => {
 			try {
-				const res = await fetch("/api/strategies");
-				if (!res.ok) throw new Error("strategies endpoint unavailable");
+				const res = await fetch('/api/strategies');
+				if (!res.ok) throw new Error('strategies endpoint unavailable');
 				const json = await res.json();
 				if (cancelled) return;
 				const list = (json.strategies ?? []) as StrategyDescriptor[];
 				setStrategies(list);
 			} catch (e) {
-				if (!cancelled) setLoadErr(e instanceof Error ? e.message : "load failed");
+				if (!cancelled) setLoadErr(e instanceof Error ? e.message : 'load failed');
 			}
 		};
 		run();
@@ -75,31 +75,31 @@ export function RlTransform({ onNext }: { onNext: () => void }) {
 		if (!uploadResult?.sessionId || !pickedName) return;
 		setRunning(true);
 		setRunErr(null);
-		const lsKey = ACTIVE_TRANSFORM_LS_PREFIX + (projectId ?? "guest");
+		const lsKey = ACTIVE_TRANSFORM_LS_PREFIX + (projectId ?? 'guest');
 		try {
 			localStorage.setItem(lsKey, JSON.stringify({ sessionId: uploadResult.sessionId, projectId }));
 		} catch {}
 		try {
 			const sid = uploadResult.sessionId;
 			const saveRes = await fetch(`/api/strategies/${sid}`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ strategy_name: pickedName, config }),
 			});
 			if (!saveRes.ok) {
 				const err = await saveRes.json().catch(() => null);
-				throw new Error(err?.detail || "Could not save strategy config");
+				throw new Error(err?.detail || 'Could not save strategy config');
 			}
 			const runRes = await fetch(`/api/transform/${sid}`);
 			if (!runRes.ok) {
 				const err = await runRes.json().catch(() => null);
-				throw new Error(err?.detail || "Transform failed");
+				throw new Error(err?.detail || 'Transform failed');
 			}
 			const data = (await runRes.json()) as TransformResult;
 			setResult(data);
 			setTransformResult(data);
 		} catch (e) {
-			setRunErr(e instanceof Error ? e.message : "Transform failed");
+			setRunErr(e instanceof Error ? e.message : 'Transform failed');
 		} finally {
 			try {
 				localStorage.removeItem(lsKey);
@@ -113,13 +113,13 @@ export function RlTransform({ onNext }: { onNext: () => void }) {
 	}
 
 	return (
-		<div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
+		<div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
 			<TransformHeader />
 
 			{loadErr && <RlErrorPanel message={loadErr} />}
 
 			{!strategies && !loadErr && (
-				<div className="mono" style={{ fontSize: 11, color: "var(--lg-ink-dim)" }}>
+				<div className="mono" style={{ fontSize: 11, color: 'var(--lg-ink-dim)' }}>
 					Loading strategies…
 				</div>
 			)}
@@ -165,12 +165,12 @@ export function RlTransform({ onNext }: { onNext: () => void }) {
 
 function TransformRunningPanel() {
 	const PHASES = [
-		"Reading legacy tables…",
-		"Building items + barcodes…",
-		"Resolving customers and suppliers…",
-		"Walking chart of accounts…",
-		"Aggregating sales invoices…",
-		"Streaming output to disk…",
+		'Reading legacy tables…',
+		'Building items + barcodes…',
+		'Resolving customers and suppliers…',
+		'Walking chart of accounts…',
+		'Aggregating sales invoices…',
+		'Streaming output to disk…',
 	];
 	const [phase, setPhase] = useState(0);
 	const [pulseOffset, setPulseOffset] = useState(0);
@@ -184,49 +184,49 @@ function TransformRunningPanel() {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 	return (
-		<div className="panel" style={{ borderColor: "var(--lg-magenta)" }}>
+		<div className="panel" style={{ borderColor: 'var(--lg-magenta)' }}>
 			<div className="panel-head">
-				<span className="pixel glow-magenta" style={{ color: "var(--lg-magenta)" }}>
+				<span className="pixel glow-magenta" style={{ color: 'var(--lg-magenta)' }}>
 					▣ TRANSFORM IN PROGRESS
 				</span>
 			</div>
 			<div
 				className="panel-body"
 				style={{
-					display: "flex",
-					flexDirection: "column",
-					alignItems: "center",
+					display: 'flex',
+					flexDirection: 'column',
+					alignItems: 'center',
 					gap: 14,
-					padding: "26px 20px",
+					padding: '26px 20px',
 				}}
 			>
 				<div className="sprite-disk" />
 				<div
 					className="pixel"
-					style={{ fontSize: 13, color: "var(--lg-magenta)", letterSpacing: "0.15em" }}
+					style={{ fontSize: 13, color: 'var(--lg-magenta)', letterSpacing: '0.15em' }}
 				>
 					{PHASES[phase]}
 				</div>
 				<div
 					style={{
-						width: "100%",
+						width: '100%',
 						maxWidth: 380,
 						height: 10,
-						border: "1px solid var(--lg-border-br)",
-						background: "var(--lg-bg-2)",
-						overflow: "hidden",
-						position: "relative",
+						border: '1px solid var(--lg-border-br)',
+						background: 'var(--lg-bg-2)',
+						overflow: 'hidden',
+						position: 'relative',
 					}}
 				>
 					<div
 						style={{
-							position: "absolute",
+							position: 'absolute',
 							top: 0,
 							bottom: 0,
 							left: `${pulseOffset - 30}%`,
-							width: "30%",
-							background: "linear-gradient(90deg, transparent, var(--lg-magenta), transparent)",
-							boxShadow: "0 0 12px rgba(176,102,255,0.6)",
+							width: '30%',
+							background: 'linear-gradient(90deg, transparent, var(--lg-magenta), transparent)',
+							boxShadow: '0 0 12px rgba(176,102,255,0.6)',
 						}}
 					/>
 				</div>
@@ -234,10 +234,10 @@ function TransformRunningPanel() {
 					className="mono"
 					style={{
 						fontSize: 10,
-						color: "var(--lg-ink-mute)",
+						color: 'var(--lg-ink-mute)',
 						maxWidth: 380,
 						lineHeight: 1.5,
-						textAlign: "center",
+						textAlign: 'center',
 					}}
 				>
 					Output streams to disk during transform — peak memory stays bounded so large datasets
@@ -250,11 +250,11 @@ function TransformRunningPanel() {
 
 function TransformHeader() {
 	return (
-		<div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-			<div className="pixel glow-cyan" style={{ fontSize: 11, color: "var(--lg-cyan)" }}>
+		<div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+			<div className="pixel glow-cyan" style={{ fontSize: 11, color: 'var(--lg-cyan)' }}>
 				▣ TRANSFORM
 			</div>
-			<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}>
+			<div className="mono" style={{ fontSize: 10, color: 'var(--lg-ink-dim)' }}>
 				— pick a strategy, set config, run —
 			</div>
 		</div>
@@ -263,8 +263,8 @@ function TransformHeader() {
 
 function RlErrorPanel({ message }: { message: string }) {
 	return (
-		<div className="panel" style={{ borderColor: "var(--lg-coral)", padding: 12 }}>
-			<div className="mono" style={{ fontSize: 11, color: "var(--lg-coral)" }}>
+		<div className="panel" style={{ borderColor: 'var(--lg-coral)', padding: 12 }}>
+			<div className="mono" style={{ fontSize: 11, color: 'var(--lg-coral)' }}>
 				{message}
 			</div>
 		</div>
@@ -282,11 +282,11 @@ function StrategyPicker({
 }) {
 	const cols = strategies.length === 1 ? 1 : strategies.length === 2 ? 2 : 3;
 	return (
-		<div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+		<div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
 			<StrategyPickerHeader count={strategies.length} />
 			<div
 				style={{
-					display: "grid",
+					display: 'grid',
 					gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
 					gap: 12,
 				}}
@@ -306,11 +306,11 @@ function StrategyPicker({
 
 function StrategyPickerHeader({ count }: { count: number }) {
 	return (
-		<div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-			<div className="pixel glow-cyan" style={{ fontSize: 11, color: "var(--lg-cyan)" }}>
+		<div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+			<div className="pixel glow-cyan" style={{ fontSize: 11, color: 'var(--lg-cyan)' }}>
 				▣ CHOOSE YOUR STRATEGY
 			</div>
-			<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}>
+			<div className="mono" style={{ fontSize: 10, color: 'var(--lg-ink-dim)' }}>
 				— each strategy converts your tables to a known target schema —
 			</div>
 			<div style={{ flex: 1 }} />
@@ -318,13 +318,13 @@ function StrategyPickerHeader({ count }: { count: number }) {
 				className="pixel"
 				style={{
 					fontSize: 9,
-					color: "var(--lg-ink-mute)",
-					letterSpacing: "0.15em",
-					padding: "3px 8px",
-					border: "1px solid var(--lg-border-br)",
+					color: 'var(--lg-ink-mute)',
+					letterSpacing: '0.15em',
+					padding: '3px 8px',
+					border: '1px solid var(--lg-border-br)',
 				}}
 			>
-				{count} STRATEGY{count === 1 ? "" : "S"}
+				{count} STRATEGY{count === 1 ? '' : 'S'}
 			</div>
 		</div>
 	);
@@ -340,42 +340,42 @@ function StrategyCard({
 	onPick: () => void;
 }) {
 	const stats = strategy.stats ?? {};
-	const tier = strategy.tier || "";
+	const tier = strategy.tier || '';
 	return (
 		<button
 			onClick={onPick}
 			className="btn"
 			style={{
-				position: "relative",
-				textAlign: "left",
-				padding: "14px 14px 12px",
-				borderColor: active ? "var(--lg-magenta)" : "var(--lg-border-br)",
-				background: active ? "rgba(176,102,255,0.06)" : "transparent",
-				boxShadow: active ? "0 0 14px rgba(176,102,255,0.4)" : "none",
-				display: "flex",
-				flexDirection: "column",
+				position: 'relative',
+				textAlign: 'left',
+				padding: '14px 14px 12px',
+				borderColor: active ? 'var(--lg-magenta)' : 'var(--lg-border-br)',
+				background: active ? 'rgba(176,102,255,0.06)' : 'transparent',
+				boxShadow: active ? '0 0 14px rgba(176,102,255,0.4)' : 'none',
+				display: 'flex',
+				flexDirection: 'column',
 				gap: 10,
-				textTransform: "none",
+				textTransform: 'none',
 				letterSpacing: 0,
 				minHeight: 200,
 			}}
 		>
 			{tier && <StrategyTierBadge tier={tier} active={active} />}
-			<div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+			<div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
 				<StrategyPickIndicator active={active} />
-				<div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
-					<div className="pixel glow-magenta" style={{ fontSize: 14, color: "var(--lg-magenta)" }}>
+				<div style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1 }}>
+					<div className="pixel glow-magenta" style={{ fontSize: 14, color: 'var(--lg-magenta)' }}>
 						{strategy.label.toUpperCase()}
 					</div>
 					<div
 						className="pixel"
-						style={{ fontSize: 8, color: "var(--lg-ink-mute)", letterSpacing: "0.15em" }}
+						style={{ fontSize: 8, color: 'var(--lg-ink-mute)', letterSpacing: '0.15em' }}
 					>
-						{(strategy.kind || "GENERIC").toUpperCase()}
+						{(strategy.kind || 'GENERIC').toUpperCase()}
 					</div>
 				</div>
 			</div>
-			<div className="mono" style={{ fontSize: 11, color: "var(--lg-ink-dim)", lineHeight: 1.5 }}>
+			<div className="mono" style={{ fontSize: 11, color: 'var(--lg-ink-dim)', lineHeight: 1.5 }}>
 				{strategy.description}
 			</div>
 			<StrategyStatRow stats={stats} active={active} />
@@ -383,10 +383,10 @@ function StrategyCard({
 				<div
 					className="pixel"
 					style={{
-						alignSelf: "flex-end",
+						alignSelf: 'flex-end',
 						fontSize: 8,
-						color: "var(--lg-magenta)",
-						letterSpacing: "0.2em",
+						color: 'var(--lg-magenta)',
+						letterSpacing: '0.2em',
 					}}
 				>
 					· EQUIPPED
@@ -397,19 +397,19 @@ function StrategyCard({
 }
 
 function StrategyTierBadge({ tier, active }: { tier: string; active: boolean }) {
-	const color = active ? "var(--lg-magenta)" : "var(--lg-border-br)";
+	const color = active ? 'var(--lg-magenta)' : 'var(--lg-border-br)';
 	return (
 		<div
 			className="pixel"
 			style={{
-				position: "absolute",
+				position: 'absolute',
 				top: 8,
 				right: 8,
 				fontSize: 9,
 				color,
 				border: `1px solid ${color}`,
-				padding: "1px 6px",
-				letterSpacing: "0.1em",
+				padding: '1px 6px',
+				letterSpacing: '0.1em',
 			}}
 		>
 			{tier}
@@ -421,12 +421,12 @@ function StrategyPickIndicator({ active }: { active: boolean }) {
 	return (
 		<span
 			style={{
-				display: "inline-block",
+				display: 'inline-block',
 				width: 14,
 				height: 14,
 				marginTop: 2,
-				border: `1px solid ${active ? "var(--lg-magenta)" : "var(--lg-border-br)"}`,
-				background: active ? "var(--lg-magenta)" : "transparent",
+				border: `1px solid ${active ? 'var(--lg-magenta)' : 'var(--lg-border-br)'}`,
+				background: active ? 'var(--lg-magenta)' : 'transparent',
 				flexShrink: 0,
 			}}
 		/>
@@ -434,14 +434,14 @@ function StrategyPickIndicator({ active }: { active: boolean }) {
 }
 
 function StrategyStatRow({ stats, active }: { stats: StrategyStats; active: boolean }) {
-	const valueColor = active ? "var(--lg-magenta)" : "var(--lg-ink)";
+	const valueColor = active ? 'var(--lg-magenta)' : 'var(--lg-ink)';
 	return (
 		<div
 			style={{
-				display: "grid",
-				gridTemplateColumns: "repeat(4, 1fr)",
+				display: 'grid',
+				gridTemplateColumns: 'repeat(4, 1fr)',
 				gap: 4,
-				borderTop: "1px solid var(--lg-border)",
+				borderTop: '1px solid var(--lg-border)',
 				paddingTop: 10,
 			}}
 		>
@@ -471,15 +471,15 @@ function StrategyStat({
 	valueColor: string;
 }) {
 	return (
-		<div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+		<div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
 			<div
 				className="pixel"
-				style={{ fontSize: 8, color: "var(--lg-ink-mute)", letterSpacing: "0.15em" }}
+				style={{ fontSize: 8, color: 'var(--lg-ink-mute)', letterSpacing: '0.15em' }}
 			>
 				{label}
 			</div>
 			<div className="pixel" style={{ fontSize: 14, color: valueColor }}>
-				{value ?? "—"}
+				{value ?? '—'}
 			</div>
 		</div>
 	);
@@ -497,7 +497,7 @@ function StrategyConfigForm({
 	const entries = Object.entries(schema);
 	if (entries.length === 0) return null;
 	return (
-		<div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+		<div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 			{entries.map(([key, field]) => (
 				<ConfigField
 					key={key}
@@ -525,56 +525,56 @@ function ConfigField({
 	const label = field.label ?? name;
 	const required = !!field.required;
 	const help = field.help;
-	const type = field.type ?? "string";
+	const type = field.type ?? 'string';
 
-	if (type === "boolean") {
+	if (type === 'boolean') {
 		return (
 			<label
 				className="mono"
 				title={help}
 				style={{
-					display: "flex",
-					alignItems: "center",
+					display: 'flex',
+					alignItems: 'center',
 					gap: 10,
 					fontSize: 12,
-					color: "var(--lg-ink)",
+					color: 'var(--lg-ink)',
 				}}
 			>
 				<input type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)} />
 				<span>
 					{label}
-					{required ? " *" : ""}
+					{required ? ' *' : ''}
 				</span>
 			</label>
 		);
 	}
 
 	return (
-		<label title={help} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+		<label title={help} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
 			<span
 				className="pixel"
-				style={{ fontSize: 9, color: "var(--lg-ink-mute)", letterSpacing: "0.1em" }}
+				style={{ fontSize: 9, color: 'var(--lg-ink-mute)', letterSpacing: '0.1em' }}
 			>
 				{label}
-				{required ? " *" : ""}
+				{required ? ' *' : ''}
 			</span>
 			<input
-				type={type === "date" ? "date" : type === "number" ? "number" : "text"}
+				type={type === 'date' ? 'date' : type === 'number' ? 'number' : 'text'}
 				className="mono"
-				value={(value as string | number | undefined) ?? ""}
+				value={(value as string | number | undefined) ?? ''}
 				onChange={(e) => {
-					if (type === "number") {
+					if (type === 'number') {
 						const n = e.target.valueAsNumber;
-						onChange(Number.isNaN(n) ? "" : n);
+						onChange(Number.isNaN(n) ? '' : n);
 					} else {
 						onChange(e.target.value);
 					}
 				}}
 				style={{
-					background: "var(--lg-bg-2)",
-					border: "1px solid var(--lg-border-br)",
-					color: "var(--lg-ink)",
-					padding: "8px 10px",
+					background: 'var(--lg-bg-2)',
+					border: '1px solid var(--lg-border-br)',
+					color: 'var(--lg-ink)',
+					padding: '8px 10px',
 					fontSize: 12,
 				}}
 			/>
@@ -605,53 +605,53 @@ function TransformActions({
 				stats.target_fields != null ? `${stats.target_fields} fields` : null,
 			]
 				.filter(Boolean)
-				.join(" · ")
-		: "—";
+				.join(' · ')
+		: '—';
 	return (
 		<div
 			style={{
-				display: "flex",
-				justifyContent: "space-between",
-				alignItems: "center",
+				display: 'flex',
+				justifyContent: 'space-between',
+				alignItems: 'center',
 				gap: 12,
-				borderTop: "1px solid var(--lg-border)",
+				borderTop: '1px solid var(--lg-border)',
 				paddingTop: 14,
 				marginTop: 4,
 			}}
 		>
-			<div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+			<div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
 				<div
 					className="pixel"
-					style={{ fontSize: 9, color: "var(--lg-ink-mute)", letterSpacing: "0.15em" }}
+					style={{ fontSize: 9, color: 'var(--lg-ink-mute)', letterSpacing: '0.15em' }}
 				>
 					EQUIPPED:
 				</div>
-				<div className="mono" style={{ fontSize: 12, color: "var(--lg-ink)" }}>
-					{picked ? summary : "— pick a strategy above —"}
+				<div className="mono" style={{ fontSize: 12, color: 'var(--lg-ink)' }}>
+					{picked ? summary : '— pick a strategy above —'}
 				</div>
 				{missingFields.length > 0 && (
-					<div className="mono" style={{ fontSize: 10, color: "var(--lg-coral)" }}>
-						Missing: {missingFields.join(", ")}
+					<div className="mono" style={{ fontSize: 10, color: 'var(--lg-coral)' }}>
+						Missing: {missingFields.join(', ')}
 					</div>
 				)}
 			</div>
-			<div style={{ display: "flex", gap: 8 }}>
+			<div style={{ display: 'flex', gap: 8 }}>
 				{picked && onEditConfig && (
 					<button
 						className="btn btn-ghost"
 						onClick={onEditConfig}
-						style={{ fontSize: 11, padding: "12px 16px" }}
+						style={{ fontSize: 11, padding: '12px 16px' }}
 					>
 						EDIT CONFIG
 					</button>
 				)}
 				<button
-					className={`btn btn-primary ${!disabled ? "pulse" : ""}`}
+					className={`btn btn-primary ${!disabled ? 'pulse' : ''}`}
 					disabled={disabled}
 					onClick={onRun}
-					style={{ fontSize: 12, padding: "12px 24px" }}
+					style={{ fontSize: 12, padding: '12px 24px' }}
 				>
-					{running ? "TRANSFORMING…" : "▶ TRANSFORM"}
+					{running ? 'TRANSFORMING…' : '▶ TRANSFORM'}
 				</button>
 			</div>
 		</div>
@@ -676,68 +676,68 @@ function StrategyConfigModal({
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") onCancel();
+			if (e.key === 'Escape') onCancel();
 		};
-		window.addEventListener("keydown", onKey);
-		return () => window.removeEventListener("keydown", onKey);
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
 	}, [onCancel]);
 
 	return (
 		<div
 			style={{
-				position: "fixed",
+				position: 'fixed',
 				inset: 0,
 				zIndex: 9999,
-				background: "rgba(0,0,0,0.75)",
-				display: "flex",
-				alignItems: "center",
-				justifyContent: "center",
+				background: 'rgba(0,0,0,0.75)',
+				display: 'flex',
+				alignItems: 'center',
+				justifyContent: 'center',
 				padding: 24,
 			}}
 			onClick={onCancel}
 		>
 			<div
 				style={{
-					background: "var(--lg-bg)",
-					border: "2px solid var(--lg-magenta)",
+					background: 'var(--lg-bg)',
+					border: '2px solid var(--lg-magenta)',
 					width: 420,
-					maxWidth: "92vw",
-					maxHeight: "90vh",
-					display: "flex",
-					flexDirection: "column",
+					maxWidth: '92vw',
+					maxHeight: '90vh',
+					display: 'flex',
+					flexDirection: 'column',
 				}}
 				onClick={(e) => e.stopPropagation()}
 			>
 				<div
 					style={{
-						display: "flex",
-						alignItems: "center",
-						justifyContent: "space-between",
-						padding: "10px 14px",
-						borderBottom: "1px solid var(--lg-border)",
-						background: "var(--lg-bg-2)",
+						display: 'flex',
+						alignItems: 'center',
+						justifyContent: 'space-between',
+						padding: '10px 14px',
+						borderBottom: '1px solid var(--lg-border)',
+						background: 'var(--lg-bg-2)',
 					}}
 				>
 					<span
 						className="pixel"
 						style={{
 							fontSize: 11,
-							color: "var(--lg-magenta)",
-							letterSpacing: "0.1em",
+							color: 'var(--lg-magenta)',
+							letterSpacing: '0.1em',
 						}}
 					>
 						{strategy.label.toUpperCase()}
 					</span>
 					<button
 						className="btn btn-ghost"
-						style={{ padding: "2px 6px", fontSize: 10 }}
+						style={{ padding: '2px 6px', fontSize: 10 }}
 						onClick={onCancel}
 					>
 						<IX size={10} />
 					</button>
 				</div>
 
-				<div style={{ padding: "16px 14px", overflowY: "auto" }}>
+				<div style={{ padding: '16px 14px', overflowY: 'auto' }}>
 					{hasFields ? (
 						<StrategyConfigForm
 							schema={strategy.config_schema}
@@ -745,7 +745,7 @@ function StrategyConfigModal({
 							onChange={onChange}
 						/>
 					) : (
-						<div className="mono" style={{ fontSize: 11, color: "var(--lg-ink-dim)" }}>
+						<div className="mono" style={{ fontSize: 11, color: 'var(--lg-ink-dim)' }}>
 							No configuration needed.
 						</div>
 					)}
@@ -753,23 +753,23 @@ function StrategyConfigModal({
 
 				<div
 					style={{
-						display: "flex",
-						justifyContent: "flex-end",
+						display: 'flex',
+						justifyContent: 'flex-end',
 						gap: 8,
-						padding: "10px 14px",
-						borderTop: "1px solid var(--lg-border)",
+						padding: '10px 14px',
+						borderTop: '1px solid var(--lg-border)',
 					}}
 				>
 					<button
 						className="btn btn-ghost"
-						style={{ padding: "6px 14px", fontSize: 11 }}
+						style={{ padding: '6px 14px', fontSize: 11 }}
 						onClick={onCancel}
 					>
 						CANCEL
 					</button>
 					<button
 						className="btn btn-primary"
-						style={{ padding: "6px 16px", fontSize: 11 }}
+						style={{ padding: '6px 16px', fontSize: 11 }}
 						onClick={onEquip}
 						disabled={missing.length > 0}
 					>
@@ -794,18 +794,18 @@ function TransformResultView({
 	const docs = result.output_doctypes ?? {};
 	const docEntries = Object.entries(docs).sort((a, b) => b[1] - a[1]);
 	return (
-		<div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
+		<div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
 			<div className="panel">
 				<div className="panel-head">▼ TRANSFORM COMPLETE</div>
-				<div className="panel-body" style={{ display: "flex", gap: 24, alignItems: "center" }}>
+				<div className="panel-body" style={{ display: 'flex', gap: 24, alignItems: 'center' }}>
 					<TransformBigStat label="ROWS" value={(result.total_rows ?? 0).toLocaleString()} />
 					<TransformBigStat label="DOCTYPES" value={String(result.tables_transformed ?? 0)} />
 					<div style={{ flex: 1 }} />
 					<div
 						className="mono"
-						style={{ fontSize: 11, color: "var(--lg-ink-dim)", maxWidth: 320, lineHeight: 1.5 }}
+						style={{ fontSize: 11, color: 'var(--lg-ink-dim)', maxWidth: 320, lineHeight: 1.5 }}
 					>
-						Strategy: <strong>{result.strategy_label || result.strategy_name || "—"}</strong>
+						Strategy: <strong>{result.strategy_label || result.strategy_name || '—'}</strong>
 						{audit && (
 							<>
 								<br />
@@ -821,23 +821,23 @@ function TransformResultView({
 					<div className="panel-head">DOCTYPE OUTPUT</div>
 					<div
 						className="panel-body"
-						style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}
+						style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}
 					>
 						{docEntries.map(([name, count]) => (
 							<div
 								key={name}
 								className="mono"
 								style={{
-									display: "flex",
-									justifyContent: "space-between",
+									display: 'flex',
+									justifyContent: 'space-between',
 									gap: 12,
-									padding: "6px 10px",
-									border: "1px solid var(--lg-border)",
+									padding: '6px 10px',
+									border: '1px solid var(--lg-border)',
 									fontSize: 11,
 								}}
 							>
-								<span style={{ color: "var(--lg-ink)" }}>{name}</span>
-								<span style={{ color: "var(--lg-magenta)", fontVariantNumeric: "tabular-nums" }}>
+								<span style={{ color: 'var(--lg-ink)' }}>{name}</span>
+								<span style={{ color: 'var(--lg-magenta)', fontVariantNumeric: 'tabular-nums' }}>
 									{count.toLocaleString()}
 								</span>
 							</div>
@@ -849,7 +849,7 @@ function TransformResultView({
 			{audit && audit.preserved.length > 0 && (
 				<div className="panel">
 					<div className="panel-head">PRESERVATION AUDIT</div>
-					<div className="panel-body" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+					<div className="panel-body" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
 						{audit.preserved.map((c) => (
 							<AuditRow key={c.label} check={c} />
 						))}
@@ -858,11 +858,11 @@ function TransformResultView({
 			)}
 
 			{result.warnings && result.warnings.length > 0 && (
-				<div className="panel" style={{ borderColor: "var(--lg-amber)" }}>
+				<div className="panel" style={{ borderColor: 'var(--lg-amber)' }}>
 					<div className="panel-head">WARNINGS ({result.warnings.length})</div>
-					<div className="panel-body" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+					<div className="panel-body" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
 						{result.warnings.map((w, i) => (
-							<div key={i} className="mono" style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}>
+							<div key={i} className="mono" style={{ fontSize: 10, color: 'var(--lg-ink-dim)' }}>
 								— {w}
 							</div>
 						))}
@@ -872,7 +872,7 @@ function TransformResultView({
 
 			{result.setup_checklist_md && <SetupChecklistPanel md={result.setup_checklist_md} />}
 
-			<div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+			<div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
 				<button className="btn btn-ghost" onClick={onReRun}>
 					RE-RUN
 				</button>
@@ -891,14 +891,14 @@ function TransformBigStat({ label, value }: { label: string; value: string }) {
 				className="pixel"
 				style={{
 					fontSize: 8,
-					color: "var(--lg-ink-mute)",
-					letterSpacing: "0.15em",
+					color: 'var(--lg-ink-mute)',
+					letterSpacing: '0.15em',
 					marginBottom: 4,
 				}}
 			>
 				{label}
 			</div>
-			<div className="pixel glow-magenta" style={{ fontSize: 22, color: "var(--lg-magenta)" }}>
+			<div className="pixel glow-magenta" style={{ fontSize: 22, color: 'var(--lg-magenta)' }}>
 				{value}
 			</div>
 		</div>
@@ -906,41 +906,41 @@ function TransformBigStat({ label, value }: { label: string; value: string }) {
 }
 
 function AuditRow({ check }: { check: AuditCheck }) {
-	const okColor = "var(--lg-cyan)";
-	const failColor = "var(--lg-coral)";
-	const warnColor = "var(--lg-magenta)";
+	const okColor = 'var(--lg-cyan)';
+	const failColor = 'var(--lg-coral)';
+	const warnColor = 'var(--lg-magenta)';
 	const tone =
-		check.status === "ok"
-			? { dot: okColor, label: "OK" }
-			: check.status === "short"
+		check.status === 'ok'
+			? { dot: okColor, label: 'OK' }
+			: check.status === 'short'
 				? { dot: failColor, label: check.status.toUpperCase() }
 				: { dot: warnColor, label: check.status.toUpperCase() };
 	return (
-		<div className="mono" style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11 }}>
+		<div className="mono" style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 11 }}>
 			<span
 				style={{
-					display: "inline-block",
+					display: 'inline-block',
 					minWidth: 44,
-					textAlign: "center",
-					padding: "1px 6px",
+					textAlign: 'center',
+					padding: '1px 6px',
 					border: `1px solid ${tone.dot}`,
 					color: tone.dot,
 					fontSize: 9,
-					letterSpacing: "0.1em",
+					letterSpacing: '0.1em',
 				}}
 			>
 				{tone.label}
 			</span>
-			<span style={{ flex: 1, color: "var(--lg-ink)" }}>{check.label}</span>
-			<span style={{ color: "var(--lg-ink-dim)", fontVariantNumeric: "tabular-nums" }}>
+			<span style={{ flex: 1, color: 'var(--lg-ink)' }}>{check.label}</span>
+			<span style={{ color: 'var(--lg-ink-dim)', fontVariantNumeric: 'tabular-nums' }}>
 				{check.expected.toLocaleString()} → {check.actual.toLocaleString()}
 			</span>
 			<span
 				style={{
 					color: tone.dot,
-					fontVariantNumeric: "tabular-nums",
+					fontVariantNumeric: 'tabular-nums',
 					minWidth: 56,
-					textAlign: "right",
+					textAlign: 'right',
 				}}
 			>
 				{check.diff >= 0 ? `+${check.diff}` : check.diff}
@@ -953,11 +953,11 @@ function SetupChecklistPanel({ md }: { md: string }) {
 	const [open, setOpen] = useState(false);
 	return (
 		<div className="panel">
-			<div className="panel-head" style={{ display: "flex", alignItems: "center" }}>
+			<div className="panel-head" style={{ display: 'flex', alignItems: 'center' }}>
 				<span>MIGRATION SETUP CHECKLIST</span>
 				<span style={{ flex: 1 }} />
 				<button className="link" onClick={() => setOpen((v) => !v)}>
-					{open ? "hide" : "show"} ↗
+					{open ? 'hide' : 'show'} ↗
 				</button>
 			</div>
 			{open && (
@@ -967,10 +967,10 @@ function SetupChecklistPanel({ md }: { md: string }) {
 						margin: 0,
 						padding: 14,
 						fontSize: 10,
-						color: "var(--lg-ink-dim)",
-						whiteSpace: "pre-wrap",
+						color: 'var(--lg-ink-dim)',
+						whiteSpace: 'pre-wrap',
 						maxHeight: 380,
-						overflow: "auto",
+						overflow: 'auto',
 					}}
 				>
 					{md}
@@ -984,8 +984,8 @@ function defaultsForSchema(schema: Record<string, StrategyConfigField>): Record<
 	const out: Record<string, unknown> = {};
 	for (const [key, f] of Object.entries(schema)) {
 		if (f.default !== undefined) out[key] = f.default;
-		else if (f.type === "boolean") out[key] = false;
-		else out[key] = "";
+		else if (f.type === 'boolean') out[key] = false;
+		else out[key] = '';
 	}
 	return out;
 }
@@ -997,33 +997,33 @@ function smartDefaults(
 	projectName: string | null,
 ): Record<string, unknown> {
 	const out = defaultsForSchema(schema);
-	if ("company_name" in schema && !out.company_name && projectName) {
+	if ('company_name' in schema && !out.company_name && projectName) {
 		out.company_name = humanizeProjectName(projectName);
 	}
-	if ("company_abbr" in schema && !out.company_abbr && projectName) {
+	if ('company_abbr' in schema && !out.company_abbr && projectName) {
 		out.company_abbr = abbrFromName(projectName);
 	}
-	if ("opening_date" in schema && !out.opening_date) {
+	if ('opening_date' in schema && !out.opening_date) {
 		out.opening_date = new Date().toISOString().slice(0, 10);
 	}
 	return out;
 }
 
 function humanizeProjectName(raw: string): string {
-	const cleaned = raw.replace(/[-_]+/g, " ").trim();
+	const cleaned = raw.replace(/[-_]+/g, ' ').trim();
 	return cleaned
 		.split(/\s+/)
 		.map((w) => (w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w))
-		.join(" ");
+		.join(' ');
 }
 
 function abbrFromName(raw: string): string {
-	const parts = raw.replace(/[-_]+/g, " ").trim().split(/\s+/).filter(Boolean);
-	if (parts.length === 0) return "ALA";
+	const parts = raw.replace(/[-_]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+	if (parts.length === 0) return 'ALA';
 	if (parts.length === 1) return parts[0].slice(0, 3).toUpperCase();
 	return parts
 		.map((p) => p[0])
-		.join("")
+		.join('')
 		.slice(0, 4)
 		.toUpperCase();
 }
@@ -1036,7 +1036,7 @@ function requiredMissing(
 	for (const [key, f] of Object.entries(schema)) {
 		if (!f.required) continue;
 		const v = value[key];
-		if (v === undefined || v === null || v === "") missing.push(f.label ?? key);
+		if (v === undefined || v === null || v === '') missing.push(f.label ?? key);
 	}
 	return missing;
 }

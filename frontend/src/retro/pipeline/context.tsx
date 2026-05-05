@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useState, type ReactNode } from 'react';
 import type {
 	PipelineCtx,
 	StagedFile,
@@ -6,14 +6,14 @@ import type {
 	TransformResult,
 	LoadResult,
 	AuditReport,
-} from "./types";
-import type { ResumedSession } from "../data";
+} from './types';
+import type { ResumedSession } from '../data';
 
 export const PipelineContext = createContext<PipelineCtx | null>(null);
 
 export function usePipelineCtx(): PipelineCtx {
 	const ctx = useContext(PipelineContext);
-	if (!ctx) throw new Error("PipelineContext not found");
+	if (!ctx) throw new Error('PipelineContext not found');
 	return ctx;
 }
 

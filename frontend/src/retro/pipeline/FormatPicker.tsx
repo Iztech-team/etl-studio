@@ -1,4 +1,4 @@
-import { useKeyboardGrid } from "../keyboard";
+import { useKeyboardGrid } from '../keyboard';
 
 export function FormatPicker({
 	formats,
@@ -30,14 +30,14 @@ export function FormatPicker({
 							key={f.id}
 							onClick={() => onSelect(f.id)}
 							onMouseEnter={k.onMouseEnter}
-							className={`rl-fmt-row ${selected === f.id ? "active" : ""} ${k.className}`}
+							className={`rl-fmt-row ${selected === f.id ? 'active' : ''} ${k.className}`}
 						>
 							<div
 								className="pixel"
 								style={{
 									fontSize: 9,
-									color: selected === f.id ? "#0a0410" : "var(--lg-amber)",
-									letterSpacing: "0.1em",
+									color: selected === f.id ? '#0a0410' : 'var(--lg-amber)',
+									letterSpacing: '0.1em',
 								}}
 							>
 								{f.label}
@@ -46,7 +46,7 @@ export function FormatPicker({
 								className="mono"
 								style={{
 									fontSize: 10,
-									color: selected === f.id ? "#0a0410" : "var(--lg-ink-mute)",
+									color: selected === f.id ? '#0a0410' : 'var(--lg-ink-mute)',
 									marginTop: 3,
 								}}
 							>

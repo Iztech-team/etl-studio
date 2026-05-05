@@ -40,11 +40,11 @@ export function SpriteMonitor({ size = 64 }: SpriteProps) {
 export function Sparkles() {
 	return (
 		<div className="sp-sparkles" aria-hidden>
-			<span className="sp-spark" style={{ left: "10%", top: "20%", animationDelay: "0s" }} />
-			<span className="sp-spark" style={{ left: "85%", top: "30%", animationDelay: "0.6s" }} />
-			<span className="sp-spark" style={{ left: "70%", top: "70%", animationDelay: "1.2s" }} />
-			<span className="sp-spark" style={{ left: "20%", top: "80%", animationDelay: "1.8s" }} />
-			<span className="sp-spark" style={{ left: "50%", top: "10%", animationDelay: "2.4s" }} />
+			<span className="sp-spark" style={{ left: '10%', top: '20%', animationDelay: '0s' }} />
+			<span className="sp-spark" style={{ left: '85%', top: '30%', animationDelay: '0.6s' }} />
+			<span className="sp-spark" style={{ left: '70%', top: '70%', animationDelay: '1.2s' }} />
+			<span className="sp-spark" style={{ left: '20%', top: '80%', animationDelay: '1.8s' }} />
+			<span className="sp-spark" style={{ left: '50%', top: '10%', animationDelay: '2.4s' }} />
 		</div>
 	);
 }

@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect } from "react";
-import { createPortal } from "react-dom";
-import { IDisk, IX } from "../icons";
-import { usePipelineCtx } from "./context";
+import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { IDisk, IX } from '../icons';
+import { usePipelineCtx } from './context';
 
 type PageData = {
 	rows: Record<string, unknown>[];
@@ -42,7 +42,7 @@ export function TablePreviewModal({
 			);
 			if (!res.ok) {
 				const err = await res.json().catch(() => null);
-				throw new Error(err?.detail || "Failed to load data");
+				throw new Error(err?.detail || 'Failed to load data');
 			}
 			const d = await res.json();
 			setData(d);
@@ -50,7 +50,7 @@ export function TablePreviewModal({
 			setEditedRows(d.rows.map((r: Record<string, unknown>) => ({ ...r })));
 			setDirty(false);
 		} catch (e) {
-			setError(e instanceof Error ? e.message : "Load failed");
+			setError(e instanceof Error ? e.message : 'Load failed');
 		} finally {
 			setLoading(false);
 		}
@@ -63,7 +63,7 @@ export function TablePreviewModal({
 		try {
 			// Fetch all rows, replace current page's rows, save back
 			const allRes = await fetch(`/api/table-data/${sessionId}`);
-			if (!allRes.ok) throw new Error("Failed to load full data");
+			if (!allRes.ok) throw new Error('Failed to load full data');
 			const allData = await allRes.json();
 			const allRows: Record<string, unknown>[] = allData.tables[tableName] ?? [];
 			const start = (page - 1) * 100;
@@ -71,13 +71,13 @@ export function TablePreviewModal({
 				allRows[start + i] = editedRows[i];
 			}
 			const res = await fetch(`/api/table-data/${sessionId}`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ tables: { [tableName]: allRows } }),
 			});
 			if (!res.ok) {
 				const err = await res.json().catch(() => null);
-				throw new Error(err?.detail || "Save failed");
+				throw new Error(err?.detail || 'Save failed');
 			}
 			const saveData = await res.json();
 			setDirty(false);
@@ -105,7 +105,7 @@ export function TablePreviewModal({
 			// Refresh the current page
 			await fetchPage(page);
 		} catch (e) {
-			setError(e instanceof Error ? e.message : "Save failed");
+			setError(e instanceof Error ? e.message : 'Save failed');
 		} finally {
 			setSaving(false);
 		}
@@ -143,7 +143,7 @@ export function TablePreviewModal({
 
 	// Keep focused cell scrolled into view
 	useEffect(() => {
-		focusedCellRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+		focusedCellRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 	}, [focusedRow, focusedCol]);
 
 	// Keyboard navigation. Uses capture phase + stopPropagation so the
@@ -152,11 +152,11 @@ export function TablePreviewModal({
 	useEffect(() => {
 		const handler = (e: KeyboardEvent) => {
 			const tag = (e.target as HTMLElement).tagName;
-			const isInputFocused = tag === "INPUT" || tag === "TEXTAREA";
+			const isInputFocused = tag === 'INPUT' || tag === 'TEXTAREA';
 
 			// Allow inputs to handle their own keys, except Escape to cancel edit
 			if (isInputFocused) {
-				if (e.key === "Escape") {
+				if (e.key === 'Escape') {
 					e.preventDefault();
 					e.stopPropagation();
 					(e.target as HTMLElement).blur();
@@ -169,48 +169,48 @@ export function TablePreviewModal({
 			let handled = true;
 
 			switch (e.key) {
-				case "ArrowUp":
+				case 'ArrowUp':
 					setFocusedRow((r) => Math.max(0, r - 1));
 					break;
-				case "ArrowDown":
+				case 'ArrowDown':
 					setFocusedRow((r) => Math.min(rowCount - 1, r + 1));
 					break;
-				case "ArrowLeft":
+				case 'ArrowLeft':
 					setFocusedCol((c) => Math.max(0, c - 1));
 					break;
-				case "ArrowRight":
+				case 'ArrowRight':
 					setFocusedCol((c) => Math.min(cols - 1, c + 1));
 					break;
-				case "Home":
+				case 'Home':
 					if (e.ctrlKey || e.metaKey) setFocusedRow(0);
 					setFocusedCol(0);
 					break;
-				case "End":
+				case 'End':
 					if (e.ctrlKey || e.metaKey) setFocusedRow(rowCount - 1);
 					setFocusedCol(cols - 1);
 					break;
-				case "PageUp":
+				case 'PageUp':
 					if (page > 1) fetchPage(page - 1);
 					break;
-				case "PageDown":
+				case 'PageDown':
 					if (page < totalPages) fetchPage(page + 1);
 					break;
-				case "e":
-				case "E":
+				case 'e':
+				case 'E':
 					if (!editing) {
 						setEditing(true);
 					} else {
 						setTimeout(() => {
-							const input = focusedCellRef.current?.querySelector("input");
+							const input = focusedCellRef.current?.querySelector('input');
 							input?.focus();
 							input?.select();
 						}, 0);
 					}
 					break;
-				case "Enter":
+				case 'Enter':
 					if (editing) {
 						setTimeout(() => {
-							const input = focusedCellRef.current?.querySelector("input");
+							const input = focusedCellRef.current?.querySelector('input');
 							input?.focus();
 							input?.select();
 						}, 0);
@@ -218,9 +218,9 @@ export function TablePreviewModal({
 						handled = false;
 					}
 					break;
-				case "x":
-				case "X":
-				case "Escape":
+				case 'x':
+				case 'X':
+				case 'Escape':
 					if (editing) {
 						setEditing(false);
 						setEditedRows(data?.rows.map((r) => ({ ...r })) ?? []);
@@ -238,8 +238,8 @@ export function TablePreviewModal({
 				e.stopPropagation();
 			}
 		};
-		document.addEventListener("keydown", handler, true);
-		return () => document.removeEventListener("keydown", handler, true);
+		document.addEventListener('keydown', handler, true);
+		return () => document.removeEventListener('keydown', handler, true);
 	}, [data, displayRows.length, page, totalPages, editing, onClose]);
 
 	// Render into a portal at document.body so no ancestor's overflow,
@@ -247,76 +247,76 @@ export function TablePreviewModal({
 	return createPortal(
 		<div
 			style={{
-				position: "fixed",
+				position: 'fixed',
 				top: 0,
 				left: 0,
 				right: 0,
 				bottom: 0,
 				zIndex: 99999,
-				background: "rgba(0,0,0,0.78)",
-				display: "grid",
-				placeItems: "center",
+				background: 'rgba(0,0,0,0.78)',
+				display: 'grid',
+				placeItems: 'center',
 				padding: 24,
 			}}
 			onClick={onClose}
 		>
 			<div
 				style={{
-					background: "var(--lg-bg)",
-					border: `2px solid ${editing ? "var(--lg-coral)" : "var(--lg-amber)"}`,
-					boxShadow: "0 12px 40px rgba(0,0,0,0.65)",
-					width: "min(1200px, 92vw)",
-					height: "min(720px, 86vh)",
+					background: 'var(--lg-bg)',
+					border: `2px solid ${editing ? 'var(--lg-coral)' : 'var(--lg-amber)'}`,
+					boxShadow: '0 12px 40px rgba(0,0,0,0.65)',
+					width: 'min(1200px, 92vw)',
+					height: 'min(720px, 86vh)',
 					minHeight: 320,
-					display: "flex",
-					flexDirection: "column",
-					overflow: "hidden",
-					color: "var(--lg-ink)",
+					display: 'flex',
+					flexDirection: 'column',
+					overflow: 'hidden',
+					color: 'var(--lg-ink)',
 				}}
 				onClick={(e) => e.stopPropagation()}
 			>
 				{/* Header */}
 				<div
 					style={{
-						display: "flex",
-						alignItems: "center",
-						justifyContent: "space-between",
-						padding: "10px 14px",
-						borderBottom: "1px solid var(--lg-border)",
-						background: "var(--lg-bg-2)",
+						display: 'flex',
+						alignItems: 'center',
+						justifyContent: 'space-between',
+						padding: '10px 14px',
+						borderBottom: '1px solid var(--lg-border)',
+						background: 'var(--lg-bg-2)',
 					}}
 				>
-					<div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+					<div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
 						<IDisk size={10} />
 						<span
 							className="pixel"
-							style={{ fontSize: 11, color: "var(--lg-amber)", letterSpacing: "0.1em" }}
+							style={{ fontSize: 11, color: 'var(--lg-amber)', letterSpacing: '0.1em' }}
 						>
 							{tableName.toUpperCase()}
 						</span>
 						{editing && <span className="badge badge-warn">EDIT MODE</span>}
 						{data && (
-							<span className="mono" style={{ fontSize: 10, color: "var(--lg-ink-mute)" }}>
+							<span className="mono" style={{ fontSize: 10, color: 'var(--lg-ink-mute)' }}>
 								{data.total_rows.toLocaleString()} rows · {data.columns.length} cols
 							</span>
 						)}
 					</div>
-					<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+					<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
 						{editing ? (
 							<>
 								{dirty && (
 									<button
 										className="btn btn-primary"
-										style={{ padding: "4px 10px", fontSize: 10 }}
+										style={{ padding: '4px 10px', fontSize: 10 }}
 										onClick={saveEdits}
 										disabled={saving}
 									>
-										{saving ? "SAVING…" : "SAVE"}
+										{saving ? 'SAVING…' : 'SAVE'}
 									</button>
 								)}
 								<button
 									className="btn btn-ghost"
-									style={{ padding: "4px 10px", fontSize: 10 }}
+									style={{ padding: '4px 10px', fontSize: 10 }}
 									onClick={() => {
 										setEditing(false);
 										setEditedRows(data?.rows.map((r) => ({ ...r })) ?? []);
@@ -329,7 +329,7 @@ export function TablePreviewModal({
 						) : (
 							<button
 								className="btn btn-ghost"
-								style={{ padding: "4px 10px", fontSize: 10 }}
+								style={{ padding: '4px 10px', fontSize: 10 }}
 								onClick={() => setEditing(true)}
 							>
 								EDIT
@@ -337,7 +337,7 @@ export function TablePreviewModal({
 						)}
 						<button
 							className="link"
-							style={{ fontSize: 12, color: "var(--lg-ink-mute)" }}
+							style={{ fontSize: 12, color: 'var(--lg-ink-mute)' }}
 							onClick={onClose}
 						>
 							<IX size={10} /> CLOSE
@@ -346,16 +346,16 @@ export function TablePreviewModal({
 				</div>
 
 				{/* Table content */}
-				<div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+				<div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
 					{loading ? (
 						<div
 							className="pixel"
 							style={{
 								fontSize: 11,
-								color: "var(--lg-amber)",
-								letterSpacing: "0.1em",
+								color: 'var(--lg-amber)',
+								letterSpacing: '0.1em',
 								padding: 40,
-								textAlign: "center",
+								textAlign: 'center',
 							}}
 						>
 							LOADING…
@@ -363,20 +363,20 @@ export function TablePreviewModal({
 					) : error ? (
 						<div
 							className="mono"
-							style={{ fontSize: 11, color: "var(--lg-coral)", padding: 40, textAlign: "center" }}
+							style={{ fontSize: 11, color: 'var(--lg-coral)', padding: 40, textAlign: 'center' }}
 						>
 							{error}
 						</div>
 					) : data && displayRows.length > 0 ? (
-						<table className="table" style={{ width: "100%" }}>
+						<table className="table" style={{ width: '100%' }}>
 							<thead>
 								<tr>
 									<th
 										style={{
 											width: 50,
-											fontFamily: "var(--lg-pixel)",
+											fontFamily: 'var(--lg-pixel)',
 											fontSize: 8,
-											color: "var(--lg-ink-mute)",
+											color: 'var(--lg-ink-mute)',
 										}}
 									>
 										#
@@ -393,14 +393,14 @@ export function TablePreviewModal({
 										<tr
 											key={ri}
 											style={{
-												background: isFocusedRow ? "rgba(255, 191, 71, 0.08)" : undefined,
+												background: isFocusedRow ? 'rgba(255, 191, 71, 0.08)' : undefined,
 											}}
 										>
 											<td
 												style={{
-													fontFamily: "var(--lg-mono)",
+													fontFamily: 'var(--lg-mono)',
 													fontSize: 9,
-													color: isFocusedRow ? "var(--lg-amber)" : "var(--lg-ink-mute)",
+													color: isFocusedRow ? 'var(--lg-amber)' : 'var(--lg-ink-mute)',
 													fontWeight: isFocusedRow ? 700 : undefined,
 												}}
 											>
@@ -411,9 +411,9 @@ export function TablePreviewModal({
 												const cellRef = isFocusedCell ? focusedCellRef : undefined;
 												const focusStyle = isFocusedCell
 													? {
-															outline: "2px solid var(--lg-amber)",
+															outline: '2px solid var(--lg-amber)',
 															outlineOffset: -2,
-															background: "rgba(255, 191, 71, 0.15)",
+															background: 'rgba(255, 191, 71, 0.15)',
 														}
 													: undefined;
 												return editing ? (
@@ -430,13 +430,13 @@ export function TablePreviewModal({
 															className="input"
 															style={{
 																fontSize: 11,
-																padding: "4px 6px",
-																width: "100%",
-																border: "none",
-																borderBottom: "1px solid var(--lg-border)",
-																background: "transparent",
+																padding: '4px 6px',
+																width: '100%',
+																border: 'none',
+																borderBottom: '1px solid var(--lg-border)',
+																background: 'transparent',
 															}}
-															value={row[col] != null ? String(row[col]) : ""}
+															value={row[col] != null ? String(row[col]) : ''}
 															onChange={(e) => updateCell(ri, col, e.target.value)}
 															onFocus={() => {
 																setFocusedRow(ri);
@@ -454,7 +454,7 @@ export function TablePreviewModal({
 															setFocusedCol(ci);
 														}}
 													>
-														{row[col] != null ? String(row[col]) : "—"}
+														{row[col] != null ? String(row[col]) : '—'}
 													</td>
 												);
 											})}
@@ -468,9 +468,9 @@ export function TablePreviewModal({
 							className="mono"
 							style={{
 								fontSize: 11,
-								color: "var(--lg-ink-mute)",
+								color: 'var(--lg-ink-mute)',
 								padding: 40,
-								textAlign: "center",
+								textAlign: 'center',
 							}}
 						>
 							No data in this table.
@@ -481,21 +481,21 @@ export function TablePreviewModal({
 				{/* Pagination footer */}
 				<div
 					style={{
-						display: "flex",
-						alignItems: "center",
-						justifyContent: "space-between",
-						padding: "8px 14px",
-						borderTop: "1px solid var(--lg-border)",
-						background: "var(--lg-bg-2)",
+						display: 'flex',
+						alignItems: 'center',
+						justifyContent: 'space-between',
+						padding: '8px 14px',
+						borderTop: '1px solid var(--lg-border)',
+						background: 'var(--lg-bg-2)',
 					}}
 				>
 					<div
 						className="mono"
 						style={{
 							fontSize: 10,
-							color: "var(--lg-ink-mute)",
-							display: "flex",
-							flexDirection: "column",
+							color: 'var(--lg-ink-mute)',
+							display: 'flex',
+							flexDirection: 'column',
 							gap: 2,
 						}}
 					>
@@ -503,23 +503,23 @@ export function TablePreviewModal({
 							PAGE {page} / {totalPages}
 							{data && (
 								<>
-									{" · "}SHOWING {(page - 1) * 100 + 1}–{Math.min(page * 100, data.total_rows)} OF{" "}
+									{' · '}SHOWING {(page - 1) * 100 + 1}–{Math.min(page * 100, data.total_rows)} OF{' '}
 									{data.total_rows.toLocaleString()}
 								</>
 							)}
 						</div>
-						<div style={{ fontSize: 9, color: "var(--lg-ink-faint)" }}>
-							<span style={{ color: "var(--lg-amber)" }}>↑↓←→</span> NAV ·{" "}
-							<span style={{ color: "var(--lg-amber)" }}>E</span> EDIT ·{" "}
-							<span style={{ color: "var(--lg-amber)" }}>X</span>/
-							<span style={{ color: "var(--lg-amber)" }}>ESC</span> CLOSE ·{" "}
-							<span style={{ color: "var(--lg-amber)" }}>PGUP/PGDN</span> PAGE
+						<div style={{ fontSize: 9, color: 'var(--lg-ink-faint)' }}>
+							<span style={{ color: 'var(--lg-amber)' }}>↑↓←→</span> NAV ·{' '}
+							<span style={{ color: 'var(--lg-amber)' }}>E</span> EDIT ·{' '}
+							<span style={{ color: 'var(--lg-amber)' }}>X</span>/
+							<span style={{ color: 'var(--lg-amber)' }}>ESC</span> CLOSE ·{' '}
+							<span style={{ color: 'var(--lg-amber)' }}>PGUP/PGDN</span> PAGE
 						</div>
 					</div>
-					<div style={{ display: "flex", gap: 6 }}>
+					<div style={{ display: 'flex', gap: 6 }}>
 						<button
 							className="btn btn-ghost"
-							style={{ padding: "4px 10px", fontSize: 10 }}
+							style={{ padding: '4px 10px', fontSize: 10 }}
 							disabled={page <= 1 || loading}
 							onClick={() => fetchPage(1)}
 						>
@@ -527,7 +527,7 @@ export function TablePreviewModal({
 						</button>
 						<button
 							className="btn btn-ghost"
-							style={{ padding: "4px 10px", fontSize: 10 }}
+							style={{ padding: '4px 10px', fontSize: 10 }}
 							disabled={page <= 1 || loading}
 							onClick={() => fetchPage(page - 1)}
 						>
@@ -535,7 +535,7 @@ export function TablePreviewModal({
 						</button>
 						<button
 							className="btn btn-ghost"
-							style={{ padding: "4px 10px", fontSize: 10 }}
+							style={{ padding: '4px 10px', fontSize: 10 }}
 							disabled={page >= totalPages || loading}
 							onClick={() => fetchPage(page + 1)}
 						>
@@ -543,7 +543,7 @@ export function TablePreviewModal({
 						</button>
 						<button
 							className="btn btn-ghost"
-							style={{ padding: "4px 10px", fontSize: 10 }}
+							style={{ padding: '4px 10px', fontSize: 10 }}
 							disabled={page >= totalPages || loading}
 							onClick={() => fetchPage(totalPages)}
 						>

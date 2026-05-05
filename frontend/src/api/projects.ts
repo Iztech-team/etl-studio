@@ -1,7 +1,7 @@
-import axios from "axios";
-import type { Project, ResumeResponse } from "../types/project";
+import axios from 'axios';
+import type { Project, ResumeResponse } from '../types/project';
 
-const api = axios.create({ baseURL: "/api" });
+const api = axios.create({ baseURL: '/api' });
 
 api.interceptors.response.use(
 	(res) => res,
@@ -12,12 +12,12 @@ api.interceptors.response.use(
 );
 
 export async function createProject(name: string, username: string): Promise<Project> {
-	const { data } = await api.post<Project>("/projects", { name, username });
+	const { data } = await api.post<Project>('/projects', { name, username });
 	return data;
 }
 
 export async function listProjects(username: string): Promise<Project[]> {
-	const { data } = await api.get<{ projects: Project[] }>("/projects", { params: { username } });
+	const { data } = await api.get<{ projects: Project[] }>('/projects', { params: { username } });
 	return data.projects;
 }
 

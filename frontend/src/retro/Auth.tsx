@@ -5,9 +5,9 @@ import {
 	useState,
 	type ReactNode,
 	type FormEvent,
-} from "react";
-import { IArrow } from "./icons";
-import { SpriteMonitor, Sparkles } from "./Sprites";
+} from 'react';
+import { IArrow } from './icons';
+import { SpriteMonitor, Sparkles } from './Sprites';
 
 export type AuthUser = {
 	username: string;
@@ -22,7 +22,7 @@ type AuthState = {
 	logout: () => void;
 };
 
-const LS_AUTH = "retro-legacy.v2.auth";
+const LS_AUTH = 'retro-legacy.v2.auth';
 
 function makeAuthUser(data: { username: string; display_name: string }): AuthUser {
 	const dn = data.display_name || data.username;
@@ -30,7 +30,7 @@ function makeAuthUser(data: { username: string; display_name: string }): AuthUse
 		username: data.username,
 		displayName: dn.toUpperCase(),
 		initials: dn.slice(0, 2).toUpperCase(),
-		role: "USER · ONLINE",
+		role: 'USER · ONLINE',
 	};
 }
 
@@ -54,9 +54,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 	const login = async (username: string, password: string): Promise<boolean> => {
 		try {
-			const res = await fetch("/api/auth/login", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
+			const res = await fetch('/api/auth/login', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ username, password }),
 			});
 			if (!res.ok) return false;
@@ -75,14 +75,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export function useAuth() {
 	const ctx = useContext(AuthContext);
-	if (!ctx) throw new Error("useAuth must be used inside AuthProvider");
+	if (!ctx) throw new Error('useAuth must be used inside AuthProvider');
 	return ctx;
 }
 
 export function LoginScreen() {
 	const { login } = useAuth();
-	const [username, setUsername] = useState("");
-	const [password, setPassword] = useState("");
+	const [username, setUsername] = useState('');
+	const [password, setPassword] = useState('');
 	const [error, setError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [shakeKey, setShakeKey] = useState(0);
@@ -99,7 +99,7 @@ export function LoginScreen() {
 		setError(null);
 		const ok = await login(username, password);
 		setLoading(false);
-		if (!ok) shake("ACCESS DENIED · CHECK CREDENTIALS");
+		if (!ok) shake('ACCESS DENIED · CHECK CREDENTIALS');
 	};
 
 	return (
@@ -121,7 +121,7 @@ export function LoginScreen() {
 					className="mono"
 					style={{
 						fontSize: 11,
-						color: "var(--lg-ink-mute)",
+						color: 'var(--lg-ink-mute)',
 						marginBottom: 20,
 						lineHeight: 1.7,
 					}}
@@ -163,7 +163,7 @@ export function LoginScreen() {
 
 					{error && (
 						<div key={shakeKey} className="rl-login-error">
-							{"> "} {error}
+							{'> '} {error}
 						</div>
 					)}
 
@@ -171,9 +171,9 @@ export function LoginScreen() {
 						type="submit"
 						className="btn btn-primary"
 						disabled={loading}
-						style={{ width: "100%", justifyContent: "center", marginTop: 10 }}
+						style={{ width: '100%', justifyContent: 'center', marginTop: 10 }}
 					>
-						{loading ? "..." : "SIGN IN"} <IArrow size={10} />
+						{loading ? '...' : 'SIGN IN'} <IArrow size={10} />
 					</button>
 				</form>
 
@@ -181,10 +181,10 @@ export function LoginScreen() {
 					className="pixel"
 					style={{
 						fontSize: 8,
-						color: "var(--lg-ink-faint)",
-						letterSpacing: "0.15em",
+						color: 'var(--lg-ink-faint)',
+						letterSpacing: '0.15em',
 						marginTop: 20,
-						textAlign: "center",
+						textAlign: 'center',
 					}}
 				>
 					[ TERMINAL · LEGACY MIGRATION CONSOLE · v1 ]

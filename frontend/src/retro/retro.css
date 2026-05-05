@@ -38,9 +38,9 @@
 	--lg-border-br: #3d3045;
 	--lg-shadow: 0 0 0 1px var(--lg-border), 2px 2px 0 #050304;
 
-	--lg-pixel: "Press Start 2P", "VT323", ui-monospace, monospace;
-	--lg-pixel-tall: "VT323", ui-monospace, monospace;
-	--lg-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+	--lg-pixel: 'Press Start 2P', 'VT323', ui-monospace, monospace;
+	--lg-pixel-tall: 'VT323', ui-monospace, monospace;
+	--lg-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 
 	--lg-radius: 0;
 }
@@ -70,7 +70,7 @@ body {
 	color: var(--lg-ink);
 	font-size: 13px;
 	line-height: 1.5;
-	font-feature-settings: "ss01", "cv01";
+	font-feature-settings: 'ss01', 'cv01';
 	min-height: 100%;
 	letter-spacing: 0;
 	background-image:
@@ -316,13 +316,13 @@ body {
 	image-rendering: pixelated;
 }
 .sprite-disk::before {
-	content: "";
+	content: '';
 	position: absolute;
 	inset: 20% 20% 45% 20%;
 	background: var(--lg-bg);
 }
 .sprite-disk::after {
-	content: "";
+	content: '';
 	position: absolute;
 	inset: 62% 30% 18% 30%;
 	background: var(--lg-bg);
@@ -363,7 +363,7 @@ body {
 	width: 6px;
 	height: 6px;
 	background: var(--lg-amber);
-	content: "";
+	content: '';
 }
 .corners > .corner-tl {
 	top: -1px;
@@ -487,7 +487,7 @@ body {
 	position: relative;
 }
 .rl-topbar::before {
-	content: "";
+	content: '';
 	position: absolute;
 	left: 0;
 	bottom: -1px;
@@ -521,7 +521,7 @@ body {
 	position: relative;
 }
 .rl-avatar::before {
-	content: "";
+	content: '';
 	position: absolute;
 	top: 0;
 	left: 0;
@@ -1172,7 +1172,7 @@ dialog.rl-col-dialog::backdrop {
 	overflow: hidden;
 }
 .rl-avatar::after {
-	content: "";
+	content: '';
 	position: absolute;
 	inset: 0;
 	background: linear-gradient(
@@ -1274,7 +1274,7 @@ dialog.rl-col-dialog::backdrop {
 	position: relative;
 }
 .rl-login-head::before {
-	content: "";
+	content: '';
 	position: absolute;
 	left: 0;
 	bottom: -1px;

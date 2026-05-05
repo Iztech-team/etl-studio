@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect, type ChangeEvent, type DragEvent } from "react";
-import { IArrow, ICheck, IDisk, IUpload, IX } from "../icons";
-import { usePipelineCtx } from "./context";
+import { useState, useRef, useEffect, type ChangeEvent, type DragEvent } from 'react';
+import { IArrow, ICheck, IDisk, IUpload, IX } from '../icons';
+import { usePipelineCtx } from './context';
 import {
 	detectKind,
 	isDbFile,
@@ -11,8 +11,8 @@ import {
 	donePayloadToUploadResult,
 	ACCEPT,
 	ACTIVE_EXTRACTION_LS_PREFIX,
-} from "./helpers";
-import type { FileKind, StagedFile, UploadProgress, ExtractEvent } from "./types";
+} from './helpers';
+import type { FileKind, StagedFile, UploadProgress, ExtractEvent } from './types';
 
 function UploadProgressView({
 	progress,
@@ -27,56 +27,56 @@ function UploadProgressView({
 		<>
 			<div
 				className="pixel"
-				style={{ fontSize: 14, color: "var(--lg-amber)", letterSpacing: "0.15em" }}
+				style={{ fontSize: 14, color: 'var(--lg-amber)', letterSpacing: '0.15em' }}
 			>
 				UPLOADING…
 			</div>
-			<div className="mono" style={{ fontSize: 11, color: "var(--lg-ink-dim)" }}>
-				{fileCount} FILE{fileCount === 1 ? "" : "S"} · {fmtSize(progress.loaded)} /{" "}
-				{progress.total > 0 ? fmtSize(progress.total) : "…"}
+			<div className="mono" style={{ fontSize: 11, color: 'var(--lg-ink-dim)' }}>
+				{fileCount} FILE{fileCount === 1 ? '' : 'S'} · {fmtSize(progress.loaded)} /{' '}
+				{progress.total > 0 ? fmtSize(progress.total) : '…'}
 			</div>
 			<div
 				style={{
-					width: "100%",
+					width: '100%',
 					maxWidth: 360,
 					height: 12,
 					marginTop: 6,
-					border: "1px solid var(--lg-border-br)",
-					background: "var(--lg-bg-2)",
-					position: "relative",
-					overflow: "hidden",
+					border: '1px solid var(--lg-border-br)',
+					background: 'var(--lg-bg-2)',
+					position: 'relative',
+					overflow: 'hidden',
 				}}
 			>
 				<div
 					style={{
 						width: `${pct}%`,
-						height: "100%",
-						background: "var(--lg-amber)",
-						transition: "width 120ms linear",
-						boxShadow: "0 0 8px rgba(255,179,71,0.6)",
+						height: '100%',
+						background: 'var(--lg-amber)',
+						transition: 'width 120ms linear',
+						boxShadow: '0 0 8px rgba(255,179,71,0.6)',
 					}}
 				/>
 				<div
 					className="pixel"
 					style={{
-						position: "absolute",
+						position: 'absolute',
 						top: 0,
 						left: 0,
 						right: 0,
 						bottom: 0,
-						display: "flex",
-						alignItems: "center",
-						justifyContent: "center",
+						display: 'flex',
+						alignItems: 'center',
+						justifyContent: 'center',
 						fontSize: 9,
-						color: pct > 50 ? "#1a1006" : "var(--lg-ink)",
-						mixBlendMode: pct > 50 ? "normal" : "normal",
-						letterSpacing: "0.15em",
+						color: pct > 50 ? '#1a1006' : 'var(--lg-ink)',
+						mixBlendMode: pct > 50 ? 'normal' : 'normal',
+						letterSpacing: '0.15em',
 					}}
 				>
 					{pct}%
 				</div>
 			</div>
-			<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginTop: 4 }}>
+			<div className="mono" style={{ fontSize: 10, color: 'var(--lg-ink-mute)', marginTop: 4 }}>
 				Don't close this tab until the upload reaches 100%.
 			</div>
 		</>
@@ -86,17 +86,17 @@ function UploadProgressView({
 function kindBadge(kind: FileKind) {
 	const label = kind.toUpperCase();
 	const cls =
-		kind === "unknown"
-			? "badge badge-err"
-			: kind === "ib" || kind === "sqlite"
-				? "badge badge-solid"
-				: "badge badge-ok";
+		kind === 'unknown'
+			? 'badge badge-err'
+			: kind === 'ib' || kind === 'sqlite'
+				? 'badge badge-solid'
+				: 'badge badge-ok';
 	return <span className={cls}>{label}</span>;
 }
 
-const DEFAULT_IB_PASSWORDS = ["masterkey", "AshSMSsw"];
-const PASSWORDS_LS_KEY = "etl_studio.ib_known_passwords";
-const NO_PASSWORD = "__none__";
+const DEFAULT_IB_PASSWORDS = ['masterkey', 'AshSMSsw'];
+const PASSWORDS_LS_KEY = 'etl_studio.ib_known_passwords';
+const NO_PASSWORD = '__none__';
 
 type ActiveExtraction = {
 	sessionId: string;
@@ -106,7 +106,7 @@ type ActiveExtraction = {
 };
 
 function activeExtractionKey(projectId: string | null): string {
-	return `${ACTIVE_EXTRACTION_LS_PREFIX}${projectId ?? "guest"}`;
+	return `${ACTIVE_EXTRACTION_LS_PREFIX}${projectId ?? 'guest'}`;
 }
 
 function saveActiveExtraction(info: ActiveExtraction) {
@@ -143,7 +143,7 @@ function loadKnownIbPasswords(): string[] {
 			const parsed = JSON.parse(raw);
 			if (Array.isArray(parsed)) {
 				for (const v of parsed) {
-					if (typeof v === "string" && v && !merged.includes(v)) merged.push(v);
+					if (typeof v === 'string' && v && !merged.includes(v)) merged.push(v);
 				}
 			}
 		}
@@ -169,9 +169,9 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 	const [knownPasswords, setKnownPasswords] = useState<string[]>(() => loadKnownIbPasswords());
 	const [selectedPassword, setSelectedPassword] = useState<string>(DEFAULT_IB_PASSWORDS[0]);
 	const [addingNew, setAddingNew] = useState(false);
-	const [newPassword, setNewPassword] = useState("");
+	const [newPassword, setNewPassword] = useState('');
 
-	const [extractStatus, setExtractStatus] = useState<string>("");
+	const [extractStatus, setExtractStatus] = useState<string>('');
 	const [allTables, setAllTables] = useState<string[]>([]);
 	const [doneTables, setDoneTables] = useState<{ name: string; rows: number }[]>([]);
 	const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
@@ -200,7 +200,7 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 
 	const onInput = (e: ChangeEvent<HTMLInputElement>) => {
 		ingest(e.target.files);
-		e.target.value = "";
+		e.target.value = '';
 	};
 
 	const onDragOver = (e: DragEvent) => {
@@ -218,7 +218,7 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 		const trimmed = newPassword.trim();
 		if (!trimmed) {
 			setAddingNew(false);
-			setNewPassword("");
+			setNewPassword('');
 			return;
 		}
 		if (!knownPasswords.includes(trimmed)) {
@@ -227,17 +227,17 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 			saveKnownIbPasswords(next);
 		}
 		setSelectedPassword(trimmed);
-		setNewPassword("");
+		setNewPassword('');
 		setAddingNew(false);
 	};
 
 	const handleEvent = (evt: ExtractEvent) => {
-		if (evt.event === "listing") {
-			setExtractStatus("Listing tables…");
-		} else if (evt.event === "start") {
+		if (evt.event === 'listing') {
+			setExtractStatus('Listing tables…');
+		} else if (evt.event === 'start') {
 			setAllTables(evt.tables);
 			setExtractStatus(`Extracting ${evt.tables.length} tables…`);
-		} else if (evt.event === "table_done") {
+		} else if (evt.event === 'table_done') {
 			setDoneTables((prev) => [...prev, { name: evt.name, rows: evt.rows }]);
 		}
 	};
@@ -250,7 +250,7 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 		setCancelling(false);
 		setUploading(true);
 		setError(null);
-		setExtractStatus("Uploading…");
+		setExtractStatus('Uploading…');
 		setAllTables([]);
 		setDoneTables([]);
 		setUploadProgress({ loaded: 0, total: 0 });
@@ -283,13 +283,13 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 			clearActiveExtraction(projectId);
 			const aborted =
 				ctrl.signal.aborted ||
-				(e instanceof DOMException && e.name === "AbortError") ||
-				(e instanceof Error && e.message.toLowerCase().includes("abort"));
+				(e instanceof DOMException && e.name === 'AbortError') ||
+				(e instanceof Error && e.message.toLowerCase().includes('abort'));
 			if (aborted) {
 				setError(null);
-				setExtractStatus("");
+				setExtractStatus('');
 			} else {
-				setError(e instanceof Error ? e.message : "Upload failed");
+				setError(e instanceof Error ? e.message : 'Upload failed');
 			}
 		} finally {
 			abortRef.current = null;
@@ -301,11 +301,11 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 	const handleCancel = () => {
 		if (!abortRef.current) return;
 		setCancelling(true);
-		setExtractStatus("Cancelling…");
+		setExtractStatus('Cancelling…');
 		const sid = sessionRef.current;
 		abortRef.current.abort();
 		if (sid) {
-			void fetch(`/api/extract/${sid}/cancel`, { method: "POST" }).catch(() => undefined);
+			void fetch(`/api/extract/${sid}/cancel`, { method: 'POST' }).catch(() => undefined);
 		}
 		clearActiveExtraction(projectId);
 	};
@@ -331,7 +331,7 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 					tables_total?: number;
 					tables_done?: number;
 				};
-				if (status.status !== "extracting" && status.status !== "done") {
+				if (status.status !== 'extracting' && status.status !== 'done') {
 					clearActiveExtraction(projectId);
 					return;
 				}
@@ -339,8 +339,8 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 				setUploading(true);
 				setError(null);
 				setExtractStatus(
-					status.status === "done"
-						? "Loading completed extraction…"
+					status.status === 'done'
+						? 'Loading completed extraction…'
 						: `Resuming extraction of ${active.filename}…`,
 				);
 				setAllTables([]);
@@ -353,7 +353,7 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 			} catch (e) {
 				if (!cancelled) {
 					clearActiveExtraction(projectId);
-					setError(e instanceof Error ? e.message : "Failed to resume extraction");
+					setError(e instanceof Error ? e.message : 'Failed to resume extraction');
 				}
 			} finally {
 				if (!cancelled) setUploading(false);
@@ -373,34 +373,34 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 	return (
 		<div
 			style={{
-				display: "grid",
-				gridTemplateColumns: "1fr 320px",
+				display: 'grid',
+				gridTemplateColumns: '1fr 320px',
 				gap: 14,
 				marginTop: 14,
 			}}
 		>
 			<div className="panel">
 				<div className="panel-head">
-					<IUpload size={10} />{" "}
+					<IUpload size={10} />{' '}
 					{uploading
 						? _isUploadingPhase(uploadProgress)
-							? "UPLOADING TO SERVER"
-							: "EXTRACTING DATABASE"
-						: "UPLOAD DATA FILES"}
+							? 'UPLOADING TO SERVER'
+							: 'EXTRACTING DATABASE'
+						: 'UPLOAD DATA FILES'}
 				</div>
 				<div className="panel-body">
 					{uploading ? (
 						<div
 							style={{
-								padding: "32px 20px",
-								textAlign: "center",
-								display: "flex",
-								flexDirection: "column",
-								alignItems: "center",
+								padding: '32px 20px',
+								textAlign: 'center',
+								display: 'flex',
+								flexDirection: 'column',
+								alignItems: 'center',
 								gap: 12,
 							}}
 						>
-							<div className="sprite-disk" style={{ margin: "0 auto 4px" }} />
+							<div className="sprite-disk" style={{ margin: '0 auto 4px' }} />
 							{_isUploadingPhase(uploadProgress) ? (
 								<UploadProgressView progress={uploadProgress!} fileCount={staged.length} />
 							) : (
@@ -409,11 +409,11 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 										className="pixel"
 										style={{
 											fontSize: 14,
-											color: "var(--lg-amber)",
-											letterSpacing: "0.15em",
+											color: 'var(--lg-amber)',
+											letterSpacing: '0.15em',
 										}}
 									>
-										{extractStatus || "EXTRACTION IN PROGRESS"}
+										{extractStatus || 'EXTRACTION IN PROGRESS'}
 									</div>
 									{allTables.length > 0 ? (
 										<>
@@ -421,7 +421,7 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 												className="mono"
 												style={{
 													fontSize: 11,
-													color: "var(--lg-ink-dim)",
+													color: 'var(--lg-ink-dim)',
 												}}
 											>
 												{doneTables.length} OF {allTables.length} TABLES EXTRACTED
@@ -431,7 +431,7 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 													className="mono"
 													style={{
 														fontSize: 11,
-														color: "var(--lg-ink)",
+														color: 'var(--lg-ink)',
 													}}
 												>
 													→ {allTables[doneTables.length]}
@@ -440,16 +440,16 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 										</>
 									) : (
 										<>
-											<div className="mono" style={{ fontSize: 11, color: "var(--lg-ink-mute)" }}>
+											<div className="mono" style={{ fontSize: 11, color: 'var(--lg-ink-mute)' }}>
 												{staged.some((s) => isDbFile(s.file.name))
-													? "Connecting to database…"
-													: "Processing files server-side…"}
+													? 'Connecting to database…'
+													: 'Processing files server-side…'}
 											</div>
 											<div
 												className="mono"
 												style={{
 													fontSize: 10,
-													color: "var(--lg-ink-mute)",
+													color: 'var(--lg-ink-mute)',
 													maxWidth: 360,
 													lineHeight: 1.5,
 												}}
@@ -463,7 +463,7 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 										className="mono"
 										style={{
 											fontSize: 10,
-											color: "var(--lg-ink-mute)",
+											color: 'var(--lg-ink-mute)',
 											marginTop: 8,
 											maxWidth: 360,
 											lineHeight: 1.6,
@@ -477,7 +477,7 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 						</div>
 					) : (
 						<div
-							className={`rl-drop ${dragOver ? "dragover" : ""}`}
+							className={`rl-drop ${dragOver ? 'dragover' : ''}`}
 							onDragOver={onDragOver}
 							onDragEnter={onDragOver}
 							onDragLeave={onDragLeave}
@@ -486,15 +486,15 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 							role="button"
 							tabIndex={0}
 						>
-							<div className="sprite-disk" style={{ margin: "0 auto 14px" }} />
-							<div className="pixel" style={{ fontSize: 12, color: "var(--lg-amber)" }}>
+							<div className="sprite-disk" style={{ margin: '0 auto 14px' }} />
+							<div className="pixel" style={{ fontSize: 12, color: 'var(--lg-amber)' }}>
 								DROP FILES HERE
 							</div>
 							<div
 								className="mono"
 								style={{
 									fontSize: 11,
-									color: "var(--lg-ink-mute)",
+									color: 'var(--lg-ink-mute)',
 									marginTop: 8,
 								}}
 							>
@@ -517,7 +517,7 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 								multiple
 								accept={ACCEPT}
 								onChange={onInput}
-								style={{ display: "none" }}
+								style={{ display: 'none' }}
 							/>
 						</div>
 					)}
@@ -528,14 +528,14 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 								className="pixel"
 								style={{
 									fontSize: 10,
-									color: "var(--lg-ink-dim)",
-									letterSpacing: "0.1em",
+									color: 'var(--lg-ink-dim)',
+									letterSpacing: '0.1em',
 									marginBottom: 8,
 								}}
 							>
-								STAGED · {staged.length} FILE{staged.length === 1 ? "" : "S"}
+								STAGED · {staged.length} FILE{staged.length === 1 ? '' : 'S'}
 							</div>
-							<div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+							<div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
 								{staged.map((s, i) => (
 									<div key={s.file.name + i} className="rl-file-row">
 										<IDisk size={12} />
@@ -544,7 +544,7 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 											<div
 												style={{
 													fontSize: 10,
-													color: "var(--lg-ink-mute)",
+													color: 'var(--lg-ink-mute)',
 													marginTop: 2,
 												}}
 											>
@@ -566,7 +566,7 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 							{staged.length > 1 && (
 								<button
 									className="btn btn-ghost"
-									style={{ marginTop: 10, padding: "4px 10px", fontSize: 10 }}
+									style={{ marginTop: 10, padding: '4px 10px', fontSize: 10 }}
 									onClick={clearStaged}
 								>
 									CLEAR ALL
@@ -580,35 +580,35 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 							className="mono"
 							style={{
 								fontSize: 11,
-								color: "var(--lg-coral)",
+								color: 'var(--lg-coral)',
 								marginTop: 12,
 							}}
 						>
-							{"> "}
+							{'> '}
 							{error}
 						</div>
 					)}
 				</div>
 			</div>
-			<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+			<div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
 				{!uploading && (
 					<div className="panel">
 						<div className="panel-head">READY TO UPLOAD</div>
 						<div className="panel-body">
 							{staged.length === 0 ? (
-								<div className="mono" style={{ fontSize: 11, color: "var(--lg-ink-mute)" }}>
+								<div className="mono" style={{ fontSize: 11, color: 'var(--lg-ink-mute)' }}>
 									Add files to begin.
 								</div>
 							) : (
 								<>
-									<div className="pixel" style={{ fontSize: 14, color: "var(--lg-amber)" }}>
-										{staged.length} FILE{staged.length === 1 ? "" : "S"}
+									<div className="pixel" style={{ fontSize: 14, color: 'var(--lg-amber)' }}>
+										{staged.length} FILE{staged.length === 1 ? '' : 'S'}
 									</div>
 									<div
 										className="mono"
 										style={{
 											fontSize: 11,
-											color: "var(--lg-ink-dim)",
+											color: 'var(--lg-ink-dim)',
 											marginTop: 6,
 										}}
 									>
@@ -619,7 +619,7 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 											className="mono"
 											style={{
 												fontSize: 10,
-												color: "var(--lg-coral)",
+												color: 'var(--lg-coral)',
 												marginTop: 8,
 											}}
 										>
@@ -637,48 +637,48 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 						<div className="panel-head">DATABASE PASSWORD</div>
 						<div
 							className="panel-body"
-							style={{ display: "flex", flexDirection: "column", gap: 8 }}
+							style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
 						>
 							{addingNew ? (
-								<div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+								<div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
 									<input
 										type="text"
 										value={newPassword}
 										onChange={(e) => setNewPassword(e.target.value)}
 										onKeyDown={(e) => {
-											if (e.key === "Enter") {
+											if (e.key === 'Enter') {
 												e.preventDefault();
 												handleAddNewPassword();
-											} else if (e.key === "Escape") {
+											} else if (e.key === 'Escape') {
 												setAddingNew(false);
-												setNewPassword("");
+												setNewPassword('');
 											}
 										}}
 										placeholder="New password"
 										autoFocus
 										style={{
-											background: "var(--lg-bg-panel, #111)",
-											border: "1px solid var(--lg-ink-dim, #555)",
-											color: "var(--lg-ink, #ddd)",
-											fontFamily: "var(--lg-mono)",
+											background: 'var(--lg-bg-panel, #111)',
+											border: '1px solid var(--lg-ink-dim, #555)',
+											color: 'var(--lg-ink, #ddd)',
+											fontFamily: 'var(--lg-mono)',
 											fontSize: 12,
-											padding: "6px 8px",
+											padding: '6px 8px',
 										}}
 									/>
-									<div style={{ display: "flex", gap: 6 }}>
+									<div style={{ display: 'flex', gap: 6 }}>
 										<button
 											className="btn btn-primary"
-											style={{ fontSize: 10, padding: "4px 10px", flex: 1 }}
+											style={{ fontSize: 10, padding: '4px 10px', flex: 1 }}
 											onClick={handleAddNewPassword}
 										>
 											SAVE
 										</button>
 										<button
 											className="btn btn-ghost"
-											style={{ fontSize: 10, padding: "4px 10px", flex: 1 }}
+											style={{ fontSize: 10, padding: '4px 10px', flex: 1 }}
 											onClick={() => {
 												setAddingNew(false);
-												setNewPassword("");
+												setNewPassword('');
 											}}
 										>
 											CANCEL
@@ -690,20 +690,20 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 									<select
 										value={selectedPassword}
 										onChange={(e) => {
-											if (e.target.value === "__add__") {
+											if (e.target.value === '__add__') {
 												setAddingNew(true);
 											} else {
 												setSelectedPassword(e.target.value);
 											}
 										}}
 										style={{
-											background: "var(--lg-bg-panel, #111)",
-											border: "1px solid var(--lg-ink-dim, #555)",
-											color: "var(--lg-ink, #ddd)",
-											fontFamily: "var(--lg-mono)",
+											background: 'var(--lg-bg-panel, #111)',
+											border: '1px solid var(--lg-ink-dim, #555)',
+											color: 'var(--lg-ink, #ddd)',
+											fontFamily: 'var(--lg-mono)',
 											fontSize: 12,
-											padding: "6px 8px",
-											width: "100%",
+											padding: '6px 8px',
+											width: '100%',
 										}}
 									>
 										<option value={NO_PASSWORD}>(no password)</option>
@@ -714,7 +714,7 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 										))}
 										<option value="__add__">+ Add new password…</option>
 									</select>
-									<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-mute)" }}>
+									<div className="mono" style={{ fontSize: 10, color: 'var(--lg-ink-mute)' }}>
 										Saved in your browser. Sent with the upload.
 									</div>
 								</>
@@ -726,13 +726,13 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 				{uploading && (
 					<div className="panel">
 						<div className="panel-head">
-							{extractStatus || "EXTRACTING"}
+							{extractStatus || 'EXTRACTING'}
 							{allTables.length > 0 && (
 								<span
 									style={{
-										float: "right",
-										fontFamily: "var(--lg-mono)",
-										color: "var(--lg-amber)",
+										float: 'right',
+										fontFamily: 'var(--lg-mono)',
+										color: 'var(--lg-amber)',
 									}}
 								>
 									{doneTables.length}/{allTables.length}
@@ -744,21 +744,21 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 								<div
 									style={{
 										height: 4,
-										background: "var(--lg-ink-dim, #333)",
+										background: 'var(--lg-ink-dim, #333)',
 										marginBottom: 10,
-										position: "relative",
-										overflow: "hidden",
+										position: 'relative',
+										overflow: 'hidden',
 									}}
 								>
 									<div
 										style={{
-											position: "absolute",
+											position: 'absolute',
 											top: 0,
 											left: 0,
 											bottom: 0,
-											background: "var(--lg-amber, #f5b32a)",
+											background: 'var(--lg-amber, #f5b32a)',
 											width: `${(doneTables.length / allTables.length) * 100}%`,
-											transition: "width 120ms linear",
+											transition: 'width 120ms linear',
 										}}
 									/>
 								</div>
@@ -767,19 +767,19 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 								ref={tableLogRef}
 								style={{
 									maxHeight: 220,
-									overflowY: "auto",
-									fontFamily: "var(--lg-mono)",
+									overflowY: 'auto',
+									fontFamily: 'var(--lg-mono)',
 									fontSize: 11,
-									display: "flex",
-									flexDirection: "column",
+									display: 'flex',
+									flexDirection: 'column',
 									gap: 2,
 								}}
 							>
 								{doneTables.map((t) => (
-									<div key={t.name} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+									<div key={t.name} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
 										<ICheck size={8} />
-										<span style={{ flex: 1, color: "var(--lg-ink, #ddd)" }}>{t.name}</span>
-										<span style={{ color: "var(--lg-ink-mute, #999)" }}>
+										<span style={{ flex: 1, color: 'var(--lg-ink, #ddd)' }}>{t.name}</span>
+										<span style={{ color: 'var(--lg-ink-mute, #999)' }}>
 											{t.rows.toLocaleString()}
 										</span>
 									</div>
@@ -787,10 +787,10 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 								{allTables.length > 0 && doneTables.length < allTables.length && (
 									<div
 										style={{
-											display: "flex",
+											display: 'flex',
 											gap: 6,
-											alignItems: "center",
-											color: "var(--lg-ink-mute, #999)",
+											alignItems: 'center',
+											color: 'var(--lg-ink-mute, #999)',
 										}}
 									>
 										<span style={{ width: 8 }}>›</span>
@@ -798,7 +798,7 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 									</div>
 								)}
 								{doneTables.length === 0 && allTables.length === 0 && (
-									<div style={{ color: "var(--lg-ink-mute, #999)" }}>{extractStatus}</div>
+									<div style={{ color: 'var(--lg-ink-mute, #999)' }}>{extractStatus}</div>
 								)}
 							</div>
 						</div>
@@ -806,7 +806,7 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 				)}
 
 				{uploading ? (
-					<div style={{ display: "flex", gap: 8 }}>
+					<div style={{ display: 'flex', gap: 8 }}>
 						<button className="btn btn-primary" disabled style={{ flex: 1 }}>
 							UPLOADING… <IArrow size={10} />
 						</button>
@@ -816,7 +816,7 @@ export function RlUpload({ onNext }: { onNext: () => void }) {
 							disabled={cancelling}
 							style={{ minWidth: 110 }}
 						>
-							{cancelling ? "CANCELLING…" : "CANCEL"} <IX size={10} />
+							{cancelling ? 'CANCELLING…' : 'CANCEL'} <IX size={10} />
 						</button>
 					</div>
 				) : (

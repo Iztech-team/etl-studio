@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef, useMemo, Fragment, type CSSProperties } from "react";
-import { ICheck } from "../icons";
-import { usePipelineCtx } from "./context";
-import { FormatPicker } from "./FormatPicker";
+import { useState, useEffect, useRef, useMemo, Fragment, type CSSProperties } from 'react';
+import { ICheck } from '../icons';
+import { usePipelineCtx } from './context';
+import { FormatPicker } from './FormatPicker';
 
 type ErpnextEvent = {
 	event: string;
@@ -27,11 +27,11 @@ export function ErpnextLiveExport({
 	const expectedCounts = transformResult?.output_doctypes ?? {};
 	const allDoctypes = useMemo(() => Object.keys(expectedCounts).sort(), [expectedCounts]);
 
-	const [url, setUrl] = useState("");
-	const [apiKey, setApiKey] = useState("");
-	const [apiSecret, setApiSecret] = useState("");
-	const [company, setCompany] = useState("");
-	const [companyAbbr, setCompanyAbbr] = useState("");
+	const [url, setUrl] = useState('');
+	const [apiKey, setApiKey] = useState('');
+	const [apiSecret, setApiSecret] = useState('');
+	const [company, setCompany] = useState('');
+	const [companyAbbr, setCompanyAbbr] = useState('');
 	const [forceReupload, setForceReupload] = useState(false);
 	const [autoContinue, setAutoContinue] = useState(false);
 	const [skipFiles, setSkipFiles] = useState<Set<string>>(() => new Set());
@@ -59,11 +59,11 @@ export function ErpnextLiveExport({
 			.then((d) => {
 				const c = d?.credentials;
 				if (!c) return;
-				setUrl(c.url ?? "");
-				setApiKey(c.api_key ?? "");
-				setApiSecret(c.api_secret ?? "");
-				setCompany(c.company ?? "");
-				setCompanyAbbr(c.company_abbr ?? "");
+				setUrl(c.url ?? '');
+				setApiKey(c.api_key ?? '');
+				setApiSecret(c.api_secret ?? '');
+				setCompany(c.company ?? '');
+				setCompanyAbbr(c.company_abbr ?? '');
 			})
 			.catch(() => {});
 		fetch(`/api/erpnext-imports/${projectId}`)
@@ -87,10 +87,10 @@ export function ErpnextLiveExport({
 			.then((r) => r.json())
 			.then((d) => {
 				const cfg = (d?.config ?? {}) as Record<string, unknown>;
-				if (typeof cfg.company_name === "string") {
+				if (typeof cfg.company_name === 'string') {
 					setCompany((prev) => prev || (cfg.company_name as string));
 				}
-				if (typeof cfg.company_abbr === "string") {
+				if (typeof cfg.company_abbr === 'string') {
 					setCompanyAbbr((prev) => prev || (cfg.company_abbr as string));
 				}
 			})
@@ -113,7 +113,7 @@ export function ErpnextLiveExport({
 				setTransformResult(data);
 			})
 			.catch((err) => {
-				if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load doctypes");
+				if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load doctypes');
 			})
 			.finally(() => {
 				if (!cancelled) setLoadingDoctypes(false);
@@ -138,8 +138,8 @@ export function ErpnextLiveExport({
 		abortRef.current = ctl;
 		try {
 			const res = await fetch(`/api/load-erpnext/${sessionId}`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					url,
 					api_key: apiKey,
@@ -159,32 +159,32 @@ export function ErpnextLiveExport({
 			}
 			const reader = res.body.getReader();
 			const decoder = new TextDecoder();
-			let buf = "";
+			let buf = '';
 			while (true) {
 				const { value, done } = await reader.read();
 				if (done) break;
 				buf += decoder.decode(value, { stream: true });
 				let idx;
-				while ((idx = buf.indexOf("\n\n")) >= 0) {
+				while ((idx = buf.indexOf('\n\n')) >= 0) {
 					const chunk = buf.slice(0, idx);
 					buf = buf.slice(idx + 2);
-					if (!chunk.startsWith("data: ")) continue;
+					if (!chunk.startsWith('data: ')) continue;
 					try {
 						const ev = JSON.parse(chunk.slice(6)) as ErpnextEvent;
 						setEvents((prev) => [...prev, ev]);
-						if (ev.event === "halted") {
+						if (ev.event === 'halted') {
 							setHaltedFile({
-								file: String(ev.file ?? ""),
-								doctype: String(ev.doctype ?? ""),
-								reason: String(ev.reason ?? "failure"),
+								file: String(ev.file ?? ''),
+								doctype: String(ev.doctype ?? ''),
+								reason: String(ev.reason ?? 'failure'),
 							});
 						}
 					} catch {}
 				}
 			}
 		} catch (e) {
-			if ((e as { name?: string })?.name !== "AbortError") {
-				setError(e instanceof Error ? e.message : "Send failed");
+			if ((e as { name?: string })?.name !== 'AbortError') {
+				setError(e instanceof Error ? e.message : 'Send failed');
 			}
 		} finally {
 			setRunning(false);
@@ -235,14 +235,14 @@ export function ErpnextLiveExport({
 		[events, expectedCounts],
 	);
 	const idle = !running && events.length === 0;
-	const complete = events.find((e) => e.event === "complete");
-	const fatalError = events.find((e) => e.event === "error" && !e.file);
+	const complete = events.find((e) => e.event === 'complete');
+	const fatalError = events.find((e) => e.event === 'error' && !e.file);
 
 	return (
 		<div
 			style={{
-				display: "grid",
-				gridTemplateColumns: "240px 1fr 280px",
+				display: 'grid',
+				gridTemplateColumns: '240px 1fr 280px',
 				gap: 14,
 				marginTop: 14,
 			}}
@@ -251,7 +251,7 @@ export function ErpnextLiveExport({
 
 			<div className="panel">
 				<div className="panel-head">ERPNEXT TARGET</div>
-				<div className="panel-body" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+				<div className="panel-body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
 					<ErpnextField
 						label="URL"
 						value={url}
@@ -284,12 +284,12 @@ export function ErpnextLiveExport({
 					<label
 						className="mono"
 						style={{
-							display: "flex",
-							alignItems: "center",
+							display: 'flex',
+							alignItems: 'center',
 							gap: 10,
 							fontSize: 11,
-							color: "var(--lg-ink)",
-							cursor: running ? "not-allowed" : "pointer",
+							color: 'var(--lg-ink)',
+							cursor: running ? 'not-allowed' : 'pointer',
 						}}
 						title="Re-send every CSV even if it was successfully imported on a previous run"
 					>
@@ -304,12 +304,12 @@ export function ErpnextLiveExport({
 					<label
 						className="mono"
 						style={{
-							display: "flex",
-							alignItems: "center",
+							display: 'flex',
+							alignItems: 'center',
 							gap: 10,
 							fontSize: 11,
-							color: "var(--lg-ink)",
-							cursor: running ? "not-allowed" : "pointer",
+							color: 'var(--lg-ink)',
+							cursor: running ? 'not-allowed' : 'pointer',
 						}}
 						title="By default the loader pauses on any partial / failed file and waits for you to click CONTINUE. Tick this to plough through automatically, logging errors as they happen."
 					>
@@ -325,11 +325,11 @@ export function ErpnextLiveExport({
 						<div
 							className="mono"
 							style={{
-								borderTop: "1px solid var(--lg-border)",
+								borderTop: '1px solid var(--lg-border)',
 								paddingTop: 12,
 								marginTop: 4,
 								fontSize: 11,
-								color: "var(--lg-ink-dim)",
+								color: 'var(--lg-ink-dim)',
 							}}
 						>
 							Loading doctypes from transform…
@@ -339,11 +339,11 @@ export function ErpnextLiveExport({
 						<div
 							className="mono"
 							style={{
-								borderTop: "1px solid var(--lg-border)",
+								borderTop: '1px solid var(--lg-border)',
 								paddingTop: 12,
 								marginTop: 4,
 								fontSize: 11,
-								color: "var(--lg-amber)",
+								color: 'var(--lg-amber)',
 							}}
 						>
 							No doctypes available — go back to Transform and run a strategy first.
@@ -352,31 +352,31 @@ export function ErpnextLiveExport({
 					{allDoctypes.length > 0 && (
 						<div
 							style={{
-								borderTop: "1px solid var(--lg-border)",
+								borderTop: '1px solid var(--lg-border)',
 								paddingTop: 12,
 								marginTop: 4,
-								display: "flex",
-								flexDirection: "column",
+								display: 'flex',
+								flexDirection: 'column',
 								gap: 8,
 							}}
 						>
-							<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+							<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
 								<span
 									className="pixel"
 									style={{
 										fontSize: 9,
-										color: "var(--lg-ink-mute)",
-										letterSpacing: "0.1em",
+										color: 'var(--lg-ink-mute)',
+										letterSpacing: '0.1em',
 										flex: 1,
 									}}
 								>
 									{idle
 										? `DOCTYPES — ${selectedDoctypes.size} of ${allDoctypes.length} selected`
 										: `PROGRESS — ${
-												states.filter((s) => s.status === "success" || s.status === "partial")
+												states.filter((s) => s.status === 'success' || s.status === 'partial')
 													.length
 											} of ${
-												states.filter((s) => s.status !== "skipped" && s.status !== "idle")
+												states.filter((s) => s.status !== 'skipped' && s.status !== 'idle')
 													.length || allDoctypes.length
 											} done`}
 								</span>
@@ -384,19 +384,19 @@ export function ErpnextLiveExport({
 									<button
 										className="btn btn-ghost"
 										onClick={toggleAll}
-										style={{ padding: "2px 8px", fontSize: 9 }}
+										style={{ padding: '2px 8px', fontSize: 9 }}
 									>
-										{selectedDoctypes.size === allDoctypes.length ? "DESELECT ALL" : "SELECT ALL"}
+										{selectedDoctypes.size === allDoctypes.length ? 'DESELECT ALL' : 'SELECT ALL'}
 									</button>
 								)}
 							</div>
 							<div
 								style={{
-									display: "flex",
-									flexDirection: "column",
+									display: 'flex',
+									flexDirection: 'column',
 									gap: 6,
 									maxHeight: 400,
-									overflowY: "auto",
+									overflowY: 'auto',
 								}}
 							>
 								{states.map((s) => (
@@ -413,26 +413,26 @@ export function ErpnextLiveExport({
 						</div>
 					)}
 					{error && (
-						<div className="mono" style={{ fontSize: 10, color: "var(--lg-coral)" }}>
-							{"> "}
+						<div className="mono" style={{ fontSize: 10, color: 'var(--lg-coral)' }}>
+							{'> '}
 							{error}
 						</div>
 					)}
 				</div>
 			</div>
 
-			<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+			<div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
 				<div className="panel">
 					<div className="panel-head">VERIFICATION</div>
 					<div className="panel-body">
 						{complete ? (
 							<VerificationList complete={complete} />
 						) : fatalError ? (
-							<div className="mono" style={{ fontSize: 10, color: "var(--lg-coral)" }}>
-								{String(fatalError.message ?? "failed")}
+							<div className="mono" style={{ fontSize: 10, color: 'var(--lg-coral)' }}>
+								{String(fatalError.message ?? 'failed')}
 							</div>
 						) : (
-							<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}>
+							<div className="mono" style={{ fontSize: 10, color: 'var(--lg-ink-dim)' }}>
 								Counts will appear here once import completes.
 							</div>
 						)}
@@ -443,13 +443,13 @@ export function ErpnextLiveExport({
 					<button
 						className="btn btn-primary"
 						onClick={cancel}
-						style={{ fontSize: 13, padding: "12px 14px", justifyContent: "center" }}
+						style={{ fontSize: 13, padding: '12px 14px', justifyContent: 'center' }}
 					>
 						CANCEL
 					</button>
 				) : events.length === 0 ? (
 					<button
-						className={`btn btn-primary ${!running ? "pulse" : ""}`}
+						className={`btn btn-primary ${!running ? 'pulse' : ''}`}
 						onClick={() => send()}
 						disabled={
 							!sessionId ||
@@ -458,56 +458,56 @@ export function ErpnextLiveExport({
 							!apiSecret ||
 							(allDoctypes.length > 0 && selectedDoctypes.size === 0)
 						}
-						style={{ fontSize: 13, padding: "12px 14px", justifyContent: "center" }}
+						style={{ fontSize: 13, padding: '12px 14px', justifyContent: 'center' }}
 					>
 						▶ SEND TO ERPNEXT
 					</button>
 				) : haltedFile ? (
-					<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+					<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 						<div
 							className="mono"
 							style={{
 								fontSize: 10,
-								color: "var(--lg-amber)",
-								padding: "8px 10px",
-								border: "1px solid var(--lg-amber)",
-								background: "rgba(199,155,0,0.08)",
+								color: 'var(--lg-amber)',
+								padding: '8px 10px',
+								border: '1px solid var(--lg-amber)',
+								background: 'rgba(199,155,0,0.08)',
 								lineHeight: 1.5,
 							}}
 						>
-							{"▼ "}HALTED on {haltedFile.doctype || haltedFile.file} ({haltedFile.reason}). Click
+							{'▼ '}HALTED on {haltedFile.doctype || haltedFile.file} ({haltedFile.reason}). Click
 							CONTINUE to skip this file and resume from the next one.
 						</div>
 						<button
 							className="btn btn-primary pulse"
 							onClick={continueFromHalt}
-							style={{ fontSize: 13, padding: "12px 14px", justifyContent: "center" }}
+							style={{ fontSize: 13, padding: '12px 14px', justifyContent: 'center' }}
 						>
 							▶ CONTINUE — SKIP &amp; RESUME
 						</button>
 						<button
 							className="btn btn-ghost"
 							onClick={reset}
-							style={{ fontSize: 11, padding: "10px 14px", justifyContent: "center" }}
+							style={{ fontSize: 11, padding: '10px 14px', justifyContent: 'center' }}
 						>
 							RESET — PICK AGAIN
 						</button>
 					</div>
 				) : (
-					<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+					<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 						<button
 							className="btn btn-ghost"
 							onClick={reset}
-							style={{ fontSize: 11, padding: "10px 14px", justifyContent: "center" }}
+							style={{ fontSize: 11, padding: '10px 14px', justifyContent: 'center' }}
 						>
 							RESET — PICK AGAIN
 						</button>
 						<button
 							className="btn btn-primary"
 							onClick={onDone}
-							style={{ fontSize: 13, padding: "12px 14px", justifyContent: "center" }}
+							style={{ fontSize: 13, padding: '12px 14px', justifyContent: 'center' }}
 						>
-							{complete ? "DONE · BACK TO PROJECTS" : "BACK TO PROJECTS"}
+							{complete ? 'DONE · BACK TO PROJECTS' : 'BACK TO PROJECTS'}
 						</button>
 					</div>
 				)}
@@ -521,7 +521,7 @@ function ErpnextField({
 	value,
 	onChange,
 	placeholder,
-	type = "text",
+	type = 'text',
 	disabled,
 }: {
 	label: string;
@@ -532,10 +532,10 @@ function ErpnextField({
 	disabled?: boolean;
 }) {
 	return (
-		<label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+		<label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
 			<span
 				className="pixel"
-				style={{ fontSize: 9, color: "var(--lg-ink-mute)", letterSpacing: "0.1em" }}
+				style={{ fontSize: 9, color: 'var(--lg-ink-mute)', letterSpacing: '0.1em' }}
 			>
 				{label}
 			</span>
@@ -549,10 +549,10 @@ function ErpnextField({
 				autoComplete="off"
 				spellCheck={false}
 				style={{
-					background: "var(--lg-bg-2)",
-					border: "1px solid var(--lg-border-br)",
-					color: "var(--lg-ink)",
-					padding: "8px 10px",
+					background: 'var(--lg-bg-2)',
+					border: '1px solid var(--lg-border-br)',
+					color: 'var(--lg-ink)',
+					padding: '8px 10px',
 					fontSize: 12,
 				}}
 			/>
@@ -561,15 +561,15 @@ function ErpnextField({
 }
 
 type DoctypeStatus =
-	| "idle"
-	| "settling"
-	| "queued"
-	| "uploading"
-	| "running"
-	| "success"
-	| "partial"
-	| "skipped"
-	| "error";
+	| 'idle'
+	| 'settling'
+	| 'queued'
+	| 'uploading'
+	| 'running'
+	| 'success'
+	| 'partial'
+	| 'skipped'
+	| 'error';
 
 type DoctypeState = {
 	doctype: string;
@@ -591,59 +591,59 @@ function deriveDoctypeStates(
 		map.set(dt, {
 			doctype: dt,
 			expected: expected[dt],
-			status: "idle",
+			status: 'idle',
 			imported: 0,
 			failed: 0,
 			warnings: [],
 			errors: [],
-			detail: "",
+			detail: '',
 		});
 	}
 	for (const ev of events) {
-		const dt = (ev.doctype as string | undefined) ?? "";
+		const dt = (ev.doctype as string | undefined) ?? '';
 		if (!dt) continue;
 		const s = map.get(dt) ?? {
 			doctype: dt,
 			expected: 0,
-			status: "idle" as DoctypeStatus,
+			status: 'idle' as DoctypeStatus,
 			imported: 0,
 			failed: 0,
 			warnings: [],
 			errors: [],
-			detail: "",
+			detail: '',
 		};
 		switch (ev.event) {
-			case "settling":
+			case 'settling':
 				// Backend sleeps a few seconds between files so Frappe can
 				// commit the previous import before this one reads it.
 				// Stamp the next doctype row with a 'settling' state so
 				// the user sees we're not hung — just waiting.
-				if (s.status === "idle") {
-					s.status = "settling";
+				if (s.status === 'idle') {
+					s.status = 'settling';
 					const delay = (ev.delay as number | undefined) ?? 0;
-					s.detail = delay > 0 ? `settling ${delay}s…` : "settling…";
+					s.detail = delay > 0 ? `settling ${delay}s…` : 'settling…';
 				}
 				break;
-			case "uploading":
-				s.status = "uploading";
-				s.detail = (ev.stage as string) ?? "uploading";
+			case 'uploading':
+				s.status = 'uploading';
+				s.detail = (ev.stage as string) ?? 'uploading';
 				break;
-			case "queued":
-				s.status = "queued";
-				s.detail = "queued in Frappe";
+			case 'queued':
+				s.status = 'queued';
+				s.detail = 'queued in Frappe';
 				break;
-			case "polling": {
-				s.status = "running";
+			case 'polling': {
+				s.status = 'running';
 				s.imported = (ev.imported as number) ?? s.imported;
 				s.failed = (ev.failed as number) ?? s.failed;
-				const status = (ev.status as string | undefined) ?? "in progress";
+				const status = (ev.status as string | undefined) ?? 'in progress';
 				s.detail = status.toLowerCase();
 				if (Array.isArray(ev.warnings)) s.warnings = ev.warnings as string[];
 				break;
 			}
-			case "done": {
-				const finalStatus = (ev.status as string | undefined) ?? "success";
-				s.status = finalStatus === "success" ? "success" : "partial";
+			case 'done': {
+				const finalStatus = (ev.status as string | undefined) ?? 'success';
+				s.status = finalStatus === 'success' ? 'success' : 'partial';
 				s.imported = (ev.imported as number) ?? s.imported;
 				s.failed = (ev.failed as number) ?? s.failed;
 				if (Array.isArray(ev.warnings)) s.warnings = ev.warnings as string[];
@@ -651,19 +651,19 @@ function deriveDoctypeStates(
 				s.detail = finalStatus;
 				break;
 			}
-			case "skipped":
+			case 'skipped':
 				// Don't overwrite a previously-resolved status — a
 				// follow-up run that user-skips this file shouldn't
 				// erase the original partial / error display.
-				if (s.status === "idle") {
-					s.status = "skipped";
-					s.detail = (ev.reason as string) ?? "skipped";
-					if (typeof ev.imported === "number") s.imported = ev.imported as number;
+				if (s.status === 'idle') {
+					s.status = 'skipped';
+					s.detail = (ev.reason as string) ?? 'skipped';
+					if (typeof ev.imported === 'number') s.imported = ev.imported as number;
 				}
 				break;
-			case "error":
-				s.status = "error";
-				s.detail = (ev.message as string) ?? "failed";
+			case 'error':
+				s.status = 'error';
+				s.detail = (ev.message as string) ?? 'failed';
 				break;
 		}
 		map.set(dt, s);
@@ -672,56 +672,56 @@ function deriveDoctypeStates(
 }
 
 const STATUS_COLOR: Record<DoctypeStatus, string> = {
-	idle: "var(--lg-ink-mute)",
-	settling: "var(--lg-ink-dim)",
-	queued: "var(--lg-amber)",
-	uploading: "var(--lg-amber)",
-	running: "var(--lg-cyan)",
-	success: "var(--lg-magenta)",
-	partial: "var(--lg-amber)",
-	skipped: "var(--lg-ink-dim)",
-	error: "var(--lg-coral)",
+	idle: 'var(--lg-ink-mute)',
+	settling: 'var(--lg-ink-dim)',
+	queued: 'var(--lg-amber)',
+	uploading: 'var(--lg-amber)',
+	running: 'var(--lg-cyan)',
+	success: 'var(--lg-magenta)',
+	partial: 'var(--lg-amber)',
+	skipped: 'var(--lg-ink-dim)',
+	error: 'var(--lg-coral)',
 };
 
 function barFill(state: DoctypeState, color: string): CSSProperties {
 	const pct = state.expected > 0 ? Math.min(100, (state.imported / state.expected) * 100) : 0;
 	const isActive =
-		state.status === "uploading" || state.status === "queued" || state.status === "running";
+		state.status === 'uploading' || state.status === 'queued' || state.status === 'running';
 
-	if (state.status === "success") {
-		return { width: "100%", background: color };
+	if (state.status === 'success') {
+		return { width: '100%', background: color };
 	}
-	if (state.status === "skipped") {
-		return { width: "100%", background: color, opacity: 0.5 };
+	if (state.status === 'skipped') {
+		return { width: '100%', background: color, opacity: 0.5 };
 	}
-	if (state.status === "error") {
-		return { width: "100%", background: color };
+	if (state.status === 'error') {
+		return { width: '100%', background: color };
 	}
-	if (state.status === "partial") {
+	if (state.status === 'partial') {
 		return {
 			width: `${Math.max(pct, 5)}%`,
 			background: color,
 		};
 	}
-	if (state.status === "settling") {
+	if (state.status === 'settling') {
 		// Slim, dim, slow-pulsing bar — distinct from the active stripe-march.
 		return {
-			width: "12%",
+			width: '12%',
 			background: color,
 			opacity: 0.6,
-			animation: "rl-bug-glow 1.4s ease-in-out infinite",
+			animation: 'rl-bug-glow 1.4s ease-in-out infinite',
 		};
 	}
 	if (isActive) {
 		return {
 			width: `${Math.max(pct, 8)}%`,
 			background: `repeating-linear-gradient(45deg, ${color}, ${color} 6px, rgba(255,255,255,0.18) 6px, rgba(255,255,255,0.18) 12px)`,
-			backgroundSize: "24px 24px",
-			animation: "rl-stripe-march .8s linear infinite",
+			backgroundSize: '24px 24px',
+			animation: 'rl-stripe-march .8s linear infinite',
 		};
 	}
 	// idle
-	return { width: "0%", background: color };
+	return { width: '0%', background: color };
 }
 
 function DoctypeRow({
@@ -739,7 +739,7 @@ function DoctypeRow({
 }) {
 	const color = STATUS_COLOR[state.status];
 	const isActive =
-		state.status === "uploading" || state.status === "queued" || state.status === "running";
+		state.status === 'uploading' || state.status === 'queued' || state.status === 'running';
 	const dimmed = idle && !picked;
 	const fill = barFill(state, color);
 
@@ -747,35 +747,35 @@ function DoctypeRow({
 		<div
 			onClick={idle ? onToggle : undefined}
 			style={{
-				border: `1px solid ${idle && picked ? "var(--lg-amber)" : "var(--lg-border)"}`,
+				border: `1px solid ${idle && picked ? 'var(--lg-amber)' : 'var(--lg-border)'}`,
 				background: isActive
-					? "rgba(80,180,220,0.05)"
-					: state.status === "success"
-						? "rgba(140,200,120,0.05)"
-						: state.status === "error"
-							? "rgba(220,90,90,0.05)"
-							: "transparent",
-				padding: "8px 10px",
-				display: "flex",
-				flexDirection: "column",
+					? 'rgba(80,180,220,0.05)'
+					: state.status === 'success'
+						? 'rgba(140,200,120,0.05)'
+						: state.status === 'error'
+							? 'rgba(220,90,90,0.05)'
+							: 'transparent',
+				padding: '8px 10px',
+				display: 'flex',
+				flexDirection: 'column',
 				gap: 6,
-				cursor: idle ? "pointer" : "default",
+				cursor: idle ? 'pointer' : 'default',
 				opacity: dimmed ? 0.5 : 1,
-				animation: "rl-row-in .2s ease-out both",
+				animation: 'rl-row-in .2s ease-out both',
 			}}
 		>
-			<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+			<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
 				{idle ? (
 					<span
 						style={{
-							display: "inline-flex",
-							alignItems: "center",
-							justifyContent: "center",
+							display: 'inline-flex',
+							alignItems: 'center',
+							justifyContent: 'center',
 							width: 12,
 							height: 12,
-							border: "1px solid var(--lg-amber)",
-							background: picked ? "var(--lg-amber)" : "transparent",
-							color: "#0a0410",
+							border: '1px solid var(--lg-amber)',
+							background: picked ? 'var(--lg-amber)' : 'transparent',
+							color: '#0a0410',
 							flexShrink: 0,
 						}}
 					>
@@ -784,12 +784,12 @@ function DoctypeRow({
 				) : (
 					<span
 						style={{
-							display: "inline-block",
+							display: 'inline-block',
 							width: 8,
 							height: 8,
-							borderRadius: "50%",
+							borderRadius: '50%',
 							background: color,
-							animation: isActive ? "rl-pulse 1.1s ease-in-out infinite" : "none",
+							animation: isActive ? 'rl-pulse 1.1s ease-in-out infinite' : 'none',
 							flexShrink: 0,
 						}}
 					/>
@@ -798,8 +798,8 @@ function DoctypeRow({
 					className="pixel"
 					style={{
 						fontSize: 11,
-						color: "var(--lg-ink)",
-						letterSpacing: "0.05em",
+						color: 'var(--lg-ink)',
+						letterSpacing: '0.05em',
 						flex: 1,
 					}}
 				>
@@ -811,20 +811,20 @@ function DoctypeRow({
 						title="A previous run already imported this doctype — it will be auto-skipped unless 'Re-upload everything' is checked."
 						style={{
 							fontSize: 9,
-							color: "var(--lg-green)",
-							border: "1px solid var(--lg-green)",
-							padding: "1px 6px",
-							letterSpacing: "0.1em",
+							color: 'var(--lg-green)',
+							border: '1px solid var(--lg-green)',
+							padding: '1px 6px',
+							letterSpacing: '0.1em',
 							flexShrink: 0,
 						}}
 					>
 						✓ ALREADY IMPORTED
 					</span>
 				)}
-				<span className="mono" style={{ fontSize: 10, color, fontVariantNumeric: "tabular-nums" }}>
-					{state.status === "idle"
+				<span className="mono" style={{ fontSize: 10, color, fontVariantNumeric: 'tabular-nums' }}>
+					{state.status === 'idle'
 						? `${state.expected.toLocaleString()} rows`
-						: state.status === "settling"
+						: state.status === 'settling'
 							? state.detail
 							: state.expected > 0
 								? `${state.imported}/${state.expected}`
@@ -832,7 +832,7 @@ function DoctypeRow({
 									? `${state.imported}`
 									: state.detail}
 					{state.failed > 0 && (
-						<span style={{ color: "var(--lg-coral)" }}> · {state.failed} failed</span>
+						<span style={{ color: 'var(--lg-coral)' }}> · {state.failed} failed</span>
 					)}
 				</span>
 			</div>
@@ -840,41 +840,41 @@ function DoctypeRow({
 				<div
 					style={{
 						height: 6,
-						background: "var(--lg-bg-2)",
-						border: "1px solid var(--lg-border)",
-						position: "relative",
-						overflow: "hidden",
+						background: 'var(--lg-bg-2)',
+						border: '1px solid var(--lg-border)',
+						position: 'relative',
+						overflow: 'hidden',
 					}}
 				>
 					<div
 						style={{
-							height: "100%",
-							transition: "width .25s ease-out",
+							height: '100%',
+							transition: 'width .25s ease-out',
 							...fill,
 						}}
 					/>
 				</div>
 			)}
-			{!idle && state.detail && state.status !== "running" && (
+			{!idle && state.detail && state.status !== 'running' && (
 				<span
 					className="mono"
-					style={{ fontSize: 9, color: "var(--lg-ink-dim)", letterSpacing: "0.05em" }}
+					style={{ fontSize: 9, color: 'var(--lg-ink-dim)', letterSpacing: '0.05em' }}
 				>
 					{state.detail}
 				</span>
 			)}
 			{state.warnings.slice(0, 3).map((w, i) => (
-				<span key={`w${i}`} style={{ color: "var(--lg-amber)", fontSize: 9, paddingLeft: 16 }}>
+				<span key={`w${i}`} style={{ color: 'var(--lg-amber)', fontSize: 9, paddingLeft: 16 }}>
 					⚠ {w}
 				</span>
 			))}
 			{state.errors.slice(0, 3).map((e, i) => (
-				<span key={`e${i}`} style={{ color: "var(--lg-coral)", fontSize: 9, paddingLeft: 16 }}>
+				<span key={`e${i}`} style={{ color: 'var(--lg-coral)', fontSize: 9, paddingLeft: 16 }}>
 					✗ {e}
 				</span>
 			))}
 			{(state.warnings.length > 3 || state.errors.length > 3) && (
-				<span style={{ color: "var(--lg-ink-mute)", fontSize: 9, paddingLeft: 16 }}>
+				<span style={{ color: 'var(--lg-ink-mute)', fontSize: 9, paddingLeft: 16 }}>
 					+ {state.warnings.length + state.errors.length - 3} more
 				</span>
 			)}
@@ -883,41 +883,41 @@ function DoctypeRow({
 }
 
 function EventRow({ ev }: { ev: ErpnextEvent }) {
-	const file = (ev.file as string | undefined) ?? "";
-	const doctype = (ev.doctype as string | undefined) ?? "";
-	const stage = (ev.stage as string | undefined) ?? "";
-	const status = (ev.status as string | undefined) ?? "";
-	const message = (ev.message as string | undefined) ?? "";
-	const reason = (ev.reason as string | undefined) ?? "";
+	const file = (ev.file as string | undefined) ?? '';
+	const doctype = (ev.doctype as string | undefined) ?? '';
+	const stage = (ev.stage as string | undefined) ?? '';
+	const status = (ev.status as string | undefined) ?? '';
+	const message = (ev.message as string | undefined) ?? '';
+	const reason = (ev.reason as string | undefined) ?? '';
 	const imported = (ev.imported as number | undefined) ?? null;
 	const failed = (ev.failed as number | undefined) ?? null;
 	const warnings = (ev.warnings as string[] | undefined) ?? [];
 	const errors = (ev.errors as string[] | undefined) ?? [];
 
 	const palette: Record<string, string> = {
-		begin: "var(--lg-cyan)",
-		stage: "var(--lg-cyan)",
-		preflight: "var(--lg-ink-mute)",
-		settling: "var(--lg-ink-dim)",
-		uploading: "var(--lg-amber)",
-		queued: "var(--lg-amber)",
-		polling: "var(--lg-cyan)",
-		done: "var(--lg-green)",
-		skipped: "var(--lg-amber)",
-		error: "var(--lg-coral)",
-		complete: "var(--lg-green)",
+		begin: 'var(--lg-cyan)',
+		stage: 'var(--lg-cyan)',
+		preflight: 'var(--lg-ink-mute)',
+		settling: 'var(--lg-ink-dim)',
+		uploading: 'var(--lg-amber)',
+		queued: 'var(--lg-amber)',
+		polling: 'var(--lg-cyan)',
+		done: 'var(--lg-green)',
+		skipped: 'var(--lg-amber)',
+		error: 'var(--lg-coral)',
+		complete: 'var(--lg-green)',
 	};
-	const color = palette[ev.event] ?? "var(--lg-ink-mute)";
+	const color = palette[ev.event] ?? 'var(--lg-ink-mute)';
 
 	let label = ev.event.toUpperCase();
-	if (ev.event === "polling" && status) label = status.toUpperCase();
+	if (ev.event === 'polling' && status) label = status.toUpperCase();
 	if (file) label += ` · ${file}`;
 	else if (stage) label += ` · ${stage}`;
 	else if (doctype) label += ` · ${doctype}`;
 
 	const parts: string[] = [];
 	if (imported !== null) {
-		parts.push(`${imported} imported${failed ? `, ${failed} failed` : ""}`);
+		parts.push(`${imported} imported${failed ? `, ${failed} failed` : ''}`);
 	}
 	if (reason) parts.push(reason);
 	else if (message) parts.push(message);
@@ -925,23 +925,23 @@ function EventRow({ ev }: { ev: ErpnextEvent }) {
 	return (
 		<div
 			className="mono"
-			style={{ fontSize: 10, display: "flex", flexDirection: "column", gap: 2, lineHeight: 1.6 }}
+			style={{ fontSize: 10, display: 'flex', flexDirection: 'column', gap: 2, lineHeight: 1.6 }}
 		>
-			<div style={{ display: "flex", gap: 8 }}>
-				<span className="pixel" style={{ color, letterSpacing: "0.1em", flexShrink: 0 }}>
+			<div style={{ display: 'flex', gap: 8 }}>
+				<span className="pixel" style={{ color, letterSpacing: '0.1em', flexShrink: 0 }}>
 					{label}
 				</span>
 				{parts.length > 0 && (
-					<span style={{ color: "var(--lg-ink-dim)" }}>— {parts.join(" · ")}</span>
+					<span style={{ color: 'var(--lg-ink-dim)' }}>— {parts.join(' · ')}</span>
 				)}
 			</div>
 			{warnings.map((w, i) => (
-				<div key={`w${i}`} style={{ color: "var(--lg-amber)", fontSize: 9, paddingLeft: 16 }}>
+				<div key={`w${i}`} style={{ color: 'var(--lg-amber)', fontSize: 9, paddingLeft: 16 }}>
 					⚠ {w}
 				</div>
 			))}
 			{errors.map((e, i) => (
-				<div key={`e${i}`} style={{ color: "var(--lg-coral)", fontSize: 9, paddingLeft: 16 }}>
+				<div key={`e${i}`} style={{ color: 'var(--lg-coral)', fontSize: 9, paddingLeft: 16 }}>
 					✗ {e}
 				</div>
 			))}
@@ -962,7 +962,7 @@ function VerificationList({ complete }: { complete: ErpnextEvent }) {
 	const entries = Object.entries(verification);
 	if (entries.length === 0) {
 		return (
-			<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}>
+			<div className="mono" style={{ fontSize: 10, color: 'var(--lg-ink-dim)' }}>
 				No doctypes to verify.
 			</div>
 		);
@@ -976,10 +976,10 @@ function VerificationList({ complete }: { complete: ErpnextEvent }) {
 						<dt>{dt.toUpperCase()}</dt>
 						<dd
 							style={{
-								color: v.error ? "var(--lg-coral)" : ok ? "var(--lg-green)" : "var(--lg-amber)",
+								color: v.error ? 'var(--lg-coral)' : ok ? 'var(--lg-green)' : 'var(--lg-amber)',
 							}}
 						>
-							{v.error ? "err" : `${v.actual ?? "?"}/${v.expected}`}
+							{v.error ? 'err' : `${v.actual ?? '?'}/${v.expected}`}
 						</dd>
 					</Fragment>
 				);

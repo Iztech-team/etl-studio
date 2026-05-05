@@ -1,4 +1,4 @@
-import type { ColumnSchema } from "./api";
+import type { ColumnSchema } from './api';
 
 export interface Project {
 	id: string;

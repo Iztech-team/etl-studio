@@ -1,8 +1,8 @@
-import { useState, useEffect, useMemo, Fragment } from "react";
-import { IDisk } from "../icons";
-import { usePipelineCtx } from "./context";
-import { ErpnextLiveExport } from "./ErpnextExport";
-import { FormatPicker } from "./FormatPicker";
+import { useState, useEffect, useMemo, Fragment } from 'react';
+import { IDisk } from '../icons';
+import { usePipelineCtx } from './context';
+import { ErpnextLiveExport } from './ErpnextExport';
+import { FormatPicker } from './FormatPicker';
 
 export function RlExport({ onDone }: { onDone: () => void }) {
 	const { projectId, uploadResult, transformResult, loadResult, setLoadResult } = usePipelineCtx();
@@ -11,7 +11,7 @@ export function RlExport({ onDone }: { onDone: () => void }) {
 	// demand if the heavy `transformed` payload was dropped between
 	// sessions, so we don't gate the UI on `transformResult` being live.
 	const usedStrategy = !!uploadResult;
-	const [fmt, setFmt] = useState(usedStrategy ? "frappe" : "json");
+	const [fmt, setFmt] = useState(usedStrategy ? 'frappe' : 'json');
 	const [running, setRunning] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -33,16 +33,16 @@ export function RlExport({ onDone }: { onDone: () => void }) {
 
 	const FORMATS = usedStrategy
 		? [
-				{ id: "erpnext", label: "ERPNEXT (LIVE)", sub: "Push directly via REST API" },
-				{ id: "frappe", label: "FRAPPE CSV", sub: "ERPnext Data Import (chunked, ordered)" },
-				{ id: "json", label: "JSON", sub: "One object per row" },
-				{ id: "csv", label: "CSV", sub: "One file per table" },
-				{ id: "sql", label: "SQL", sub: "CREATE + INSERT statements" },
+				{ id: 'erpnext', label: 'ERPNEXT (LIVE)', sub: 'Push directly via REST API' },
+				{ id: 'frappe', label: 'FRAPPE CSV', sub: 'ERPnext Data Import (chunked, ordered)' },
+				{ id: 'json', label: 'JSON', sub: 'One object per row' },
+				{ id: 'csv', label: 'CSV', sub: 'One file per table' },
+				{ id: 'sql', label: 'SQL', sub: 'CREATE + INSERT statements' },
 			]
 		: [
-				{ id: "json", label: "JSON", sub: "One object per row" },
-				{ id: "csv", label: "CSV", sub: "One file per table" },
-				{ id: "sql", label: "SQL", sub: "CREATE + INSERT statements" },
+				{ id: 'json', label: 'JSON', sub: 'One object per row' },
+				{ id: 'csv', label: 'CSV', sub: 'One file per table' },
+				{ id: 'sql', label: 'SQL', sub: 'CREATE + INSERT statements' },
 			];
 	const runLoad = async () => {
 		if (!uploadResult?.sessionId) return;
@@ -50,8 +50,8 @@ export function RlExport({ onDone }: { onDone: () => void }) {
 		setError(null);
 		try {
 			const res = await fetch(`/api/load/${uploadResult.sessionId}`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					output_format: fmt,
 					counter_resets: [],
@@ -62,18 +62,18 @@ export function RlExport({ onDone }: { onDone: () => void }) {
 			});
 			if (!res.ok) {
 				const err = await res.json().catch(() => null);
-				throw new Error(err?.detail || "Load failed");
+				throw new Error(err?.detail || 'Load failed');
 			}
 			const data = await res.json();
 			setLoadResult(data);
 		} catch (e) {
-			setError(e instanceof Error ? e.message : "Load failed");
+			setError(e instanceof Error ? e.message : 'Load failed');
 		} finally {
 			setRunning(false);
 		}
 	};
 
-	if (fmt === "erpnext") {
+	if (fmt === 'erpnext') {
 		return (
 			<ErpnextLiveExport
 				FORMATS={FORMATS}
@@ -92,8 +92,8 @@ export function RlExport({ onDone }: { onDone: () => void }) {
 	return (
 		<div
 			style={{
-				display: "grid",
-				gridTemplateColumns: "240px 1fr 280px",
+				display: 'grid',
+				gridTemplateColumns: '240px 1fr 280px',
 				gap: 14,
 				marginTop: 14,
 			}}
@@ -109,12 +109,12 @@ export function RlExport({ onDone }: { onDone: () => void }) {
 
 			<div className="panel">
 				<div className="panel-head">
-					<span style={{ flex: 1 }}>{loadResult ? "OUTPUT FILES" : "EXPORT SETTINGS"}</span>
+					<span style={{ flex: 1 }}>{loadResult ? 'OUTPUT FILES' : 'EXPORT SETTINGS'}</span>
 					<span className="badge badge-mute">{totalRows.toLocaleString()} ROWS</span>
 				</div>
 				<div className="panel-body">
 					{loadResult ? (
-						<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+						<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 							{loadResult.output_files.length > 1 && (
 								<a
 									href={
@@ -125,7 +125,7 @@ export function RlExport({ onDone }: { onDone: () => void }) {
 									download
 									className="btn btn-primary"
 									style={{
-										justifyContent: "center",
+										justifyContent: 'center',
 										marginBottom: 4,
 									}}
 								>
@@ -144,7 +144,7 @@ export function RlExport({ onDone }: { onDone: () => void }) {
 										}
 										download
 										className="btn btn-ghost"
-										style={{ padding: "4px 10px", fontSize: 10 }}
+										style={{ padding: '4px 10px', fontSize: 10 }}
 									>
 										DOWNLOAD
 									</a>
@@ -152,17 +152,17 @@ export function RlExport({ onDone }: { onDone: () => void }) {
 							))}
 							{loadResult.exceptions_written && loadResult.exceptions_written.length > 0 && (
 								<div
-									style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--lg-border)" }}
+									style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--lg-border)' }}
 								>
 									<div
 										className="pixel"
-										style={{ fontSize: 10, color: "var(--lg-amber)", marginBottom: 8 }}
+										style={{ fontSize: 10, color: 'var(--lg-amber)', marginBottom: 8 }}
 									>
 										REVIEW NEEDED
 									</div>
 									{loadResult.exceptions_written.map((file) => (
 										<div key={file} className="rl-file-row" style={{ marginTop: 4 }}>
-											<span style={{ fontSize: 9, color: "var(--lg-amber)" }}>⚠</span>
+											<span style={{ fontSize: 9, color: 'var(--lg-amber)' }}>⚠</span>
 											<div style={{ flex: 1, fontSize: 12 }}>{file}</div>
 											<a
 												href={
@@ -172,7 +172,7 @@ export function RlExport({ onDone }: { onDone: () => void }) {
 												}
 												download
 												className="btn btn-ghost"
-												style={{ padding: "4px 10px", fontSize: 10 }}
+												style={{ padding: '4px 10px', fontSize: 10 }}
 											>
 												DOWNLOAD
 											</a>
@@ -186,7 +186,7 @@ export function RlExport({ onDone }: { onDone: () => void }) {
 										<div
 											key={i}
 											className="mono"
-											style={{ fontSize: 10, color: "var(--lg-coral)", marginTop: 4 }}
+											style={{ fontSize: 10, color: 'var(--lg-coral)', marginTop: 4 }}
 										>
 											! {e}
 										</div>
@@ -196,7 +196,7 @@ export function RlExport({ onDone }: { onDone: () => void }) {
 							<div style={{ marginTop: 12 }}>
 								<div
 									className="pixel"
-									style={{ fontSize: 10, color: "var(--lg-ink-mute)", marginBottom: 8 }}
+									style={{ fontSize: 10, color: 'var(--lg-ink-mute)', marginBottom: 8 }}
 								>
 									ROWS WRITTEN
 								</div>
@@ -215,7 +215,7 @@ export function RlExport({ onDone }: { onDone: () => void }) {
 							className="mono"
 							style={{
 								fontSize: 11,
-								color: "var(--lg-ink-dim)",
+								color: 'var(--lg-ink-dim)',
 								lineHeight: 1.7,
 							}}
 						>
@@ -226,18 +226,18 @@ export function RlExport({ onDone }: { onDone: () => void }) {
 				</div>
 			</div>
 
-			<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+			<div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
 				<div className="panel">
 					<div className="panel-head">FINAL BOSS</div>
 					<div className="panel-body">
 						<div
 							className="pixel glow-magenta"
-							style={{ fontSize: 22, color: "var(--lg-magenta)" }}
+							style={{ fontSize: 22, color: 'var(--lg-magenta)' }}
 						>
 							{totalRows.toLocaleString()}
 						</div>
-						<div className="mono" style={{ fontSize: 11, color: "var(--lg-ink-dim)" }}>
-							{loadResult ? "ROWS EXPORTED" : "ROWS WILL MIGRATE"}
+						<div className="mono" style={{ fontSize: 11, color: 'var(--lg-ink-dim)' }}>
+							{loadResult ? 'ROWS EXPORTED' : 'ROWS WILL MIGRATE'}
 						</div>
 					</div>
 				</div>
@@ -256,20 +256,20 @@ export function RlExport({ onDone }: { onDone: () => void }) {
 				</div>
 
 				{error && (
-					<div className="mono" style={{ fontSize: 11, color: "var(--lg-coral)" }}>
-						{"> "}
+					<div className="mono" style={{ fontSize: 11, color: 'var(--lg-coral)' }}>
+						{'> '}
 						{error}
 					</div>
 				)}
 
 				{!loadResult ? (
 					<button
-						className={`btn btn-primary ${!running ? "pulse" : ""}`}
+						className={`btn btn-primary ${!running ? 'pulse' : ''}`}
 						onClick={runLoad}
 						disabled={running || !uploadResult?.sessionId}
-						style={{ fontSize: 13, padding: "12px 14px", justifyContent: "center" }}
+						style={{ fontSize: 13, padding: '12px 14px', justifyContent: 'center' }}
 					>
-						{running ? "EXPORTING…" : "▶ EXPORT"}
+						{running ? 'EXPORTING…' : '▶ EXPORT'}
 					</button>
 				) : (
 					<button

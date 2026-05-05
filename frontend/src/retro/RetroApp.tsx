@@ -1,25 +1,25 @@
-import { useEffect, useRef, useState } from "react";
-import "./retro.css";
-import { AuthProvider, LoginScreen, useAuth } from "./Auth";
-import { RL_STAGES, type Project, type ResumedSession, type StageId } from "./data";
-import { RlDock } from "./Topbar";
-import { RlProjects } from "./Projects";
-import { RlPipeline } from "./pipeline";
-import { RlPromptModal } from "./PromptModal";
-import { ErrorBoundary } from "./ErrorBoundary";
+import { useEffect, useRef, useState } from 'react';
+import './retro.css';
+import { AuthProvider, LoginScreen, useAuth } from './Auth';
+import { RL_STAGES, type Project, type ResumedSession, type StageId } from './data';
+import { RlDock } from './Topbar';
+import { RlProjects } from './Projects';
+import { RlPipeline } from './pipeline';
+import { RlPromptModal } from './PromptModal';
+import { ErrorBoundary } from './ErrorBoundary';
 
-type PageId = "projects";
+type PageId = 'projects';
 
 type Route =
-	| { view: "projects" }
-	| { view: "pipeline"; project: Project | null; resumed: ResumedSession | null };
+	| { view: 'projects' }
+	| { view: 'pipeline'; project: Project | null; resumed: ResumedSession | null };
 
-const LS_ROUTE = "retro-legacy.v2.route";
-const LS_STAGE = "retro-legacy.v2.stage";
+const LS_ROUTE = 'retro-legacy.v2.route';
+const LS_STAGE = 'retro-legacy.v2.stage';
 
 const PHASE_TO_STAGE: Record<string, number> = {
 	upload: 0,
-	"pre-extract": 1,
+	'pre-extract': 1,
 	edit: 1,
 	configure: 1,
 	transform: 2,
@@ -32,22 +32,22 @@ const PHASE_TO_STAGE: Record<string, number> = {
 // `resumed` (the full schema/preview/stats/transform payload) or the full
 // Project object — for a large project those serialize to many MB and blow
 // localStorage's quota. The mount effect re-fetches them on reload.
-type PersistedRoute = { view: "projects" } | { view: "pipeline"; projectId: string | null };
+type PersistedRoute = { view: 'projects' } | { view: 'pipeline'; projectId: string | null };
 
 function toPersistedRoute(r: Route): PersistedRoute {
-	if (r.view === "pipeline") {
-		return { view: "pipeline", projectId: r.project?.id ?? null };
+	if (r.view === 'pipeline') {
+		return { view: 'pipeline', projectId: r.project?.id ?? null };
 	}
 	return { view: r.view };
 }
 
 function fromPersistedRoute(p: PersistedRoute | null): Route {
-	if (!p) return { view: "projects" };
-	if (p.view === "pipeline") {
+	if (!p) return { view: 'projects' };
+	if (p.view === 'pipeline') {
 		// project carries only the id; the mount effect refetches the full
 		// project object and the resumed payload.
 		return {
-			view: "pipeline",
+			view: 'pipeline',
 			project: p.projectId ? ({ id: p.projectId } as Project) : null,
 			resumed: null,
 		};
@@ -65,20 +65,20 @@ function loadRoute(): Route {
 			// effect re-fetch the rest.
 			const parsed: { view?: string; project?: { id?: string }; projectId?: string } =
 				JSON.parse(raw) ?? {};
-			if (parsed?.view === "pipeline") {
+			if (parsed?.view === 'pipeline') {
 				const projectId = parsed.projectId ?? parsed.project?.id ?? null;
 				return {
-					view: "pipeline",
+					view: 'pipeline',
 					project: projectId ? ({ id: projectId } as Project) : null,
 					resumed: null,
 				};
 			}
-			if (parsed?.view === "projects") {
-				return { view: "projects" };
+			if (parsed?.view === 'projects') {
+				return { view: 'projects' };
 			}
 		}
 	} catch {}
-	return { view: "projects" };
+	return { view: 'projects' };
 }
 
 function loadStage(): StageId {
@@ -86,7 +86,7 @@ function loadStage(): StageId {
 		const s = localStorage.getItem(LS_STAGE) as StageId | null;
 		if (s && RL_STAGES.some((x) => x.id === s)) return s;
 	} catch {}
-	return "upload";
+	return 'upload';
 }
 
 type ResumeProgress = {
@@ -109,13 +109,13 @@ async function fetchResumed(
 	if (signal?.aborted) return null;
 	try {
 		const res = await fetch(`/api/projects/${project.id}/resume`, {
-			method: "POST",
+			method: 'POST',
 			signal,
 		});
 		if (!res.ok || !res.body) return null;
 		const reader = res.body.getReader();
 		const decoder = new TextDecoder();
-		let buffer = "";
+		let buffer = '';
 		let final: ResumedSession | null = null;
 
 		const progress: ResumeProgress = {
@@ -142,14 +142,14 @@ async function fetchResumed(
 			try {
 				chunk = await reader.read();
 			} catch (err) {
-				if ((err as { name?: string })?.name === "AbortError") return null;
+				if ((err as { name?: string })?.name === 'AbortError') return null;
 				throw err;
 			}
 			if (chunk.done) break;
 			buffer += decoder.decode(chunk.value, { stream: true });
 			let nl: number;
 			let processedInChunk = 0;
-			while ((nl = buffer.indexOf("\n")) >= 0) {
+			while ((nl = buffer.indexOf('\n')) >= 0) {
 				const line = buffer.slice(0, nl).trim();
 				buffer = buffer.slice(nl + 1);
 				if (!line) continue;
@@ -160,7 +160,7 @@ async function fetchResumed(
 					continue;
 				}
 				if (signal?.aborted) return null;
-				if (evt.event === "error") {
+				if (evt.event === 'error') {
 					return null;
 				}
 				// Yield to the browser between every 8 events so React can
@@ -174,7 +174,7 @@ async function fetchResumed(
 					await new Promise((r) => setTimeout(r, 0));
 					if (signal?.aborted) return null;
 				}
-				if (evt.event === "start") {
+				if (evt.event === 'start') {
 					const total = (evt.total as number | undefined) ?? 0;
 					// Only ever revise total upward — guards against the
 					// backend's two-start protocol (initial empty start +
@@ -182,26 +182,26 @@ async function fetchResumed(
 					if (total > progress.total) progress.total = total;
 					if (evt.warm) progress.warm = true;
 					if (onProgress && !signal?.aborted) onProgress({ ...progress });
-				} else if (evt.event === "table_done") {
-					const name = String(evt.name ?? "");
+				} else if (evt.event === 'table_done') {
+					const name = String(evt.name ?? '');
 					const rowCount = (evt.rowCount as number | undefined) ?? 0;
 					progress.done += 1;
 					progress.current = name;
 					progress.recent = [...progress.recent.slice(-(RECENT_LIMIT - 1)), { name, rowCount }];
 					if (onProgress && !signal?.aborted) onProgress({ ...progress });
-				} else if (evt.event === "done") {
+				} else if (evt.event === 'done') {
 					final = {
-						sessionId: String(evt.session_id ?? ""),
-						preview: (evt.preview as ResumedSession["preview"]) ?? {},
-						schema: (evt.inferred_schema as ResumedSession["schema"]) ?? {},
-						stats: (evt.stats as ResumedSession["stats"]) ?? {},
+						sessionId: String(evt.session_id ?? ''),
+						preview: (evt.preview as ResumedSession['preview']) ?? {},
+						schema: (evt.inferred_schema as ResumedSession['schema']) ?? {},
+						stats: (evt.stats as ResumedSession['stats']) ?? {},
 						tables: Object.keys((evt.preview as Record<string, unknown>) ?? {}),
 						excludedTables: (evt.excluded_tables as string[] | undefined) ?? [],
 						allExtractedTables: (evt.all_extracted_tables as string[] | undefined) ?? [],
 						selectedEntities: (evt.selected_entities as string[] | undefined) ?? [],
-						config: (evt.config as ResumedSession["config"]) ?? null,
-						transform: (evt.transform as ResumedSession["transform"]) ?? null,
-						loadResult: (evt.load_result as ResumedSession["loadResult"]) ?? null,
+						config: (evt.config as ResumedSession['config']) ?? null,
+						transform: (evt.transform as ResumedSession['transform']) ?? null,
+						loadResult: (evt.load_result as ResumedSession['loadResult']) ?? null,
 					};
 				}
 			}
@@ -209,7 +209,7 @@ async function fetchResumed(
 		if (signal?.aborted) return null;
 		return final;
 	} catch (err) {
-		if ((err as { name?: string })?.name === "AbortError") return null;
+		if ((err as { name?: string })?.name === 'AbortError') return null;
 		return null;
 	}
 }
@@ -237,11 +237,11 @@ function ResumeLoadingSplash({
 	return (
 		<div
 			style={{
-				minHeight: "60vh",
-				display: "flex",
-				flexDirection: "column",
-				alignItems: "center",
-				justifyContent: "center",
+				minHeight: '60vh',
+				display: 'flex',
+				flexDirection: 'column',
+				alignItems: 'center',
+				justifyContent: 'center',
 				gap: 16,
 				padding: 24,
 			}}
@@ -251,8 +251,8 @@ function ResumeLoadingSplash({
 				className="pixel"
 				style={{
 					fontSize: 14,
-					color: "var(--lg-amber)",
-					letterSpacing: "0.15em",
+					color: 'var(--lg-amber)',
+					letterSpacing: '0.15em',
 				}}
 			>
 				LOADING PROJECT
@@ -261,7 +261,7 @@ function ResumeLoadingSplash({
 				className="mono"
 				style={{
 					fontSize: 11,
-					color: "var(--lg-ink-mute)",
+					color: 'var(--lg-ink-mute)',
 				}}
 			>
 				{projectName}
@@ -273,33 +273,33 @@ function ResumeLoadingSplash({
 						className="mono"
 						style={{
 							fontSize: 12,
-							color: "var(--lg-ink)",
-							fontVariantNumeric: "tabular-nums",
+							color: 'var(--lg-ink)',
+							fontVariantNumeric: 'tabular-nums',
 						}}
 					>
-						<span style={{ color: "var(--lg-amber)" }}>{done}</span>
-						<span style={{ color: "var(--lg-ink-mute)" }}> / {total} tables</span>
-						<span style={{ color: "var(--lg-ink-mute)", marginLeft: 8 }}>· {pct}%</span>
+						<span style={{ color: 'var(--lg-amber)' }}>{done}</span>
+						<span style={{ color: 'var(--lg-ink-mute)' }}> / {total} tables</span>
+						<span style={{ color: 'var(--lg-ink-mute)', marginLeft: 8 }}>· {pct}%</span>
 					</div>
 					<div
 						style={{
-							width: "min(560px, 80vw)",
+							width: 'min(560px, 80vw)',
 							height: 6,
-							background: "var(--lg-bg-1, #222)",
-							border: "1px solid var(--lg-border, #333)",
-							position: "relative",
-							overflow: "hidden",
+							background: 'var(--lg-bg-1, #222)',
+							border: '1px solid var(--lg-border, #333)',
+							position: 'relative',
+							overflow: 'hidden',
 						}}
 					>
 						<div
 							style={{
-								position: "absolute",
+								position: 'absolute',
 								top: 0,
 								bottom: 0,
 								left: 0,
 								width: `${pct}%`,
-								background: "var(--lg-amber, #ffb347)",
-								transition: "width 120ms linear",
+								background: 'var(--lg-amber, #ffb347)',
+								transition: 'width 120ms linear',
 							}}
 						/>
 					</div>
@@ -310,36 +310,36 @@ function ResumeLoadingSplash({
 				<div
 					ref={tableLogRef}
 					style={{
-						width: "min(560px, 80vw)",
+						width: 'min(560px, 80vw)',
 						maxHeight: 220,
-						overflowY: "auto",
-						fontFamily: "var(--lg-mono)",
+						overflowY: 'auto',
+						fontFamily: 'var(--lg-mono)',
 						fontSize: 11,
-						display: "flex",
-						flexDirection: "column",
+						display: 'flex',
+						flexDirection: 'column',
 						gap: 2,
 						padding: 10,
-						background: "var(--lg-bg-1, #1c1711)",
-						border: "1px solid var(--lg-border, #3a2a18)",
+						background: 'var(--lg-bg-1, #1c1711)',
+						border: '1px solid var(--lg-border, #3a2a18)',
 					}}
 				>
 					{recent.map((t, i) => (
 						<div
 							key={`${t.name}-${i}`}
 							style={{
-								display: "flex",
+								display: 'flex',
 								gap: 6,
-								alignItems: "center",
+								alignItems: 'center',
 							}}
 						>
-							<span style={{ color: "var(--lg-amber)" }}>✓</span>
+							<span style={{ color: 'var(--lg-amber)' }}>✓</span>
 							<span
 								style={{
 									flex: 1,
-									color: "var(--lg-ink)",
-									overflow: "hidden",
-									textOverflow: "ellipsis",
-									whiteSpace: "nowrap",
+									color: 'var(--lg-ink)',
+									overflow: 'hidden',
+									textOverflow: 'ellipsis',
+									whiteSpace: 'nowrap',
 								}}
 								title={t.name}
 							>
@@ -347,8 +347,8 @@ function ResumeLoadingSplash({
 							</span>
 							<span
 								style={{
-									color: "var(--lg-ink-mute)",
-									fontVariantNumeric: "tabular-nums",
+									color: 'var(--lg-ink-mute)',
+									fontVariantNumeric: 'tabular-nums',
 								}}
 							>
 								{t.rowCount.toLocaleString()}
@@ -359,7 +359,7 @@ function ResumeLoadingSplash({
 			)}
 
 			{progress?.warm && (
-				<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-mute)" }}>
+				<div className="mono" style={{ fontSize: 10, color: 'var(--lg-ink-mute)' }}>
 					(restoring from cache)
 				</div>
 			)}
@@ -378,7 +378,7 @@ function Shell() {
 	// a fresh React tree but the same stale localStorage). Until we've
 	// re-resumed, hide the pipeline so we don't render stale data and 404 on
 	// every backend call.
-	const [hydrating, setHydrating] = useState<boolean>(() => loadRoute().view === "pipeline");
+	const [hydrating, setHydrating] = useState<boolean>(() => loadRoute().view === 'pipeline');
 	const [resumeProgress, setResumeProgress] = useState<ResumeProgress | null>(null);
 
 	// Single-flight resume: a new resume aborts any in-flight one. Without
@@ -391,8 +391,8 @@ function Shell() {
 	const prevUser = useRef(user);
 	useEffect(() => {
 		if (!prevUser.current && user) {
-			setRoute({ view: "projects" });
-			setStage("upload");
+			setRoute({ view: 'projects' });
+			setStage('upload');
 		}
 		prevUser.current = user;
 	}, [user]);
@@ -401,7 +401,7 @@ function Shell() {
 	// re-fetch the project metadata + resume its state so the session_id is
 	// fresh and any pipeline progress made before the refresh is restored.
 	useEffect(() => {
-		if (route.view !== "pipeline") {
+		if (route.view !== 'pipeline') {
 			setHydrating(false);
 			return;
 		}
@@ -419,7 +419,7 @@ function Shell() {
 					signal: ac.signal,
 				});
 				if (!projRes.ok) {
-					if (!ac.signal.aborted) setRoute({ view: "projects" });
+					if (!ac.signal.aborted) setRoute({ view: 'projects' });
 					return;
 				}
 				const project = (await projRes.json()) as Project;
@@ -433,10 +433,10 @@ function Shell() {
 				if (ac.signal.aborted) return;
 				const idx = PHASE_TO_STAGE[project.phase] ?? 0;
 				setStage(RL_STAGES[idx].id);
-				setRoute({ view: "pipeline", project, resumed });
+				setRoute({ view: 'pipeline', project, resumed });
 			} catch (err) {
-				if ((err as { name?: string })?.name === "AbortError") return;
-				if (!ac.signal.aborted) setRoute({ view: "projects" });
+				if ((err as { name?: string })?.name === 'AbortError') return;
+				if (!ac.signal.aborted) setRoute({ view: 'projects' });
 			} finally {
 				if (!ac.signal.aborted) {
 					setHydrating(false);
@@ -481,7 +481,7 @@ function Shell() {
 		// look like they did nothing.
 		const idx = PHASE_TO_STAGE[p.phase] ?? 0;
 		setStage(RL_STAGES[idx].id);
-		setRoute({ view: "pipeline", project: p, resumed: null });
+		setRoute({ view: 'pipeline', project: p, resumed: null });
 		setHydrating(true);
 		setResumeProgress(null);
 		// Abort any prior resume (e.g. mount-effect on a refreshed page) so
@@ -498,7 +498,7 @@ function Shell() {
 				ac.signal,
 			);
 			if (ac.signal.aborted) return;
-			setRoute({ view: "pipeline", project: p, resumed });
+			setRoute({ view: 'pipeline', project: p, resumed });
 		} finally {
 			if (!ac.signal.aborted) {
 				setHydrating(false);
@@ -514,37 +514,37 @@ function Shell() {
 	const createProject = async (name: string) => {
 		setShowNewModal(false);
 		try {
-			const res = await fetch("/api/projects", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
+			const res = await fetch('/api/projects', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ name, username: user.username }),
 			});
 			if (!res.ok) {
 				const err = await res.json().catch(() => null);
-				alert(err?.detail || "Failed to create project");
+				alert(err?.detail || 'Failed to create project');
 				return;
 			}
 			const project: Project = await res.json();
-			setStage("upload");
-			setRoute({ view: "pipeline", project, resumed: null });
+			setStage('upload');
+			setRoute({ view: 'pipeline', project, resumed: null });
 		} catch {
-			alert("Network error");
+			alert('Network error');
 		}
 	};
 
 	const goPage = (pageId: PageId) => setRoute({ view: pageId });
 
-	const activePage: PageId = route.view === "pipeline" ? "projects" : route.view;
+	const activePage: PageId = route.view === 'pipeline' ? 'projects' : route.view;
 
 	return (
 		<div className="legacy-app rl-shell">
 			<div className="rl-window">
 				<div key={route.view}>
-					{route.view === "projects" && <RlProjects onOpen={open} onNew={openNew} />}
-					{route.view === "pipeline" &&
+					{route.view === 'projects' && <RlProjects onOpen={open} onNew={openNew} />}
+					{route.view === 'pipeline' &&
 						(hydrating ? (
 							<ResumeLoadingSplash
-								projectName={route.project?.name ?? ""}
+								projectName={route.project?.name ?? ''}
 								progress={resumeProgress}
 							/>
 						) : (
@@ -553,14 +553,14 @@ function Shell() {
 								resumed={route.resumed}
 								stage={stage}
 								setStage={setStage}
-								onBack={() => setRoute({ view: "projects" })}
+								onBack={() => setRoute({ view: 'projects' })}
 							/>
 						))}
 				</div>
 			</div>
 			<RlDock
 				activePage={activePage}
-				pipelineStage={route.view === "pipeline" ? stage : null}
+				pipelineStage={route.view === 'pipeline' ? stage : null}
 				onPage={goPage}
 			/>
 			{showNewModal && (

@@ -1,4 +1,4 @@
-export type FileKind = "csv" | "tsv" | "json" | "sql" | "xlsx" | "ib" | "sqlite" | "unknown";
+export type FileKind = 'csv' | 'tsv' | 'json' | 'sql' | 'xlsx' | 'ib' | 'sqlite' | 'unknown';
 
 export type StagedFile = {
 	file: File;
@@ -33,7 +33,7 @@ export type AuditCheck = {
 	expected: number;
 	actual: number;
 	diff: number;
-	status: "ok" | "over" | "short";
+	status: 'ok' | 'over' | 'short';
 };
 
 export type AuditReport = {
@@ -112,11 +112,11 @@ export type PipelineCtx = {
 };
 
 export type ExtractEvent =
-	| { event: "listing" }
-	| { event: "start"; tables: string[] }
-	| { event: "table_done"; name: string; rows: number; index: number; total: number }
-	| { event: "done"; [k: string]: unknown }
-	| { event: "error"; message: string };
+	| { event: 'listing' }
+	| { event: 'start'; tables: string[] }
+	| { event: 'table_done'; name: string; rows: number; index: number; total: number }
+	| { event: 'done'; [k: string]: unknown }
+	| { event: 'error'; message: string };
 
 export type DonePayload = {
 	session_id: string;

@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo, type ReactNode } from "react";
-import { IArrow, ICheck } from "../icons";
-import { usePipelineCtx } from "./context";
-import type { EntityDescriptor } from "./types";
+import { useState, useEffect, useMemo, type ReactNode } from 'react';
+import { IArrow, ICheck } from '../icons';
+import { usePipelineCtx } from './context';
+import type { EntityDescriptor } from './types';
 
 export function RlExtract({ onNext }: { onNext: () => void }) {
 	const { uploadResult, setUploadResult, setTransformResult, setLoadResult } = usePipelineCtx();
@@ -12,7 +12,7 @@ export function RlExtract({ onNext }: { onNext: () => void }) {
 
 	useEffect(() => {
 		let cancelled = false;
-		fetch("/api/entities")
+		fetch('/api/entities')
 			.then((r) => r.json())
 			.then((d) => {
 				if (cancelled) return;
@@ -42,7 +42,7 @@ export function RlExtract({ onNext }: { onNext: () => void }) {
 
 	if (!entities) {
 		return (
-			<div className="mono" style={{ fontSize: 11, color: "var(--lg-ink-dim)", padding: 24 }}>
+			<div className="mono" style={{ fontSize: 11, color: 'var(--lg-ink-dim)', padding: 24 }}>
 				Loading entities…
 			</div>
 		);
@@ -68,13 +68,13 @@ export function RlExtract({ onNext }: { onNext: () => void }) {
 		setError(null);
 		try {
 			const res = await fetch(`/api/select-entities/${sid}`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ entities: Array.from(picks) }),
 			});
 			if (!res.ok) {
 				const err = await res.json().catch(() => null);
-				throw new Error(err?.detail ?? "Selection failed");
+				throw new Error(err?.detail ?? 'Selection failed');
 			}
 			const data = (await res.json()) as { selected: string[]; changed: boolean };
 			if (uploadResult) {
@@ -86,28 +86,28 @@ export function RlExtract({ onNext }: { onNext: () => void }) {
 			}
 			onNext();
 		} catch (e) {
-			setError(e instanceof Error ? e.message : "Selection failed");
+			setError(e instanceof Error ? e.message : 'Selection failed');
 		} finally {
 			setSaving(false);
 		}
 	};
 
 	return (
-		<div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
-			<div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-				<div className="pixel glow-amber" style={{ fontSize: 11, color: "var(--lg-amber)" }}>
+		<div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
+			<div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+				<div className="pixel glow-amber" style={{ fontSize: 11, color: 'var(--lg-amber)' }}>
 					▣ EXTRACT — pick what to migrate
 				</div>
 				<div style={{ flex: 1 }} />
-				<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}>
+				<div className="mono" style={{ fontSize: 10, color: 'var(--lg-ink-dim)' }}>
 					{effective.size} of {entities.length} selected
 				</div>
 			</div>
 
 			<div
 				style={{
-					display: "grid",
-					gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+					display: 'grid',
+					gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
 					gap: 10,
 				}}
 			>
@@ -128,19 +128,19 @@ export function RlExtract({ onNext }: { onNext: () => void }) {
 			</div>
 
 			{error && (
-				<div className="mono" style={{ fontSize: 11, color: "var(--lg-coral)" }}>
-					{"> "}
+				<div className="mono" style={{ fontSize: 11, color: 'var(--lg-coral)' }}>
+					{'> '}
 					{error}
 				</div>
 			)}
 
-			<div style={{ display: "flex", justifyContent: "flex-end" }}>
+			<div style={{ display: 'flex', justifyContent: 'flex-end' }}>
 				<button
 					className="btn btn-primary"
 					onClick={proceed}
 					disabled={effective.size === 0 || saving || !uploadResult?.sessionId}
 				>
-					{saving ? "SAVING…" : "CONTINUE TO TRANSFORM"} <IArrow size={10} />
+					{saving ? 'SAVING…' : 'CONTINUE TO TRANSFORM'} <IArrow size={10} />
 				</button>
 			</div>
 		</div>
@@ -166,36 +166,36 @@ function EntityCard({
 			onClick={forced ? undefined : onToggle}
 			className="btn"
 			disabled={forced}
-			title={forced ? "Auto-included as a dependency" : ""}
+			title={forced ? 'Auto-included as a dependency' : ''}
 			style={{
-				textAlign: "left",
-				padding: "12px 14px",
-				borderColor: active ? "var(--lg-amber)" : "var(--lg-border-br)",
+				textAlign: 'left',
+				padding: '12px 14px',
+				borderColor: active ? 'var(--lg-amber)' : 'var(--lg-border-br)',
 				background: forced
-					? "rgba(199,155,0,0.04)"
+					? 'rgba(199,155,0,0.04)'
 					: picked
-						? "rgba(199,155,0,0.08)"
-						: "transparent",
+						? 'rgba(199,155,0,0.08)'
+						: 'transparent',
 				opacity: forced ? 0.7 : 1,
-				cursor: forced ? "not-allowed" : "pointer",
-				display: "flex",
-				flexDirection: "column",
+				cursor: forced ? 'not-allowed' : 'pointer',
+				display: 'flex',
+				flexDirection: 'column',
 				gap: 6,
-				textTransform: "none",
+				textTransform: 'none',
 				letterSpacing: 0,
 			}}
 		>
-			<div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+			<div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
 				<span
 					style={{
-						display: "inline-flex",
-						alignItems: "center",
-						justifyContent: "center",
+						display: 'inline-flex',
+						alignItems: 'center',
+						justifyContent: 'center',
 						width: 14,
 						height: 14,
-						border: "1px solid var(--lg-amber)",
-						background: active ? "var(--lg-amber)" : "transparent",
-						color: "#0a0410",
+						border: '1px solid var(--lg-amber)',
+						background: active ? 'var(--lg-amber)' : 'transparent',
+						color: '#0a0410',
 						flexShrink: 0,
 					}}
 				>
@@ -205,20 +205,20 @@ function EntityCard({
 					className="pixel"
 					style={{
 						fontSize: 12,
-						color: active ? "var(--lg-amber)" : "var(--lg-ink)",
-						letterSpacing: "0.05em",
+						color: active ? 'var(--lg-amber)' : 'var(--lg-ink)',
+						letterSpacing: '0.05em',
 					}}
 				>
 					{entity.label.toUpperCase()}
 				</span>
 			</div>
 			{forced ? (
-				<span className="mono" style={{ fontSize: 9, color: "var(--lg-ink-mute)" }}>
+				<span className="mono" style={{ fontSize: 9, color: 'var(--lg-ink-mute)' }}>
 					auto-included
 				</span>
 			) : depLabels.length > 0 ? (
-				<span className="mono" style={{ fontSize: 9, color: "var(--lg-ink-dim)" }}>
-					requires: {depLabels.join(", ")}
+				<span className="mono" style={{ fontSize: 9, color: 'var(--lg-ink-dim)' }}>
+					requires: {depLabels.join(', ')}
 				</span>
 			) : null}
 		</button>
@@ -284,7 +284,7 @@ export function RlTableSidebar({
 	};
 	badge?: (name: string) => ReactNode;
 }) {
-	const [search, setSearch] = useState("");
+	const [search, setSearch] = useState('');
 	const filtered = useMemo(() => {
 		const q = search.trim().toLowerCase();
 		if (!q) return tables;
@@ -295,18 +295,18 @@ export function RlTableSidebar({
 		<div
 			className="panel"
 			style={{
-				display: "flex",
-				flexDirection: "column",
-				maxHeight: "calc(100vh - 220px)",
+				display: 'flex',
+				flexDirection: 'column',
+				maxHeight: 'calc(100vh - 220px)',
 				minHeight: 320,
 			}}
 		>
 			<div className="panel-head">TABLES · {tables.length}</div>
 			<div
 				style={{
-					padding: "8px 10px",
-					borderBottom: "1px solid var(--lg-border)",
-					background: "var(--lg-bg-2)",
+					padding: '8px 10px',
+					borderBottom: '1px solid var(--lg-border)',
+					background: 'var(--lg-bg-2)',
 				}}
 			>
 				<input
@@ -314,28 +314,28 @@ export function RlTableSidebar({
 					value={search}
 					onChange={(e) => setSearch(e.target.value)}
 					style={{
-						width: "100%",
+						width: '100%',
 						fontSize: 11,
-						padding: "5px 8px",
-						background: "var(--lg-bg)",
-						border: "1px solid var(--lg-border)",
-						color: "var(--lg-ink)",
-						fontFamily: "var(--lg-mono)",
-						textTransform: "none",
+						padding: '5px 8px',
+						background: 'var(--lg-bg)',
+						border: '1px solid var(--lg-border)',
+						color: 'var(--lg-ink)',
+						fontFamily: 'var(--lg-mono)',
+						textTransform: 'none',
 						letterSpacing: 0,
-						outline: "none",
+						outline: 'none',
 					}}
 				/>
 			</div>
-			<div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
+			<div style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
 				{filtered.length === 0 ? (
 					<div
 						className="mono"
 						style={{
 							fontSize: 11,
-							color: "var(--lg-ink-mute)",
+							color: 'var(--lg-ink-mute)',
 							padding: 14,
-							textAlign: "center",
+							textAlign: 'center',
 						}}
 					>
 						No matches.
@@ -350,17 +350,17 @@ export function RlTableSidebar({
 								key={t.name}
 								onClick={() => onPick(t.name)}
 								style={{
-									display: "flex",
-									alignItems: "center",
+									display: 'flex',
+									alignItems: 'center',
 									gap: 6,
-									padding: "6px 10px",
-									cursor: "pointer",
-									background: active ? "var(--lg-amber)" : "transparent",
-									color: active ? "#0a0410" : "var(--lg-ink)",
-									borderBottom: "1px solid var(--lg-border)",
-									fontFamily: "var(--lg-pixel)",
+									padding: '6px 10px',
+									cursor: 'pointer',
+									background: active ? 'var(--lg-amber)' : 'transparent',
+									color: active ? '#0a0410' : 'var(--lg-ink)',
+									borderBottom: '1px solid var(--lg-border)',
+									fontFamily: 'var(--lg-pixel)',
 									fontSize: 9,
-									letterSpacing: "0.08em",
+									letterSpacing: '0.08em',
 								}}
 							>
 								{isRenaming && rename ? (
@@ -374,8 +374,8 @@ export function RlTableSidebar({
 											}))
 										}
 										onKeyDown={(e) => {
-											if (e.key === "Enter") rename.setRenaming(null);
-											if (e.key === "Escape") {
+											if (e.key === 'Enter') rename.setRenaming(null);
+											if (e.key === 'Escape') {
 												rename.setNames((prev) => ({
 													...prev,
 													[t.name]: t.name,
@@ -387,13 +387,13 @@ export function RlTableSidebar({
 										autoFocus
 										style={{
 											flex: 1,
-											padding: "2px 6px",
+											padding: '2px 6px',
 											fontSize: 10,
-											background: "var(--lg-bg)",
-											border: "1px solid var(--lg-border)",
-											color: "var(--lg-ink)",
-											fontFamily: "var(--lg-mono)",
-											textTransform: "none",
+											background: 'var(--lg-bg)',
+											border: '1px solid var(--lg-border)',
+											color: 'var(--lg-ink)',
+											fontFamily: 'var(--lg-mono)',
+											textTransform: 'none',
 											letterSpacing: 0,
 										}}
 									/>
@@ -402,9 +402,9 @@ export function RlTableSidebar({
 										<div
 											style={{
 												flex: 1,
-												overflow: "hidden",
-												textOverflow: "ellipsis",
-												whiteSpace: "nowrap",
+												overflow: 'hidden',
+												textOverflow: 'ellipsis',
+												whiteSpace: 'nowrap',
 											}}
 											title={t.name}
 										>
@@ -413,7 +413,7 @@ export function RlTableSidebar({
 													<span
 														style={{
 															opacity: 0.5,
-															textDecoration: "line-through",
+															textDecoration: 'line-through',
 															marginRight: 4,
 														}}
 													>
@@ -428,7 +428,7 @@ export function RlTableSidebar({
 										{badge && badge(t.name)}
 										<span
 											style={{
-												fontFamily: "var(--lg-mono)",
+												fontFamily: 'var(--lg-mono)',
 												fontSize: 9,
 												opacity: 0.7,
 												letterSpacing: 0,
@@ -445,7 +445,7 @@ export function RlTableSidebar({
 													rename.setRenaming(t.name);
 												}}
 												style={{
-													padding: "1px 5px",
+													padding: '1px 5px',
 													fontSize: 9,
 													opacity: 0.7,
 												}}

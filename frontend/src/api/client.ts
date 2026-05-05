@@ -1,4 +1,4 @@
-import axios, { AxiosError } from "axios";
+import axios, { AxiosError } from 'axios';
 import type {
 	UploadResponse,
 	ConfigureRequest,
@@ -10,9 +10,9 @@ import type {
 	PreExtractResponse,
 	TableDataResponse,
 	EditDataResponse,
-} from "../types/api";
+} from '../types/api';
 
-const api = axios.create({ baseURL: "/api" });
+const api = axios.create({ baseURL: '/api' });
 
 api.interceptors.response.use(
 	(res) => res,
@@ -29,10 +29,10 @@ export async function preExtract(
 	projectId?: string,
 ): Promise<PreExtractResponse> {
 	const form = new FormData();
-	form.append("file", file);
-	if (password) form.append("password", password);
-	if (projectId) form.append("project_id", projectId);
-	const { data } = await api.post<PreExtractResponse>("/pre-extract", form, {
+	form.append('file', file);
+	if (password) form.append('password', password);
+	if (projectId) form.append('project_id', projectId);
+	const { data } = await api.post<PreExtractResponse>('/pre-extract', form, {
 		onUploadProgress: (e) => {
 			if (onProgress && e.total) {
 				onProgress(Math.round((e.loaded / e.total) * 100));
@@ -43,10 +43,10 @@ export async function preExtract(
 }
 
 export type PreExtractStreamEvent =
-	| { event: "listing" }
-	| { event: "start"; tables: string[] }
-	| { event: "table_done"; name: string; rows: number; index: number; total: number; csv?: string }
-	| { event: "error"; message: string };
+	| { event: 'listing' }
+	| { event: 'start'; tables: string[] }
+	| { event: 'table_done'; name: string; rows: number; index: number; total: number; csv?: string }
+	| { event: 'error'; message: string };
 
 export async function preExtractStream(
 	file: File,
@@ -56,22 +56,22 @@ export async function preExtractStream(
 	onUploadProgress?: (percent: number) => void,
 ): Promise<PreExtractResponse> {
 	const form = new FormData();
-	form.append("file", file);
-	if (password) form.append("password", password);
-	if (projectId) form.append("project_id", projectId);
+	form.append('file', file);
+	if (password) form.append('password', password);
+	if (projectId) form.append('project_id', projectId);
 
 	// The browser fetch() API doesn't expose upload progress. For tracking
 	// "uploading vs extracting" we set 100% when the response headers arrive.
-	const res = await fetch("/api/pre-extract", { method: "POST", body: form });
+	const res = await fetch('/api/pre-extract', { method: 'POST', body: form });
 	if (onUploadProgress) onUploadProgress(100);
 	if (!res.ok || !res.body) {
-		const text = await res.text().catch(() => "");
+		const text = await res.text().catch(() => '');
 		throw new Error(text || `HTTP ${res.status}`);
 	}
 
 	const reader = res.body.getReader();
 	const decoder = new TextDecoder();
-	let buffer = "";
+	let buffer = '';
 	let finalPayload: PreExtractResponse | null = null;
 	let streamError: string | null = null;
 
@@ -82,7 +82,7 @@ export async function preExtractStream(
 		buffer += decoder.decode(value, { stream: true });
 
 		let nl: number;
-		while ((nl = buffer.indexOf("\n")) >= 0) {
+		while ((nl = buffer.indexOf('\n')) >= 0) {
 			const line = buffer.slice(0, nl).trim();
 			buffer = buffer.slice(nl + 1);
 			if (!line) continue;
@@ -93,11 +93,11 @@ export async function preExtractStream(
 				continue;
 			}
 			const evt = parsed as { event: string; [k: string]: unknown };
-			if (evt.event === "error") {
-				streamError = String(evt.message ?? "Extraction failed");
+			if (evt.event === 'error') {
+				streamError = String(evt.message ?? 'Extraction failed');
 				break;
 			}
-			if (evt.event === "done") {
+			if (evt.event === 'done') {
 				const { event: _e, ...rest } = evt;
 				finalPayload = rest as unknown as PreExtractResponse;
 			} else {
@@ -108,7 +108,7 @@ export async function preExtractStream(
 	}
 
 	if (streamError) throw new Error(streamError);
-	if (!finalPayload) throw new Error("Stream ended without a final result");
+	if (!finalPayload) throw new Error('Stream ended without a final result');
 	return finalPayload;
 }
 
@@ -131,9 +131,9 @@ export async function saveTableData(
 
 export async function uploadFiles(files: File[], projectId?: string): Promise<UploadResponse> {
 	const form = new FormData();
-	for (const f of files) form.append("files", f);
-	if (projectId) form.append("project_id", projectId);
-	const { data } = await api.post<UploadResponse>("/upload", form);
+	for (const f of files) form.append('files', f);
+	if (projectId) form.append('project_id', projectId);
+	const { data } = await api.post<UploadResponse>('/upload', form);
 	return data;
 }
 

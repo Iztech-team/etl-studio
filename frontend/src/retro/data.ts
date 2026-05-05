@@ -1,4 +1,4 @@
-export type ProjectStatus = "running" | "done" | "error" | "draft";
+export type ProjectStatus = 'running' | 'done' | 'error' | 'draft';
 
 export type Project = {
 	id: string;
@@ -12,15 +12,15 @@ export type Project = {
 	last_run_phase?: string | null;
 };
 
-export type StageId = "upload" | "extract" | "transform" | "export";
+export type StageId = 'upload' | 'extract' | 'transform' | 'export';
 
 export type Stage = { id: StageId; label: string; sub: string; xp: number };
 
 export const RL_STAGES: Stage[] = [
-	{ id: "upload", label: "UPLOAD", sub: "Insert cartridge", xp: 50 },
-	{ id: "extract", label: "EXTRACT", sub: "Read tables", xp: 100 },
-	{ id: "transform", label: "TRANSFORM", sub: "Pick strategy", xp: 150 },
-	{ id: "export", label: "EXPORT", sub: "Ship it", xp: 100 },
+	{ id: 'upload', label: 'UPLOAD', sub: 'Insert cartridge', xp: 50 },
+	{ id: 'extract', label: 'EXTRACT', sub: 'Read tables', xp: 100 },
+	{ id: 'transform', label: 'TRANSFORM', sub: 'Pick strategy', xp: 150 },
+	{ id: 'export', label: 'EXPORT', sub: 'Ship it', xp: 100 },
 ];
 
 // XP earned by a dungeon based on its current backend phase. The phase
@@ -28,7 +28,7 @@ export const RL_STAGES: Stage[] = [
 // upload's xp was earned). The pipeline/stats phase = all four cleared.
 const PHASE_TO_CLEARED_STAGES: Record<string, number> = {
 	upload: 0,
-	"pre-extract": 1,
+	'pre-extract': 1,
 	edit: 1,
 	configure: 1,
 	transform: 2,

@@ -28,18 +28,18 @@ export interface ColumnConfig {
 }
 
 export type FilterOp =
-	| "eq"
-	| "ne"
-	| "in"
-	| "not_in"
-	| "gt"
-	| "lt"
-	| "ge"
-	| "le"
-	| "is_null"
-	| "is_not_null"
-	| "contains"
-	| "starts_with";
+	| 'eq'
+	| 'ne'
+	| 'in'
+	| 'not_in'
+	| 'gt'
+	| 'lt'
+	| 'ge'
+	| 'le'
+	| 'is_null'
+	| 'is_not_null'
+	| 'contains'
+	| 'starts_with';
 
 export interface FilterCondition {
 	column: string;
@@ -48,7 +48,7 @@ export interface FilterCondition {
 }
 
 export interface RowFilter {
-	mode: "keep" | "drop";
+	mode: 'keep' | 'drop';
 	conditions: FilterCondition[];
 }
 
@@ -91,7 +91,7 @@ export interface TransformResponse {
 }
 
 export interface LoadRequest {
-	output_format: "json" | "sql";
+	output_format: 'json' | 'sql';
 	target_db_url?: string;
 	use_staging: boolean;
 	respect_fk_order: boolean;
@@ -170,7 +170,7 @@ export interface ColumnSchema {
 	nullable: boolean;
 	dropped: boolean;
 	order: number;
-	inferred_from: "data" | "ddl" | "user";
+	inferred_from: 'data' | 'ddl' | 'user';
 }
 
 export interface SchemaEditState {

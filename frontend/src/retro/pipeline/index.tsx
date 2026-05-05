@@ -1,14 +1,14 @@
-import { useState } from "react";
-import { RL_STAGES, type Project, type ResumedSession, type StageId } from "../data";
-import { RlTopbar } from "../Topbar";
-import { RlAchievement } from "../XPBar";
-import { useGlobalKeys } from "../keyboard";
-import { PipelineProvider } from "./context";
-import { RlStepper } from "./Stepper";
-import { RlUpload } from "./UploadStage";
-import { RlExtract } from "./ExtractStage";
-import { RlTransform } from "./TransformStage";
-import { RlExport } from "./ExportStage";
+import { useState } from 'react';
+import { RL_STAGES, type Project, type ResumedSession, type StageId } from '../data';
+import { RlTopbar } from '../Topbar';
+import { RlAchievement } from '../XPBar';
+import { useGlobalKeys } from '../keyboard';
+import { PipelineProvider } from './context';
+import { RlStepper } from './Stepper';
+import { RlUpload } from './UploadStage';
+import { RlExtract } from './ExtractStage';
+import { RlTransform } from './TransformStage';
+import { RlExport } from './ExportStage';
 
 export function RlPipeline({
 	project,
@@ -62,8 +62,8 @@ export function RlPipeline({
 		>
 			<div className="rl-page">
 				<RlTopbar
-					title={project?.name?.toUpperCase() || "PIPELINE"}
-					sub={project ? `PHASE: ${project.phase.toUpperCase()}` : "NOT STARTED"}
+					title={project?.name?.toUpperCase() || 'PIPELINE'}
+					sub={project ? `PHASE: ${project.phase.toUpperCase()}` : 'NOT STARTED'}
 					right={
 						<button className="btn btn-ghost" onClick={onBack}>
 							← DUNGEONS
@@ -75,19 +75,19 @@ export function RlPipeline({
 					className="pixel"
 					style={{
 						fontSize: 9,
-						color: "var(--lg-ink-mute)",
-						letterSpacing: "0.15em",
-						margin: "16px 0 4px",
+						color: 'var(--lg-ink-mute)',
+						letterSpacing: '0.15em',
+						margin: '16px 0 4px',
 					}}
 				>
-					[ STAGE {RL_STAGES.findIndex((s) => s.id === stage) + 1}/{RL_STAGES.length} ·{" "}
+					[ STAGE {RL_STAGES.findIndex((s) => s.id === stage) + 1}/{RL_STAGES.length} ·{' '}
 					{stageMeta?.label} · {stageMeta?.sub.toUpperCase()} ]
 				</div>
 				<div className="rl-stage" key={stage}>
-					{stage === "upload" && <RlUpload onNext={next} />}
-					{stage === "extract" && <RlExtract onNext={next} />}
-					{stage === "transform" && <RlTransform onNext={next} />}
-					{stage === "export" && <RlExport onDone={onBack} />}
+					{stage === 'upload' && <RlUpload onNext={next} />}
+					{stage === 'extract' && <RlExtract onNext={next} />}
+					{stage === 'transform' && <RlTransform onNext={next} />}
+					{stage === 'export' && <RlExport onDone={onBack} />}
 				</div>
 				{achievement && <RlAchievement message={achievement} />}
 			</div>
