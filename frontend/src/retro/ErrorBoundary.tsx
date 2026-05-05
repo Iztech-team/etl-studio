@@ -39,10 +39,7 @@ export class ErrorBoundary extends Component<Props, State> {
 					>
 						{this.state.error.message}
 					</div>
-					<button
-						className="btn btn-primary"
-						onClick={() => window.location.reload()}
-					>
+					<button className="btn btn-primary" onClick={() => window.location.reload()}>
 						RELOAD
 					</button>
 				</div>

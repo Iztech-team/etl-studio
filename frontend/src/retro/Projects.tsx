@@ -37,7 +37,6 @@ function projectStatus(p: Project): ProjectStatus {
 	return "running";
 }
 
-
 function bugMessage(p: Project): string {
 	const note = (p.last_run_note ?? "").trim();
 	const phase = (p.last_run_phase ?? "").trim().toUpperCase();
@@ -62,13 +61,7 @@ function timeAgo(iso: string): string {
 	}
 }
 
-export function RlProjects({
-	onOpen,
-	onNew,
-}: {
-	onOpen: (p: Project) => void;
-	onNew: () => void;
-}) {
+export function RlProjects({ onOpen, onNew }: { onOpen: (p: Project) => void; onNew: () => void }) {
 	const { user } = useAuth();
 	const [projects, setProjects] = useState<Project[]>([]);
 	const [loading, setLoading] = useState(true);
@@ -127,7 +120,9 @@ export function RlProjects({
 					prev.map((p) => (p.id === projectId ? { ...p, name: updated.name } : p)),
 				);
 			}
-		} catch { /* ignore */ }
+		} catch {
+			/* ignore */
+		}
 	};
 
 	const confirmDelete = async (projectId: string) => {
@@ -135,10 +130,13 @@ export function RlProjects({
 		try {
 			const res = await fetch(`/api/projects/${projectId}`, { method: "DELETE" });
 			if (res.ok) setProjects((prev) => prev.filter((p) => p.id !== projectId));
-		} catch { /* ignore */ }
+		} catch {
+			/* ignore */
+		}
 	};
 
-	const filtered = filter === "all" ? projects : projects.filter((p) => projectStatus(p) === filter);
+	const filtered =
+		filter === "all" ? projects : projects.filter((p) => projectStatus(p) === filter);
 
 	// Build the keyboard layout for the page:
 	//   row 0: [START_NEW_DUNGEON CTA]
@@ -272,7 +270,9 @@ export function RlProjects({
 				</div>
 			) : error ? (
 				<div className="panel" style={{ padding: 40, textAlign: "center" }}>
-					<div className="mono" style={{ fontSize: 11, color: "var(--lg-coral)" }}>{error}</div>
+					<div className="mono" style={{ fontSize: 11, color: "var(--lg-coral)" }}>
+						{error}
+					</div>
 				</div>
 			) : filtered.length === 0 ? (
 				<div className="panel" style={{ padding: 40, textAlign: "center" }}>
@@ -287,8 +287,14 @@ export function RlProjects({
 							key={p.id}
 							p={p}
 							onOpen={onOpen}
-							onRename={(e, id) => { e.stopPropagation(); setRenameTarget(id); }}
-							onDelete={(e, id) => { e.stopPropagation(); setDeleteTarget(id); }}
+							onRename={(e, id) => {
+								e.stopPropagation();
+								setRenameTarget(id);
+							}}
+							onDelete={(e, id) => {
+								e.stopPropagation();
+								setDeleteTarget(id);
+							}}
 							kbProps={layout.getItemProps(`card:${p.id}`)}
 						/>
 					))}
@@ -318,11 +324,23 @@ export function RlProjects({
 
 function StatusBadge({ status }: { status: ProjectStatus }) {
 	if (status === "running")
-		return <span className="badge badge-cyan"><IDot size={6} c="var(--lg-cyan)" /> RUNNING</span>;
+		return (
+			<span className="badge badge-cyan">
+				<IDot size={6} c="var(--lg-cyan)" /> RUNNING
+			</span>
+		);
 	if (status === "done")
-		return <span className="badge badge-solid-lime"><ICheck size={8} /> CLEARED</span>;
+		return (
+			<span className="badge badge-solid-lime">
+				<ICheck size={8} /> CLEARED
+			</span>
+		);
 	if (status === "error")
-		return <span className="rl-bug-badge"><IX size={8} /> BUG</span>;
+		return (
+			<span className="rl-bug-badge">
+				<IX size={8} /> BUG
+			</span>
+		);
 	return <span className="badge badge-mute">DRAFT</span>;
 }
 
@@ -344,6 +362,7 @@ function RlProjectCard({
 	const status = projectStatus(p);
 	const [showFiles, setShowFiles] = useState(false);
 	const [outputFiles, setOutputFiles] = useState<string[]>([]);
+	const [filesError, setFilesError] = useState<string | null>(null);
 	const isExported = p.phase === "load" || p.phase === "stats";
 
 	const toggleFiles = async (e: React.MouseEvent) => {
@@ -352,13 +371,15 @@ function RlProjectCard({
 			setShowFiles(false);
 			return;
 		}
+		setFilesError(null);
 		try {
 			const res = await fetch(`/api/projects/${p.id}/outputs`);
-			if (res.ok) {
-				const data = await res.json();
-				setOutputFiles(data.files ?? []);
-			}
-		} catch { /* ignore */ }
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			const data = await res.json();
+			setOutputFiles(data.files ?? []);
+		} catch (err) {
+			setFilesError(err instanceof Error ? err.message : "Failed to load files");
+		}
 		setShowFiles(true);
 	};
 
@@ -373,9 +394,25 @@ function RlProjectCard({
 			<div className="corner-bl" />
 			<div className="corner-br" />
 
-			<div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+			<div
+				style={{
+					display: "flex",
+					alignItems: "flex-start",
+					justifyContent: "space-between",
+					gap: 10,
+				}}
+			>
 				<div style={{ flex: 1, minWidth: 0 }}>
-					<div className="pixel glow-magenta" style={{ fontSize: 11, lineHeight: 1.5, color: "var(--lg-magenta)", overflow: "hidden", textOverflow: "ellipsis" }}>
+					<div
+						className="pixel glow-magenta"
+						style={{
+							fontSize: 11,
+							lineHeight: 1.5,
+							color: "var(--lg-magenta)",
+							overflow: "hidden",
+							textOverflow: "ellipsis",
+						}}
+					>
 						{p.name.toUpperCase()}
 					</div>
 				</div>
@@ -384,11 +421,21 @@ function RlProjectCard({
 
 			<div className="rl-proj-path">
 				<IDisk size={10} />
-				<span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+				<span
+					style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+				>
 					{phaseLabel(p.phase)}
 				</span>
 				<IArrow size={10} />
-				<span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--lg-cyan)" }}>
+				<span
+					style={{
+						flex: 1,
+						overflow: "hidden",
+						textOverflow: "ellipsis",
+						whiteSpace: "nowrap",
+						color: "var(--lg-cyan)",
+					}}
+				>
 					STEP {stageIdx}/4
 				</span>
 			</div>
@@ -400,8 +447,20 @@ function RlProjectCard({
 			)}
 
 			<div style={{ marginTop: 10 }}>
-				<div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--lg-cyan)", fontFamily: "var(--lg-pixel)", letterSpacing: "0.1em", marginBottom: 5 }}>
-					<span>STAGE {stageIdx}/4 · {phaseLabel(p.phase)}</span>
+				<div
+					style={{
+						display: "flex",
+						justifyContent: "space-between",
+						fontSize: 9,
+						color: "var(--lg-cyan)",
+						fontFamily: "var(--lg-pixel)",
+						letterSpacing: "0.1em",
+						marginBottom: 5,
+					}}
+				>
+					<span>
+						STAGE {stageIdx}/4 · {phaseLabel(p.phase)}
+					</span>
 					<span>{progress}%</span>
 				</div>
 				<div className="progress">
@@ -409,7 +468,18 @@ function RlProjectCard({
 				</div>
 			</div>
 
-			<div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center", fontFamily: "var(--lg-pixel)", fontSize: 8, color: "var(--lg-ink-mute)", letterSpacing: "0.1em" }}>
+			<div
+				style={{
+					marginTop: 10,
+					display: "flex",
+					justifyContent: "space-between",
+					alignItems: "center",
+					fontFamily: "var(--lg-pixel)",
+					fontSize: 8,
+					color: "var(--lg-ink-mute)",
+					letterSpacing: "0.1em",
+				}}
+			>
 				<span>{p.username.toUpperCase()}</span>
 				<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
 					<span>{timeAgo(p.updated_at)}</span>
@@ -443,11 +513,26 @@ function RlProjectCard({
 			</div>
 
 			{showFiles && (
-				<div onClick={(e) => e.stopPropagation()} style={{ marginTop: 10, borderTop: "1px solid var(--lg-border)", paddingTop: 10 }}>
-					<div className="pixel" style={{ fontSize: 8, color: "var(--lg-ink-mute)", letterSpacing: "0.1em", marginBottom: 6 }}>
+				<div
+					onClick={(e) => e.stopPropagation()}
+					style={{ marginTop: 10, borderTop: "1px solid var(--lg-border)", paddingTop: 10 }}
+				>
+					<div
+						className="pixel"
+						style={{
+							fontSize: 8,
+							color: "var(--lg-ink-mute)",
+							letterSpacing: "0.1em",
+							marginBottom: 6,
+						}}
+					>
 						OUTPUT FILES
 					</div>
-					{outputFiles.length === 0 ? (
+					{filesError ? (
+						<div className="mono" style={{ fontSize: 10, color: "var(--lg-coral)" }}>
+							! {filesError}
+						</div>
+					) : outputFiles.length === 0 ? (
 						<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}>
 							No output files yet. Open project and run export.
 						</div>
@@ -456,7 +541,16 @@ function RlProjectCard({
 							{outputFiles.map((file) => (
 								<div key={file} style={{ display: "flex", alignItems: "center", gap: 6 }}>
 									<IDisk size={8} />
-									<span className="mono" style={{ flex: 1, fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+									<span
+										className="mono"
+										style={{
+											flex: 1,
+											fontSize: 10,
+											overflow: "hidden",
+											textOverflow: "ellipsis",
+											whiteSpace: "nowrap",
+										}}
+									>
 										{file}
 									</span>
 									<a
@@ -477,35 +571,76 @@ function RlProjectCard({
 	);
 }
 
-function DeleteConfirmModal({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
+function DeleteConfirmModal({
+	onCancel,
+	onConfirm,
+}: {
+	onCancel: () => void;
+	onConfirm: () => void;
+}) {
 	return (
 		<div
 			style={{
-				position: "fixed", inset: 0, zIndex: 9999,
+				position: "fixed",
+				inset: 0,
+				zIndex: 9999,
 				background: "rgba(0,0,0,0.75)",
-				display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
+				display: "flex",
+				alignItems: "center",
+				justifyContent: "center",
+				padding: 24,
 			}}
 			onClick={onCancel}
 		>
 			<div
-				style={{ background: "var(--lg-bg)", border: "2px solid var(--lg-coral)", width: 400, maxWidth: "90vw" }}
+				style={{
+					background: "var(--lg-bg)",
+					border: "2px solid var(--lg-coral)",
+					width: 400,
+					maxWidth: "90vw",
+				}}
 				onClick={(e) => e.stopPropagation()}
 			>
-				<div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid var(--lg-border)", background: "var(--lg-bg-2)" }}>
-					<span className="pixel" style={{ fontSize: 11, color: "var(--lg-coral)", letterSpacing: "0.1em" }}>
+				<div
+					style={{
+						display: "flex",
+						alignItems: "center",
+						justifyContent: "space-between",
+						padding: "10px 14px",
+						borderBottom: "1px solid var(--lg-border)",
+						background: "var(--lg-bg-2)",
+					}}
+				>
+					<span
+						className="pixel"
+						style={{ fontSize: 11, color: "var(--lg-coral)", letterSpacing: "0.1em" }}
+					>
 						DELETE PROJECT
 					</span>
 				</div>
 				<div style={{ padding: "20px 14px" }}>
-					<div className="pixel" style={{ fontSize: 10, color: "var(--lg-ink)", marginBottom: 12, lineHeight: 1.6 }}>
+					<div
+						className="pixel"
+						style={{ fontSize: 10, color: "var(--lg-ink)", marginBottom: 12, lineHeight: 1.6 }}
+					>
 						Delete this project? This cannot be undone.
 					</div>
 				</div>
-				<div style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "0 14px 14px" }}>
-					<button className="btn btn-ghost" style={{ padding: "6px 14px", fontSize: 10 }} onClick={onCancel}>
+				<div
+					style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "0 14px 14px" }}
+				>
+					<button
+						className="btn btn-ghost"
+						style={{ padding: "6px 14px", fontSize: 10 }}
+						onClick={onCancel}
+					>
 						CANCEL
 					</button>
-					<button className="btn btn-coral" style={{ padding: "6px 14px", fontSize: 10 }} onClick={onConfirm}>
+					<button
+						className="btn btn-coral"
+						style={{ padding: "6px 14px", fontSize: 10 }}
+						onClick={onConfirm}
+					>
 						DELETE
 					</button>
 				</div>

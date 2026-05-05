@@ -1,9 +1,4 @@
-import {
-	createContext,
-	useContext,
-	useState,
-	type ReactNode,
-} from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 import type {
 	PipelineCtx,
 	StagedFile,
@@ -63,13 +58,13 @@ export function PipelineProvider({
 		if (!resumed?.transform) return null;
 		const t = resumed.transform as Record<string, unknown>;
 		return {
-			ok: t.ok as boolean ?? true,
-			tables_transformed: t.tables_transformed as number ?? 0,
-			total_rows: t.total_rows as number ?? 0,
-			encoding_conversions: t.encoding_conversions as number ?? 0,
-			type_conversions: t.type_conversions as number ?? 0,
-			reference_mappings: t.reference_mappings as number ?? 0,
-			null_normalizations: t.null_normalizations as number ?? 0,
+			ok: (t.ok as boolean) ?? true,
+			tables_transformed: (t.tables_transformed as number) ?? 0,
+			total_rows: (t.total_rows as number) ?? 0,
+			encoding_conversions: (t.encoding_conversions as number) ?? 0,
+			type_conversions: (t.type_conversions as number) ?? 0,
+			reference_mappings: (t.reference_mappings as number) ?? 0,
+			null_normalizations: (t.null_normalizations as number) ?? 0,
 			warnings: (t.warnings as string[]) ?? [],
 			preview: (t.preview as Record<string, unknown>) ?? {},
 			strategy_name: (t.strategy_name as string) ?? null,
@@ -84,7 +79,7 @@ export function PipelineProvider({
 		if (!resumed?.loadResult) return null;
 		const l = resumed.loadResult as Record<string, unknown>;
 		return {
-			ok: l.ok as boolean ?? true,
+			ok: (l.ok as boolean) ?? true,
 			output_files: (l.output_files as string[]) ?? [],
 			rows_written: (l.rows_written as Record<string, number>) ?? {},
 			errors: (l.errors as string[]) ?? [],
@@ -104,7 +99,5 @@ export function PipelineProvider({
 		loadResult,
 		setLoadResult,
 	};
-	return (
-		<PipelineContext.Provider value={ctx}>{children}</PipelineContext.Provider>
-	);
+	return <PipelineContext.Provider value={ctx}>{children}</PipelineContext.Provider>;
 }

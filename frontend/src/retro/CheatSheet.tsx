@@ -83,10 +83,7 @@ export function CheatSheet({ groups }: { groups: Group[] }) {
 											gap: 12,
 										}}
 									>
-										<span
-											className="mono"
-											style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}
-										>
+										<span className="mono" style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}>
 											{b.label}
 										</span>
 										<div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
@@ -107,7 +104,12 @@ export function CheatSheet({ groups }: { groups: Group[] }) {
 
 					<div
 						className="mono"
-						style={{ fontSize: 9, color: "var(--lg-ink-faint)", borderTop: "1px solid var(--lg-border)", paddingTop: 8 }}
+						style={{
+							fontSize: 9,
+							color: "var(--lg-ink-faint)",
+							borderTop: "1px solid var(--lg-border)",
+							paddingTop: 8,
+						}}
 					>
 						bindings inactive while typing in an input
 					</div>

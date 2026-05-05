@@ -4,7 +4,7 @@ import { AuthProvider, LoginScreen, useAuth } from "./Auth";
 import { RL_STAGES, type Project, type ResumedSession, type StageId } from "./data";
 import { RlDock } from "./Topbar";
 import { RlProjects } from "./Projects";
-import { RlPipeline } from "./Pipeline";
+import { RlPipeline } from "./pipeline";
 import { RlPromptModal } from "./PromptModal";
 import { ErrorBoundary } from "./ErrorBoundary";
 
@@ -32,9 +32,7 @@ const PHASE_TO_STAGE: Record<string, number> = {
 // `resumed` (the full schema/preview/stats/transform payload) or the full
 // Project object — for a large project those serialize to many MB and blow
 // localStorage's quota. The mount effect re-fetches them on reload.
-type PersistedRoute =
-	| { view: "projects" }
-	| { view: "pipeline"; projectId: string | null };
+type PersistedRoute = { view: "projects" } | { view: "pipeline"; projectId: string | null };
 
 function toPersistedRoute(r: Route): PersistedRoute {
 	if (r.view === "pipeline") {
@@ -68,8 +66,7 @@ function loadRoute(): Route {
 			const parsed: { view?: string; project?: { id?: string }; projectId?: string } =
 				JSON.parse(raw) ?? {};
 			if (parsed?.view === "pipeline") {
-				const projectId =
-					parsed.projectId ?? parsed.project?.id ?? null;
+				const projectId = parsed.projectId ?? parsed.project?.id ?? null;
 				return {
 					view: "pipeline",
 					project: projectId ? ({ id: projectId } as Project) : null,
@@ -190,10 +187,7 @@ async function fetchResumed(
 					const rowCount = (evt.rowCount as number | undefined) ?? 0;
 					progress.done += 1;
 					progress.current = name;
-					progress.recent = [
-						...progress.recent.slice(-(RECENT_LIMIT - 1)),
-						{ name, rowCount },
-					];
+					progress.recent = [...progress.recent.slice(-(RECENT_LIMIT - 1)), { name, rowCount }];
 					if (onProgress && !signal?.aborted) onProgress({ ...progress });
 				} else if (evt.event === "done") {
 					final = {
@@ -202,17 +196,12 @@ async function fetchResumed(
 						schema: (evt.inferred_schema as ResumedSession["schema"]) ?? {},
 						stats: (evt.stats as ResumedSession["stats"]) ?? {},
 						tables: Object.keys((evt.preview as Record<string, unknown>) ?? {}),
-						excludedTables:
-							(evt.excluded_tables as string[] | undefined) ?? [],
-						allExtractedTables:
-							(evt.all_extracted_tables as string[] | undefined) ?? [],
-						selectedEntities:
-							(evt.selected_entities as string[] | undefined) ?? [],
+						excludedTables: (evt.excluded_tables as string[] | undefined) ?? [],
+						allExtractedTables: (evt.all_extracted_tables as string[] | undefined) ?? [],
+						selectedEntities: (evt.selected_entities as string[] | undefined) ?? [],
 						config: (evt.config as ResumedSession["config"]) ?? null,
-						transform:
-							(evt.transform as ResumedSession["transform"]) ?? null,
-						loadResult:
-							(evt.load_result as ResumedSession["loadResult"]) ?? null,
+						transform: (evt.transform as ResumedSession["transform"]) ?? null,
+						loadResult: (evt.load_result as ResumedSession["loadResult"]) ?? null,
 					};
 				}
 			}
@@ -290,9 +279,7 @@ function ResumeLoadingSplash({
 					>
 						<span style={{ color: "var(--lg-amber)" }}>{done}</span>
 						<span style={{ color: "var(--lg-ink-mute)" }}> / {total} tables</span>
-						<span style={{ color: "var(--lg-ink-mute)", marginLeft: 8 }}>
-							· {pct}%
-						</span>
+						<span style={{ color: "var(--lg-ink-mute)", marginLeft: 8 }}>· {pct}%</span>
 					</div>
 					<div
 						style={{
@@ -372,10 +359,7 @@ function ResumeLoadingSplash({
 			)}
 
 			{progress?.warm && (
-				<div
-					className="mono"
-					style={{ fontSize: 10, color: "var(--lg-ink-mute)" }}
-				>
+				<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-mute)" }}>
 					(restoring from cache)
 				</div>
 			)}
@@ -394,12 +378,8 @@ function Shell() {
 	// a fresh React tree but the same stale localStorage). Until we've
 	// re-resumed, hide the pipeline so we don't render stale data and 404 on
 	// every backend call.
-	const [hydrating, setHydrating] = useState<boolean>(
-		() => loadRoute().view === "pipeline",
-	);
-	const [resumeProgress, setResumeProgress] = useState<ResumeProgress | null>(
-		null,
-	);
+	const [hydrating, setHydrating] = useState<boolean>(() => loadRoute().view === "pipeline");
+	const [resumeProgress, setResumeProgress] = useState<ResumeProgress | null>(null);
 
 	// Single-flight resume: a new resume aborts any in-flight one. Without
 	// this React StrictMode (or a rapid second open() click) starts two
@@ -477,10 +457,7 @@ function Shell() {
 		// localStorage quota for projects of any real size). The mount
 		// effect re-fetches everything on reload.
 		try {
-			localStorage.setItem(
-				LS_ROUTE,
-				JSON.stringify(toPersistedRoute(route)),
-			);
+			localStorage.setItem(LS_ROUTE, JSON.stringify(toPersistedRoute(route)));
 		} catch {
 			// QuotaExceededError or storage disabled — non-fatal.
 		}
@@ -557,16 +534,13 @@ function Shell() {
 
 	const goPage = (pageId: PageId) => setRoute({ view: pageId });
 
-	const activePage: PageId =
-		route.view === "pipeline" ? "projects" : route.view;
+	const activePage: PageId = route.view === "pipeline" ? "projects" : route.view;
 
 	return (
 		<div className="legacy-app rl-shell">
 			<div className="rl-window">
 				<div key={route.view}>
-					{route.view === "projects" && (
-						<RlProjects onOpen={open} onNew={openNew} />
-					)}
+					{route.view === "projects" && <RlProjects onOpen={open} onNew={openNew} />}
 					{route.view === "pipeline" &&
 						(hydrating ? (
 							<ResumeLoadingSplash

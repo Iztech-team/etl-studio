@@ -126,10 +126,7 @@ export function RlTopbar({
 	return (
 		<div className="rl-topbar">
 			<div className="rl-topbar-title">
-				<div
-					className="pixel glow-magenta"
-					style={{ fontSize: 18, color: "var(--lg-magenta)" }}
-				>
+				<div className="pixel glow-magenta" style={{ fontSize: 18, color: "var(--lg-magenta)" }}>
 					{title}
 				</div>
 				{sub && (
@@ -147,9 +144,7 @@ export function RlTopbar({
 					</div>
 				)}
 			</div>
-			<div style={{ flex: 1, display: "flex", justifyContent: "center" }}>
-				{center}
-			</div>
+			<div style={{ flex: 1, display: "flex", justifyContent: "center" }}>{center}</div>
 			{right}
 			<UserButton />
 		</div>
@@ -258,10 +253,7 @@ function ExtractionDockView({ info }: { info: ActiveExtractionInfo }) {
 	const pct = info.total > 0 ? Math.round((info.done / info.total) * 100) : 0;
 	return (
 		<>
-			<div
-				className="rl-dock-pipe-label pixel"
-				style={{ color: "var(--lg-amber)" }}
-			>
+			<div className="rl-dock-pipe-label pixel" style={{ color: "var(--lg-amber)" }}>
 				EXTRACTING
 			</div>
 			<div
@@ -351,10 +343,7 @@ function TransformDockView({ info }: { info: ActiveTransformInfo }) {
 	const pct = info.total > 0 ? Math.round((info.done / info.total) * 100) : 0;
 	return (
 		<>
-			<div
-				className="rl-dock-pipe-label pixel"
-				style={{ color: "var(--lg-amber)" }}
-			>
+			<div className="rl-dock-pipe-label pixel" style={{ color: "var(--lg-amber)" }}>
 				TRANSFORMING
 			</div>
 			<div
@@ -436,12 +425,8 @@ function PipelineDockView({ activeIdx }: { activeIdx: number }) {
 					const active = i === activeIdx;
 					return (
 						<div key={s.id} style={{ display: "contents" }}>
-							<div
-								className={`rl-dock-pipe-step ${done ? "done" : ""} ${active ? "active" : ""}`}
-							>
-								<div className="dot pixel">
-									{done ? <ICheck size={8} /> : i + 1}
-								</div>
+							<div className={`rl-dock-pipe-step ${done ? "done" : ""} ${active ? "active" : ""}`}>
+								<div className="dot pixel">{done ? <ICheck size={8} /> : i + 1}</div>
 								<div className="lab">{s.label}</div>
 							</div>
 							{i < RL_STAGES.length - 1 && (
@@ -468,9 +453,7 @@ export function RlDock({
 		id: PageId;
 		label: string;
 		I: (p: { size?: number }) => JSX.Element;
-	}[] = [
-		{ id: "projects", label: "DUNGEONS", I: IFolder },
-	];
+	}[] = [{ id: "projects", label: "DUNGEONS", I: IFolder }];
 	const inPipe = pipelineStage != null;
 	const activeIdx = RL_STAGES.findIndex((s) => s.id === pipelineStage);
 	const extraction = useActiveExtraction();

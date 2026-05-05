@@ -24,10 +24,7 @@ type AuthState = {
 
 const LS_AUTH = "retro-legacy.v2.auth";
 
-function makeAuthUser(data: {
-	username: string;
-	display_name: string;
-}): AuthUser {
+function makeAuthUser(data: { username: string; display_name: string }): AuthUser {
 	const dn = data.display_name || data.username;
 	return {
 		username: data.username,
@@ -55,10 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 		else localStorage.removeItem(LS_AUTH);
 	}, [user]);
 
-	const login = async (
-		username: string,
-		password: string,
-	): Promise<boolean> => {
+	const login = async (username: string, password: string): Promise<boolean> => {
 		try {
 			const res = await fetch("/api/auth/login", {
 				method: "POST",
@@ -76,11 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 	const logout = () => setUser(null);
 
-	return (
-		<AuthContext.Provider value={{ user, login, logout }}>
-			{children}
-		</AuthContext.Provider>
-	);
+	return <AuthContext.Provider value={{ user, login, logout }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

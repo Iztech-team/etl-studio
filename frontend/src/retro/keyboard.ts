@@ -204,7 +204,11 @@ export function useKeyboardLayout(rows: LayoutRow[], opts: LayoutOptions = {}) {
 			let c = -1;
 			for (let i = 0; i < rows.length && r < 0; i++) {
 				for (let j = 0; j < rows[i].length; j++) {
-					if (rows[i][j].id === id) { r = i; c = j; break; }
+					if (rows[i][j].id === id) {
+						r = i;
+						c = j;
+						break;
+					}
 				}
 			}
 			return {

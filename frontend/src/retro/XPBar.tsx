@@ -40,8 +40,7 @@ export function XPBar({ value, label = "PLAYER XP" }: { value: number; label?: s
 					style={{
 						width: pct + "%",
 						height: "100%",
-						background:
-							"linear-gradient(90deg, var(--lg-magenta-d), var(--lg-magenta))",
+						background: "linear-gradient(90deg, var(--lg-magenta-d), var(--lg-magenta))",
 						boxShadow: "0 0 12px rgba(176,102,255,0.6)",
 						transition: "width 0.4s ease-out",
 					}}
