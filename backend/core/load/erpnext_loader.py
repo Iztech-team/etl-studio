@@ -79,6 +79,7 @@ def run_live_import(
     selected_doctypes: list[str] | None = None,
     halt_on_failure: bool = True,
     skip_files: list[str] | None = None,
+    update_existing: bool = False,
 ) -> Iterator[dict]:
     """Yield progress events while pushing every CSV in `output_dir`.
 
@@ -220,8 +221,13 @@ def run_live_import(
         path = os.path.join(output_dir, fname)
         result: dict = {}
         try:
-            handler = _import_coa if slug == "account" else _import_via_data_import
-            for ev in handler(client, path, doctype, company):
+            if slug == "account":
+                handler_iter = _import_coa(client, path, doctype, company)
+            else:
+                handler_iter = _import_via_data_import(
+                    client, path, doctype, company, update_existing=update_existing,
+                )
+            for ev in handler_iter:
                 ev = {"file": fname, "doctype": doctype, **ev}
                 if ev.get("event") == "done":
                     result = ev
@@ -286,6 +292,7 @@ def _import_via_data_import(
     path: str,
     doctype: str,
     company: str,
+    update_existing: bool = False,
 ) -> Iterator[dict]:
     """Upload, queue, then poll Frappe Data Import. Yields progress events
     so the user sees Frappe's own status (Queued / In Progress / Success)
@@ -318,7 +325,8 @@ def _import_via_data_import(
         raise ErpnextError("upload_file returned no file_url")
 
     yield {"event": "uploading", "stage": "create_data_import"}
-    name = client.create_data_import(doctype, file_url)
+    import_type = "Update Existing Records" if update_existing else "Insert New Records"
+    name = client.create_data_import(doctype, file_url, import_type=import_type)
     if not name:
         raise ErpnextError("create_data_import returned no name")
 

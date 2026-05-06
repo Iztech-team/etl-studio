@@ -360,6 +360,7 @@ class ErpnextLoadRequest(BaseModel):
     company_abbr: Optional[str] = None
     force_reupload: bool = False
     halt_on_failure: bool = True
+    update_existing: bool = False
     selected_doctypes: Optional[List[str]] = None
     skip_files: Optional[List[str]] = None
 
@@ -485,6 +486,7 @@ async def load_erpnext(session_id: str, body: ErpnextLoadRequest):
                 selected_doctypes=body.selected_doctypes,
                 halt_on_failure=body.halt_on_failure,
                 skip_files=body.skip_files,
+                update_existing=body.update_existing,
             ):
                 last_event = ev
                 yield _sse(ev)
