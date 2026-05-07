@@ -33,6 +33,7 @@ export function ErpnextLiveExport({
 	const [company, setCompany] = useState('');
 	const [companyAbbr, setCompanyAbbr] = useState('');
 	const [forceReupload, setForceReupload] = useState(false);
+	const [updateExisting, setUpdateExisting] = useState(false);
 	const [autoContinue, setAutoContinue] = useState(false);
 	const [skipFiles, setSkipFiles] = useState<Set<string>>(() => new Set());
 	const [haltedFile, setHaltedFile] = useState<{
@@ -147,6 +148,7 @@ export function ErpnextLiveExport({
 					company,
 					company_abbr: companyAbbr,
 					force_reupload: forceReupload && !isResume,
+					update_existing: updateExisting,
 					halt_on_failure: !autoContinue,
 					selected_doctypes: allDoctypes.length > 0 ? Array.from(selectedDoctypes) : null,
 					skip_files: skipsForThisRun.length > 0 ? skipsForThisRun : null,
@@ -300,6 +302,26 @@ export function ErpnextLiveExport({
 							disabled={running}
 						/>
 						<span>Re-upload everything</span>
+					</label>
+					<label
+						className="mono"
+						style={{
+							display: 'flex',
+							alignItems: 'center',
+							gap: 10,
+							fontSize: 11,
+							color: 'var(--lg-ink)',
+							cursor: running ? 'not-allowed' : 'pointer',
+						}}
+						title="Use 'Update Existing Records' instead of 'Insert New Records' in Data Import. Use this to update items/accounts that were already imported previously."
+					>
+						<input
+							type="checkbox"
+							checked={updateExisting}
+							onChange={(e) => setUpdateExisting(e.target.checked)}
+							disabled={running}
+						/>
+						<span>Update existing records</span>
 					</label>
 					<label
 						className="mono"
