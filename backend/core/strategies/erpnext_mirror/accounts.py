@@ -24,6 +24,7 @@ from core.strategies.erpnext_shared.common import (
     account_full_name,
     clean_str,
     currency_iso,
+    parse_decimal,
     pick,
     safe_account_name,
     walk_to_root,
@@ -67,7 +68,8 @@ SKIP_CLASSES = {"2", "3"}
 def emit_accounts(ctx: Context) -> None:
     deleted = _deleted_account_ids(ctx)
     parent_ids = _parent_id_set(ctx)
-    rows = _emittable_accounts(ctx, deleted)
+    accounts_with_ledger = _accounts_with_ledger(ctx)
+    rows = _emittable_accounts(ctx, deleted, parent_ids, accounts_with_ledger)
     rows.sort(key=_sort_key)
     root_for = _root_id_for_each(ctx)
     for row in rows:
@@ -79,27 +81,17 @@ def emit_accounts(ctx: Context) -> None:
 def _emit_party_leaf_accounts(ctx: Context) -> None:
     """Emit synthetic leaf accounts the opening-balance flow needs.
 
-    Four accounts are added that don't exist in legacy:
-
     - **Debtors** / **Creditors** (Receivable / Payable) — required so
       opening Journal Entries with `party_type=Customer/Supplier` have a
-      valid GL target. ERPnext skips per-customer GL accounts (CLASS=2/3
-      filtered out earlier) and tracks party balances by party_type +
-      party instead.
+      valid GL target.
 
     - **Temporary Opening** (Equity) — counter-account every opening JE
-      posts to. Should net to ~zero across all opening JEs if the legacy
-      books balance. Lives under رأس المال (Equity root).
-
-    - **Cheques in Hand** (Asset, account_type=Cash) — destination for
-      individual outstanding-cheque opening JEs. Lives under الموجودات
-      المتداولة (Current Assets).
+      posts to.
     """
     abbr_or_id = lambda acctid, fallback: account_full_name(
         ctx, acctid
     ) or ctx.with_abbr(fallback)
     equity_parent = abbr_or_id("3", "راس المال")
-    current_assets_parent = abbr_or_id("11", "الموجودات المتداولة")
     receivable_parent = abbr_or_id("6", "الذمم")
     payable_parent = abbr_or_id("2", "المطلوبات")
 
@@ -145,20 +137,6 @@ def _emit_party_leaf_accounts(ctx: Context) -> None:
             "account_type": "Temporary",
         },
     )
-    ctx.result.emit(
-        "Account",
-        {
-            "name": ctx.with_abbr("Cheques in Hand"),
-            "account_name": "Cheques in Hand",
-            "company": ctx.config.company_name,
-            "parent_account": current_assets_parent,
-            "is_group": 0,
-            "account_currency": ctx.config.default_currency,
-            "root_type": "Asset",
-            "report_type": "Balance Sheet",
-            "account_type": "Cash",
-        },
-    )
     expense_parent = abbr_or_id("4", "المشتريات والمصاريف")
     ctx.result.emit(
         "Account",
@@ -188,7 +166,7 @@ def _emit_party_leaf_accounts(ctx: Context) -> None:
             "account_type": "Stock Adjustment",
         },
     )
-    ctx.result.bump("party_leaf_accounts_emitted", 6)
+    ctx.result.bump("party_leaf_accounts_emitted", 5)
 
 
 def _root_id_for_each(ctx: Context) -> dict[str, str]:
@@ -315,23 +293,39 @@ def _is_active(row: dict) -> bool:
 # -- Filtering ----------------------------------------------------------------
 
 
-def _emittable_accounts(ctx: Context, deleted: set[str]) -> list[dict]:
+def _emittable_accounts(
+    ctx: Context,
+    deleted: set[str],
+    parent_ids: set[str],
+    accounts_with_ledger: set[str],
+) -> list[dict]:
     out: list[dict] = []
     for row in ctx.table("ACCOUNTT"):
-        if not _should_emit(row, deleted, ctx):
+        if not _should_emit(row, deleted, ctx, parent_ids, accounts_with_ledger):
             ctx.result.bump("accounts_skipped")
             continue
         out.append(row)
     return out
 
 
-def _should_emit(row: dict, deleted: set[str], ctx: Context) -> bool:
+def _should_emit(
+    row: dict,
+    deleted: set[str],
+    ctx: Context,
+    parent_ids: set[str],
+    accounts_with_ledger: set[str],
+) -> bool:
     account_id = clean_str(row.get("ACCOUNTID"))
     if not account_id or account_id in deleted:
         return False
     cls = clean_str(row.get("CLASS"))
     if cls in SKIP_CLASSES:
-        # Customer/supplier individual accounts — auto-created by ERPnext.
+        return False
+    if (
+        account_id not in parent_ids
+        and account_id not in accounts_with_ledger
+        and abs(parse_decimal(row.get("AACCBALANCE"))) < 0.01
+    ):
         return False
     return True
 
@@ -353,6 +347,16 @@ def _parent_id_set(ctx: Context) -> set[str]:
         fid = clean_str(row.get("FATHERID"))
         if fid:
             out.add(fid)
+    return out
+
+
+def _accounts_with_ledger(ctx: Context) -> set[str]:
+    """ACCOUNTIDs that appear in LEDGERT — accounts with actual transaction history."""
+    out: set[str] = set()
+    for row in ctx.iter_streamed("LEDGERT"):
+        aid = clean_str(row.get("ENTRYACCOUNT"))
+        if aid:
+            out.add(aid)
     return out
 
 

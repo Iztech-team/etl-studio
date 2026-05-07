@@ -85,6 +85,28 @@ class StrategyResult:
             if not dt.startswith("__")
         }
 
+    def docs_for(self, doctype: str) -> list[dict[str, Any]]:
+        """Return all emitted rows for `doctype` (in-memory or from disk)."""
+        in_mem = self.output_tables.get(doctype)
+        if in_mem:
+            return in_mem
+        if self._staging_dir is None:
+            return []
+        path = os.path.join(self._staging_dir, _safe_doctype(doctype) + ".jsonl")
+        if not os.path.exists(path):
+            return []
+        # Flush the writer so all rows are on disk before reading back.
+        writer = self._writers.get(doctype)
+        if writer is not None:
+            writer.flush()
+        rows: list[dict[str, Any]] = []
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    rows.append(json.loads(line))
+        return rows
+
     def staging_dir(self) -> str | None:
         return self._staging_dir
 

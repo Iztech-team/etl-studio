@@ -31,8 +31,10 @@ from core.strategies.erpnext_shared.common import (
 from core.strategies.erpnext_shared.context import Context
 from core.strategies.erpnext_shared.opening_balances import (
     BALANCE_THRESHOLD,
+    CHEQUE_HOLDING_CLASSES,
     CUSTOMER_CLASS,
     INVENTORY_CLASSES,
+    OUTGOING_HOLDING_CLASSES,
     SUPPLIER_CLASS,
     account_ccy_and_rate,
     bank_gl_to_bank_account,
@@ -79,7 +81,8 @@ def emit_opening_balances(ctx: Context) -> None:
         party_account=ctx.with_abbr("Creditors"),
     )
     _emit_gl_balances(ctx, fx_rates, parent_ids, bank_gl_to_label)
-    emit_outstanding_cheques(ctx, fx_rates, ctx.with_abbr("Cheques in Hand"))
+    emit_outstanding_cheques(ctx, fx_rates)
+    _emit_temp_opening_closure(ctx)
 
 
 def _emit_gl_balances(
@@ -150,6 +153,8 @@ def _is_emittable_gl(row: dict, parent_ids: set[str], by_id: dict) -> bool:
         return False  # handled by party-balance branch
     if cls in INVENTORY_CLASSES:
         return False  # handled by Stock Reconciliation
+    if cls in CHEQUE_HOLDING_CLASSES or cls in OUTGOING_HOLDING_CLASSES:
+        return False  # reconstructed from individual cheque JEs
     root_id = walk_to_root(account_id, by_id)
     root_type, report_type = ROOT_TYPE_BY_ID.get(root_id, ("Asset", "Balance Sheet"))
     if report_type == "Profit and Loss":
@@ -206,3 +211,89 @@ def _build_gl_je(
         "legacy_acctid": legacy_acctid,
         "legacy_kind": "opening_gl",
     }
+
+
+# -- Temporary Opening closure ------------------------------------------------
+
+RETAINED_EARNINGS_ID = "32"
+
+
+def _emit_temp_opening_closure(ctx: Context) -> None:
+    """Emit a JE that zeros out Temporary Opening against Retained Earnings.
+
+    After all opening JEs post, Temporary Opening carries their net
+    imbalance. This closing entry transfers that balance to Retained
+    Earnings (legacy account 32, الارباح والخسائر) so accountants start
+    with a clean Temporary Opening = 0.
+    """
+    temp_opening = ctx.with_abbr("Temporary Opening")
+    retained = account_full_name(ctx, RETAINED_EARNINGS_ID)
+    if not retained:
+        ctx.result.warn(
+            "OpeningBalance",
+            "cannot find Retained Earnings (account 32) — skipping Temporary Opening closure",
+        )
+        return
+
+    net = _compute_temp_opening_net(ctx)
+    if abs(net) < BALANCE_THRESHOLD:
+        ctx.result.bump("temp_opening_closure_skipped_zero")
+        return
+
+    abs_amt = round(abs(net), 2)
+    # net > 0 means Temporary Opening has net debit (was credited more
+    # than debited by opening JEs). To zero it: credit Temp Opening,
+    # debit Retained Earnings. Vice versa for net < 0.
+    debit_retained = net > 0
+    temp_line: dict[str, Any] = {"account": temp_opening}
+    retained_line: dict[str, Any] = {"account": retained}
+    set_je_pair(
+        temp_line,
+        retained_line,
+        abs_amt,
+        company_amount=abs_amt,
+        debit_main=not debit_retained,
+        main_currency=DEFAULT_CURRENCY,
+        main_rate=1.0,
+        counter_currency=DEFAULT_CURRENCY,
+        counter_rate=1.0,
+    )
+    ctx.result.emit(
+        "Journal Entry",
+        {
+            "name": "OPN-TEMP-CLOSE",
+            "voucher_type": "Journal Entry",
+            "is_opening": "No",
+            "company": ctx.config.company_name,
+            "posting_date": ctx.config.opening_date,
+            "user_remark": (
+                f"Close Temporary Opening balance ({net:,.2f} {DEFAULT_CURRENCY}) "
+                "to Retained Earnings"
+            ),
+            "docstatus": 1,
+            "accounts": [temp_line, retained_line],
+            "total_debit": abs_amt,
+            "total_credit": abs_amt,
+            "multi_currency": 0,
+            "legacy_kind": "temp_opening_closure",
+        },
+    )
+    ctx.result.bump("temp_opening_closure_emitted")
+
+
+def _compute_temp_opening_net(ctx: Context) -> float:
+    """Sum the Temporary Opening side across all already-emitted JEs.
+
+    Every opening JE has a counter-line on Temporary Opening. We walk
+    the emitted Journal Entries and sum the debit - credit on lines
+    whose account matches Temporary Opening.
+    """
+    temp_opening = ctx.with_abbr("Temporary Opening")
+    net = 0.0
+    for doc in ctx.result.docs_for("Journal Entry"):
+        for line in doc.get("accounts", []):
+            if line.get("account") != temp_opening:
+                continue
+            net += line.get("debit_in_account_currency", 0)
+            net -= line.get("credit_in_account_currency", 0)
+    return net

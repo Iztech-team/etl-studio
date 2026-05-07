@@ -69,7 +69,7 @@ def emit_opening_balances(ctx: Context) -> None:
     )
     _emit_bank_balances(ctx, fx_rates, parent_ids, bank_gl_to_label)
     _emit_bucketed_gl_balances(ctx, fx_rates, parent_ids)
-    emit_outstanding_cheques(ctx, fx_rates, ctx.with_abbr("Cheques in Hand"))
+    emit_outstanding_cheques(ctx, fx_rates)
 
 
 # -- Bank-class GL balances (one JE per leaf, like mirror) --------------------

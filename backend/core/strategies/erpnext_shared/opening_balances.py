@@ -18,6 +18,7 @@ from core.strategies.erpnext_shared.common import (
     CURRENCY_BY_LEGACY_ID,
     DEFAULT_CURRENCY,
     SENTINEL_DATE,
+    account_full_name,
     clean_str,
     currency_iso,
     customer_id,
@@ -150,45 +151,54 @@ def _build_party_je(
 
 # -- Outstanding cheques ------------------------------------------------------
 
+# Incoming cheque-holding classes.
+CHEQUE_HOLDING_CLASSES = {
+    "14",  # حساب صندوق الشيكات — physical cheque box (in hand)
+    "11",  # حساب برسم التحصيل — sent to bank for collection, not yet cleared
+}
+
+# Outgoing cheque-holding classes.
+OUTGOING_HOLDING_CLASSES = {
+    "12",  # حساب برسم الدفع — cheques issued, pending clearance
+}
+
+# Bounced/returned cheque class — excluded from outstanding.
+BOUNCED_CHEQUE_CLASSES = {
+    "15",  # حساب المسحوبات — bounced/returned cheques
+}
+
 
 def emit_outstanding_cheques(
     ctx: Context,
     fx_rates: dict[str, float],
-    cheques_account: str,
 ) -> None:
-    """One JE per uncleared incoming cheque, posted to cheques_account.
+    """One JE per outstanding cheque, posted to the actual holding account.
 
-    Filter: incoming (CLASS=1) AND its latest CHEQUELEDGERT row points at
-    an account whose ACCCLASST.CLASSID ∈ {11, 14} — meaning the cheque
-    is still in hand (CLASS=14, صندوق الشيكات) or sent for collection
-    but not yet cleared (CLASS=11, برسم التحصيل). Anything that's
-    landed on a bank current account, customer / supplier, cash box,
-    expense, etc. is treated as already-settled and skipped.
+    Two populations of outstanding cheques exist in legacy:
 
-    Why not CHEQUET.REALCDATE alone? Legacy users routinely never
-    update REALCDATE when the bank clears the cheque, so a sentinel-
-    empty REALCDATE means 'unknown' not 'actually outstanding'. The
-    LEDGER, by contrast, gets a row whenever the cheque physically
-    moves between accounts, so its tail tells us where the cheque
-    really is right now.
+    A) Tracked (have CHEQUELEDGERT entries): last ledger row tells us
+       which account the cheque currently sits in.
+    B) Untracked (no CHEQUELEDGERT): bulk-imported on day 1 without
+       GL postings. SOURCEACCOUNTID (incoming) or DESTACCOUNTID
+       (outgoing) tells us the intended holding account.
 
-    Each cheque JE line is tagged with party_type (Customer/Supplier)
-    and party (ID) by looking up the cheque's destination account in
-    the customer/supplier master. This ties each cheque to its source.
+    Both are emitted as individual opening JEs to the actual legacy
+    account (e.g. 1121 صندوق الشيكات\شيكل). The corresponding GL
+    balance emission is suppressed for cheque-holding classes so
+    there's no double counting.
+
+    Incoming (CLASS=1): debit the holding account, credit Temporary Opening.
+    Outgoing (CLASS=2): credit the holding account, debit Temporary Opening.
     """
     temp_opening = ctx.with_abbr("Temporary Opening")
     latest_acct_per_cheque = _build_latest_cheque_account(ctx)
     party_by_account = _build_party_account_map(ctx)
+
     for cheque in ctx.iter_streamed("CHEQUET"):
-        if not _is_outstanding_incoming_cheque(
-            cheque,
-            latest_acct_per_cheque,
-            ctx.accounts_by_id,
-        ):
-            continue
-        amount_default = _cheque_amount_default(cheque, fx_rates)
-        if abs(amount_default) < BALANCE_THRESHOLD:
-            ctx.result.bump("opening_cheques_skipped_zero")
+        target_account_id = _resolve_cheque_holding_account(
+            cheque, latest_acct_per_cheque, ctx.accounts_by_id
+        )
+        if not target_account_id:
             continue
         cheque_id = clean_str(cheque.get("CHEQUEID"))
         cheque_no = clean_str(cheque.get("CHEQUENO"))
@@ -196,29 +206,40 @@ def emit_outstanding_cheques(
         owner = clean_str(cheque.get("OWNERNAME"))
         bank = _cheque_bank_name(ctx, cheque)
         original_remark = _cheque_original_remark(cheque)
-        abs_amt = round(abs(amount_default), 2)
+        is_incoming = clean_str(cheque.get("CLASS")) == "1"
 
-        # NOTE: ERPnext restricts party_type/party to Receivable/Payable
-        # accounts only — "Cheques in Hand" is a Cash account so we
-        # cannot tag it with the source customer/supplier. The customer
-        # name is preserved in user_remark below for traceability, and
-        # the legacy CHEQUEID is stored on the JE for back-reference.
-        # We can't credit the Customer side either (would double-decrement
-        # — legacy already reduced the customer balance when the cheque
-        # was received). Temporary Opening (Equity) stays as the counter.
-        cheques_line: dict[str, Any] = {
-            "account": cheques_account,
-            "account_currency": DEFAULT_CURRENCY,
-            "exchange_rate": 1.0,
-            "debit_in_account_currency": abs_amt,
-            "credit_in_account_currency": 0,
-        }
+        account_name = account_full_name(ctx, target_account_id)
+        if not account_name:
+            ctx.result.bump("opening_cheques_skipped_no_account")
+            continue
 
-        # Resolve the party purely for the user_remark (which we always
-        # build) — surface the customer code alongside the owner name
-        # so accountants can find the customer record by ID.
+        # Native currency of the target account.
+        acct_row = ctx.accounts_by_id.get(target_account_id, {})
+        account_ccy = currency_iso(acct_row.get("CURID"))
+        rate = fx_rates.get(clean_str(acct_row.get("CURID")), 1.0)
+        native_amt = round(abs(parse_decimal(cheque.get("CVALUE"))), 2)
+        if native_amt < BALANCE_THRESHOLD:
+            ctx.result.bump("opening_cheques_skipped_zero")
+            continue
+        company_amt = round(native_amt * rate, 2)
+
+        main_line: dict[str, Any] = {"account": account_name}
+        counter_line: dict[str, Any] = {"account": temp_opening}
+        set_je_pair(
+            main_line,
+            counter_line,
+            native_amt,
+            company_amount=company_amt,
+            debit_main=is_incoming,
+            main_currency=account_ccy,
+            main_rate=rate,
+            counter_currency=DEFAULT_CURRENCY,
+            counter_rate=1.0,
+        )
+
         party_type, party = _resolve_cheque_party(cheque, party_by_account)
         party_hint = f" — party: {party_type}/{party}" if party_type and party else ""
+        direction = "incoming" if is_incoming else "outgoing"
 
         ctx.result.emit(
             "Journal Entry",
@@ -229,59 +250,61 @@ def emit_outstanding_cheques(
                 "cheque_no": cheque_no,
                 "cheque_date": cheque_date,
                 "company": ctx.config.company_name,
-                # Opening JEs all freeze the world on opening_date — the
-                # cheque's original DOCDATE / CDATE survive in cheque_date
-                # and user_remark for traceback but must NOT drive the
-                # posting_date, otherwise ERPnext rejects the row when no
-                # Fiscal Year covers that historical date.
                 "posting_date": ctx.config.opening_date,
                 "user_remark": (
-                    f"Outstanding cheque #{cheque_no} from {owner}, "
+                    f"Outstanding {direction} cheque #{cheque_no} from {owner}, "
                     f"due {cheque_date}, bank {bank}{party_hint}{original_remark}"
                 ),
                 "docstatus": 1,
-                "accounts": [
-                    cheques_line,
-                    {
-                        "account": temp_opening,
-                        "account_currency": DEFAULT_CURRENCY,
-                        "exchange_rate": 1.0,
-                        "debit_in_account_currency": 0,
-                        "credit_in_account_currency": abs_amt,
-                    },
-                ],
-                "total_debit": abs_amt,
-                "total_credit": abs_amt,
-                "multi_currency": 0,
+                "accounts": [main_line, counter_line],
+                "total_debit": company_amt,
+                "total_credit": company_amt,
+                "multi_currency": 1 if account_ccy != DEFAULT_CURRENCY else 0,
                 "legacy_chequeid": cheque_id,
                 "legacy_kind": "opening_cheque",
             },
         )
-        ctx.result.bump("opening_cheques_emitted")
+        ctx.result.bump(f"opening_cheques_{direction}_emitted")
 
 
-# Legacy ACCCLASST.CLASSIDs used for cheque-holding accounts. A cheque
-# whose latest CHEQUELEDGERT row sits on an account in one of these
-# classes is genuinely still outstanding from the company's books.
-CHEQUE_HOLDING_CLASSES = {
-    "14",  # حساب صندوق الشيكات — physical cheque box (in hand)
-    "11",  # حساب برسم التحصيل — sent to bank for collection, not yet cleared
-}
-
-
-def _is_outstanding_incoming_cheque(
+def _resolve_cheque_holding_account(
     cheque: dict,
     latest_acct_per_cheque: dict[str, str],
     accounts_by_id: dict[str, dict],
-) -> bool:
-    if clean_str(cheque.get("CLASS")) != "1":
-        return False
+) -> str | None:
+    """Determine which holding account an outstanding cheque belongs to.
+
+    Returns the account ID if the cheque is outstanding, None if cleared/invalid.
+    """
+    cheque_class = clean_str(cheque.get("CLASS"))
     cheque_id = clean_str(cheque.get("CHEQUEID"))
+    if not cheque_id or cheque_class not in ("1", "2"):
+        return None
+
+    is_incoming = cheque_class == "1"
+    valid_classes = CHEQUE_HOLDING_CLASSES if is_incoming else OUTGOING_HOLDING_CLASSES
+
+    # A) Tracked cheques: use latest CHEQUELEDGERT position.
     latest_acct = latest_acct_per_cheque.get(cheque_id)
-    if not latest_acct or latest_acct == "0":
-        return False
-    account_class = clean_str(accounts_by_id.get(latest_acct, {}).get("CLASS"))
-    return account_class in CHEQUE_HOLDING_CLASSES
+    if latest_acct and latest_acct != "0":
+        acct_class = clean_str(accounts_by_id.get(latest_acct, {}).get("CLASS"))
+        if acct_class in BOUNCED_CHEQUE_CLASSES:
+            return None
+        if acct_class in valid_classes:
+            return latest_acct
+        return None  # cleared — moved to bank/customer/etc.
+
+    # B) Untracked cheques: SOURCEACCOUNTID (incoming) or DESTACCOUNTID (outgoing).
+    fallback_field = "SOURCEACCOUNTID" if is_incoming else "DESTACCOUNTID"
+    fallback_acct = clean_str(cheque.get(fallback_field))
+    if not fallback_acct or fallback_acct == "0":
+        return None
+    acct_class = clean_str(accounts_by_id.get(fallback_acct, {}).get("CLASS"))
+    if acct_class in BOUNCED_CHEQUE_CLASSES:
+        return None
+    if acct_class in valid_classes:
+        return fallback_acct
+    return None
 
 
 def _build_latest_cheque_account(ctx: Context) -> dict[str, str]:
