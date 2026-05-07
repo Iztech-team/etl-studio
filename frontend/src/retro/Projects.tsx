@@ -1,15 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
-import { RL_STAGES, phaseEarnedXp, type Project } from "./data";
-import { useAuth } from "./Auth";
-import { IArrow, ICheck, IDisk, IDot, IDownload, IPlus, IStar, IX } from "./icons";
-import { useKeyboardLayout } from "./keyboard";
-import { RlPromptModal } from "./PromptModal";
-import { RlTopbar } from "./Topbar";
-import { XPBar } from "./XPBar";
+import { useEffect, useMemo, useState } from 'react';
+import { RL_STAGES, phaseEarnedXp, type Project } from './data';
+import { useAuth } from './Auth';
+import { IArrow, ICheck, IDisk, IDot, IDownload, IPlus, IStar, IX } from './icons';
+import { useKeyboardLayout } from './keyboard';
+import { RlPromptModal } from './PromptModal';
+import { RlTopbar } from './Topbar';
+import { XPBar } from './XPBar';
 
 const PHASE_TO_STAGE: Record<string, number> = {
 	upload: 1,
-	"pre-extract": 2,
+	'pre-extract': 2,
 	edit: 2,
 	configure: 2,
 	transform: 3,
@@ -18,8 +18,8 @@ const PHASE_TO_STAGE: Record<string, number> = {
 	stats: 4,
 };
 
-type ProjectStatus = "draft" | "running" | "done" | "error";
-type Filter = "all" | ProjectStatus;
+type ProjectStatus = 'draft' | 'running' | 'done' | 'error';
+type Filter = 'all' | ProjectStatus;
 
 function phaseStageIndex(phase: string): number {
 	return PHASE_TO_STAGE[phase] ?? 0;
@@ -31,19 +31,18 @@ function phaseLabel(phase: string): string {
 }
 
 function projectStatus(p: Project): ProjectStatus {
-	if (p.last_run_status === "error") return "error";
-	if (p.phase === "stats" || p.phase === "load") return "done";
-	if (!p.phase || p.phase === "upload") return "draft";
-	return "running";
+	if (p.last_run_status === 'error') return 'error';
+	if (p.phase === 'stats' || p.phase === 'load') return 'done';
+	if (!p.phase || p.phase === 'upload') return 'draft';
+	return 'running';
 }
 
-
 function bugMessage(p: Project): string {
-	const note = (p.last_run_note ?? "").trim();
-	const phase = (p.last_run_phase ?? "").trim().toUpperCase();
-	const head = phase ? `${phase} FAILED` : "RUN FAILED";
+	const note = (p.last_run_note ?? '').trim();
+	const phase = (p.last_run_phase ?? '').trim().toUpperCase();
+	const head = phase ? `${phase} FAILED` : 'RUN FAILED';
 	if (!note) return `! ${head}`;
-	const cleaned = note.replace(/\s+/g, " ").slice(0, 120);
+	const cleaned = note.replace(/\s+/g, ' ').slice(0, 120);
 	return `! ${head} · ${cleaned}`.toUpperCase();
 }
 
@@ -51,7 +50,7 @@ function timeAgo(iso: string): string {
 	try {
 		const diff = Date.now() - new Date(iso).getTime();
 		const mins = Math.floor(diff / 60000);
-		if (mins < 1) return "JUST NOW";
+		if (mins < 1) return 'JUST NOW';
 		if (mins < 60) return `${mins}M AGO`;
 		const hrs = Math.floor(mins / 60);
 		if (hrs < 24) return `${hrs}H AGO`;
@@ -62,18 +61,12 @@ function timeAgo(iso: string): string {
 	}
 }
 
-export function RlProjects({
-	onOpen,
-	onNew,
-}: {
-	onOpen: (p: Project) => void;
-	onNew: () => void;
-}) {
+export function RlProjects({ onOpen, onNew }: { onOpen: (p: Project) => void; onNew: () => void }) {
 	const { user } = useAuth();
 	const [projects, setProjects] = useState<Project[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
-	const [filter, setFilter] = useState<Filter>("all");
+	const [filter, setFilter] = useState<Filter>('all');
 	const [dashStats, setDashStats] = useState<{
 		total_rows_migrated: number;
 		avg_quality_score: number;
@@ -104,8 +97,8 @@ export function RlProjects({
 				setLoading(false);
 			})
 			.catch((err) => {
-				if (err.name === "AbortError") return;
-				setError("FAILED TO LOAD PROJECTS");
+				if (err.name === 'AbortError') return;
+				setError('FAILED TO LOAD PROJECTS');
 				setLoading(false);
 			});
 		return () => controller.abort();
@@ -117,8 +110,8 @@ export function RlProjects({
 		setRenameTarget(null);
 		try {
 			const res = await fetch(`/api/projects/${projectId}`, {
-				method: "PATCH",
-				headers: { "Content-Type": "application/json" },
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ name: newName }),
 			});
 			if (res.ok) {
@@ -127,27 +120,32 @@ export function RlProjects({
 					prev.map((p) => (p.id === projectId ? { ...p, name: updated.name } : p)),
 				);
 			}
-		} catch { /* ignore */ }
+		} catch {
+			/* ignore */
+		}
 	};
 
 	const confirmDelete = async (projectId: string) => {
 		setDeleteTarget(null);
 		try {
-			const res = await fetch(`/api/projects/${projectId}`, { method: "DELETE" });
+			const res = await fetch(`/api/projects/${projectId}`, { method: 'DELETE' });
 			if (res.ok) setProjects((prev) => prev.filter((p) => p.id !== projectId));
-		} catch { /* ignore */ }
+		} catch {
+			/* ignore */
+		}
 	};
 
-	const filtered = filter === "all" ? projects : projects.filter((p) => projectStatus(p) === filter);
+	const filtered =
+		filter === 'all' ? projects : projects.filter((p) => projectStatus(p) === filter);
 
 	// Build the keyboard layout for the page:
 	//   row 0: [START_NEW_DUNGEON CTA]
 	//   row 1: [filter_all, filter_running, filter_done, filter_draft]
 	//   row 2..n: dungeon cards (3 per row)
-	const FILTERS: Filter[] = ["all", "running", "done", "draft"];
+	const FILTERS: Filter[] = ['all', 'running', 'done', 'draft'];
 	const layoutRows = useMemo(() => {
 		const rows: { id: string; onActivate?: () => void }[][] = [];
-		rows.push([{ id: "cta:new", onActivate: onNew }]);
+		rows.push([{ id: 'cta:new', onActivate: onNew }]);
 		rows.push(FILTERS.map((f) => ({ id: `filter:${f}`, onActivate: () => setFilter(f) })));
 		for (let i = 0; i < filtered.length; i += 3) {
 			rows.push(
@@ -164,9 +162,9 @@ export function RlProjects({
 		// Land on the first dungeon card if there are any, else on the CTA.
 		initial: filtered.length > 0 ? { row: 2, col: 0 } : { row: 0, col: 0 },
 	});
-	const running = projects.filter((p) => projectStatus(p) === "running").length;
-	const done = projects.filter((p) => projectStatus(p) === "done").length;
-	const drafts = projects.filter((p) => projectStatus(p) === "draft").length;
+	const running = projects.filter((p) => projectStatus(p) === 'running').length;
+	const done = projects.filter((p) => projectStatus(p) === 'done').length;
+	const drafts = projects.filter((p) => projectStatus(p) === 'draft').length;
 	const totalRows = dashStats?.total_rows_migrated ?? 0;
 	const quality = dashStats?.avg_quality_score ?? 0;
 	const totalXp = projects.reduce((acc, p) => acc + phaseEarnedXp(p.phase), 0);
@@ -187,8 +185,8 @@ export function RlProjects({
 			<div className="rl-stats">
 				<div className="panel rl-stat">
 					<div className="rl-stat-label pixel">RUNNING</div>
-					<div className="rl-stat-value pixel glow-magenta" style={{ color: "var(--lg-magenta)" }}>
-						{String(running).padStart(2, "0")}
+					<div className="rl-stat-value pixel glow-magenta" style={{ color: 'var(--lg-magenta)' }}>
+						{String(running).padStart(2, '0')}
 					</div>
 					<div className="rl-stat-sub">
 						+{done} CLEARED · {drafts} DRAFT · {projects.length} TOTAL
@@ -196,7 +194,7 @@ export function RlProjects({
 				</div>
 				<div className="panel rl-stat">
 					<div className="rl-stat-label pixel">ROWS MIGRATED</div>
-					<div className="rl-stat-value pixel glow-cyan" style={{ color: "var(--lg-cyan)" }}>
+					<div className="rl-stat-value pixel glow-cyan" style={{ color: 'var(--lg-cyan)' }}>
 						{totalRows.toLocaleString()}
 					</div>
 					<div className="rl-stat-sub">
@@ -207,14 +205,14 @@ export function RlProjects({
 					<div className="rl-stat-label pixel">QUALITY</div>
 					<div
 						className="rl-stat-value pixel"
-						style={{ color: quality >= 80 ? "var(--lg-cyan)" : "var(--lg-coral)" }}
+						style={{ color: quality >= 80 ? 'var(--lg-cyan)' : 'var(--lg-coral)' }}
 					>
-						{dashStats ? quality : "—"}
+						{dashStats ? quality : '—'}
 					</div>
 					<div className="rl-stat-sub">AVG SCORE</div>
 				</div>
 				{(() => {
-					const k = layout.getItemProps("cta:new");
+					const k = layout.getItemProps('cta:new');
 					return (
 						<div
 							className={`panel rl-stat rl-stat-cta ${k.className}`}
@@ -224,7 +222,7 @@ export function RlProjects({
 							<div className="rl-stat-label pixel">NEW</div>
 							<div
 								style={{
-									fontFamily: "var(--lg-pixel-tall)",
+									fontFamily: 'var(--lg-pixel-tall)',
 									fontSize: 28,
 									lineHeight: 1.1,
 									marginTop: 4,
@@ -243,7 +241,7 @@ export function RlProjects({
 			</div>
 
 			<div className="rl-section-head">
-				<div className="pixel glow-cyan" style={{ fontSize: 10, color: "var(--lg-cyan)" }}>
+				<div className="pixel glow-cyan" style={{ fontSize: 10, color: 'var(--lg-cyan)' }}>
 					★ ACTIVE DUNGEONS ★
 				</div>
 				<div className="rl-filters">
@@ -252,8 +250,8 @@ export function RlProjects({
 						return (
 							<button
 								key={f}
-								className={`btn ${filter === f ? "btn-primary" : "btn-ghost"} ${k.className}`}
-								style={{ padding: "4px 10px", fontSize: 9 }}
+								className={`btn ${filter === f ? 'btn-primary' : 'btn-ghost'} ${k.className}`}
+								style={{ padding: '4px 10px', fontSize: 9 }}
 								onClick={() => setFilter(f)}
 								onMouseEnter={k.onMouseEnter}
 							>
@@ -265,19 +263,21 @@ export function RlProjects({
 			</div>
 
 			{loading ? (
-				<div className="panel" style={{ padding: 40, textAlign: "center" }}>
-					<div className="pixel blink" style={{ fontSize: 11, color: "var(--lg-magenta)" }}>
+				<div className="panel" style={{ padding: 40, textAlign: 'center' }}>
+					<div className="pixel blink" style={{ fontSize: 11, color: 'var(--lg-magenta)' }}>
 						LOADING…
 					</div>
 				</div>
 			) : error ? (
-				<div className="panel" style={{ padding: 40, textAlign: "center" }}>
-					<div className="mono" style={{ fontSize: 11, color: "var(--lg-coral)" }}>{error}</div>
+				<div className="panel" style={{ padding: 40, textAlign: 'center' }}>
+					<div className="mono" style={{ fontSize: 11, color: 'var(--lg-coral)' }}>
+						{error}
+					</div>
 				</div>
 			) : filtered.length === 0 ? (
-				<div className="panel" style={{ padding: 40, textAlign: "center" }}>
-					<div className="pixel" style={{ fontSize: 11, color: "var(--lg-ink-mute)" }}>
-						{projects.length === 0 ? "NO DUNGEONS — START A NEW ONE" : "NO DUNGEONS MATCH FILTER"}
+				<div className="panel" style={{ padding: 40, textAlign: 'center' }}>
+					<div className="pixel" style={{ fontSize: 11, color: 'var(--lg-ink-mute)' }}>
+						{projects.length === 0 ? 'NO DUNGEONS — START A NEW ONE' : 'NO DUNGEONS MATCH FILTER'}
 					</div>
 				</div>
 			) : (
@@ -287,8 +287,14 @@ export function RlProjects({
 							key={p.id}
 							p={p}
 							onOpen={onOpen}
-							onRename={(e, id) => { e.stopPropagation(); setRenameTarget(id); }}
-							onDelete={(e, id) => { e.stopPropagation(); setDeleteTarget(id); }}
+							onRename={(e, id) => {
+								e.stopPropagation();
+								setRenameTarget(id);
+							}}
+							onDelete={(e, id) => {
+								e.stopPropagation();
+								setDeleteTarget(id);
+							}}
 							kbProps={layout.getItemProps(`card:${p.id}`)}
 						/>
 					))}
@@ -317,12 +323,24 @@ export function RlProjects({
 }
 
 function StatusBadge({ status }: { status: ProjectStatus }) {
-	if (status === "running")
-		return <span className="badge badge-cyan"><IDot size={6} c="var(--lg-cyan)" /> RUNNING</span>;
-	if (status === "done")
-		return <span className="badge badge-solid-lime"><ICheck size={8} /> CLEARED</span>;
-	if (status === "error")
-		return <span className="rl-bug-badge"><IX size={8} /> BUG</span>;
+	if (status === 'running')
+		return (
+			<span className="badge badge-cyan">
+				<IDot size={6} c="var(--lg-cyan)" /> RUNNING
+			</span>
+		);
+	if (status === 'done')
+		return (
+			<span className="badge badge-solid-lime">
+				<ICheck size={8} /> CLEARED
+			</span>
+		);
+	if (status === 'error')
+		return (
+			<span className="rl-bug-badge">
+				<IX size={8} /> BUG
+			</span>
+		);
 	return <span className="badge badge-mute">DRAFT</span>;
 }
 
@@ -344,7 +362,8 @@ function RlProjectCard({
 	const status = projectStatus(p);
 	const [showFiles, setShowFiles] = useState(false);
 	const [outputFiles, setOutputFiles] = useState<string[]>([]);
-	const isExported = p.phase === "load" || p.phase === "stats";
+	const [filesError, setFilesError] = useState<string | null>(null);
+	const isExported = p.phase === 'load' || p.phase === 'stats';
 
 	const toggleFiles = async (e: React.MouseEvent) => {
 		e.stopPropagation();
@@ -352,19 +371,21 @@ function RlProjectCard({
 			setShowFiles(false);
 			return;
 		}
+		setFilesError(null);
 		try {
 			const res = await fetch(`/api/projects/${p.id}/outputs`);
-			if (res.ok) {
-				const data = await res.json();
-				setOutputFiles(data.files ?? []);
-			}
-		} catch { /* ignore */ }
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			const data = await res.json();
+			setOutputFiles(data.files ?? []);
+		} catch (err) {
+			setFilesError(err instanceof Error ? err.message : 'Failed to load files');
+		}
 		setShowFiles(true);
 	};
 
 	return (
 		<div
-			className={`rl-proj corners ${status === "error" ? "rl-bug" : ""} ${kbProps?.className ?? ""}`}
+			className={`rl-proj corners ${status === 'error' ? 'rl-bug' : ''} ${kbProps?.className ?? ''}`}
 			onClick={() => onOpen(p)}
 			onMouseEnter={kbProps?.onMouseEnter}
 		>
@@ -373,9 +394,25 @@ function RlProjectCard({
 			<div className="corner-bl" />
 			<div className="corner-br" />
 
-			<div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+			<div
+				style={{
+					display: 'flex',
+					alignItems: 'flex-start',
+					justifyContent: 'space-between',
+					gap: 10,
+				}}
+			>
 				<div style={{ flex: 1, minWidth: 0 }}>
-					<div className="pixel glow-magenta" style={{ fontSize: 11, lineHeight: 1.5, color: "var(--lg-magenta)", overflow: "hidden", textOverflow: "ellipsis" }}>
+					<div
+						className="pixel glow-magenta"
+						style={{
+							fontSize: 11,
+							lineHeight: 1.5,
+							color: 'var(--lg-magenta)',
+							overflow: 'hidden',
+							textOverflow: 'ellipsis',
+						}}
+					>
 						{p.name.toUpperCase()}
 					</div>
 				</div>
@@ -384,39 +421,72 @@ function RlProjectCard({
 
 			<div className="rl-proj-path">
 				<IDisk size={10} />
-				<span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+				<span
+					style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+				>
 					{phaseLabel(p.phase)}
 				</span>
 				<IArrow size={10} />
-				<span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--lg-cyan)" }}>
+				<span
+					style={{
+						flex: 1,
+						overflow: 'hidden',
+						textOverflow: 'ellipsis',
+						whiteSpace: 'nowrap',
+						color: 'var(--lg-cyan)',
+					}}
+				>
 					STEP {stageIdx}/4
 				</span>
 			</div>
 
-			{status === "error" && (
-				<div className="rl-bug-line" title={p.last_run_note ?? ""}>
+			{status === 'error' && (
+				<div className="rl-bug-line" title={p.last_run_note ?? ''}>
 					{bugMessage(p)}
 				</div>
 			)}
 
 			<div style={{ marginTop: 10 }}>
-				<div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--lg-cyan)", fontFamily: "var(--lg-pixel)", letterSpacing: "0.1em", marginBottom: 5 }}>
-					<span>STAGE {stageIdx}/4 · {phaseLabel(p.phase)}</span>
+				<div
+					style={{
+						display: 'flex',
+						justifyContent: 'space-between',
+						fontSize: 9,
+						color: 'var(--lg-cyan)',
+						fontFamily: 'var(--lg-pixel)',
+						letterSpacing: '0.1em',
+						marginBottom: 5,
+					}}
+				>
+					<span>
+						STAGE {stageIdx}/4 · {phaseLabel(p.phase)}
+					</span>
 					<span>{progress}%</span>
 				</div>
 				<div className="progress">
-					<span style={{ width: progress + "%" }} />
+					<span style={{ width: progress + '%' }} />
 				</div>
 			</div>
 
-			<div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center", fontFamily: "var(--lg-pixel)", fontSize: 8, color: "var(--lg-ink-mute)", letterSpacing: "0.1em" }}>
+			<div
+				style={{
+					marginTop: 10,
+					display: 'flex',
+					justifyContent: 'space-between',
+					alignItems: 'center',
+					fontFamily: 'var(--lg-pixel)',
+					fontSize: 8,
+					color: 'var(--lg-ink-mute)',
+					letterSpacing: '0.1em',
+				}}
+			>
 				<span>{p.username.toUpperCase()}</span>
-				<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+				<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
 					<span>{timeAgo(p.updated_at)}</span>
 					{isExported && (
 						<button
 							className="link"
-							style={{ fontSize: 9, color: showFiles ? "var(--lg-magenta)" : "var(--lg-cyan)" }}
+							style={{ fontSize: 9, color: showFiles ? 'var(--lg-magenta)' : 'var(--lg-cyan)' }}
 							onClick={toggleFiles}
 							title="Download exports"
 						>
@@ -425,7 +495,7 @@ function RlProjectCard({
 					)}
 					<button
 						className="btn btn-ghost"
-						style={{ fontSize: 10, padding: "4px 10px", color: "var(--lg-cyan)" }}
+						style={{ fontSize: 10, padding: '4px 10px', color: 'var(--lg-cyan)' }}
 						onClick={(e) => onRename(e, p.id)}
 						title="Rename project"
 					>
@@ -433,7 +503,7 @@ function RlProjectCard({
 					</button>
 					<button
 						className="btn btn-ghost"
-						style={{ fontSize: 10, padding: "4px 10px", color: "var(--lg-coral)" }}
+						style={{ fontSize: 10, padding: '4px 10px', color: 'var(--lg-coral)' }}
 						onClick={(e) => onDelete(e, p.id)}
 						title="Delete project"
 					>
@@ -443,27 +513,51 @@ function RlProjectCard({
 			</div>
 
 			{showFiles && (
-				<div onClick={(e) => e.stopPropagation()} style={{ marginTop: 10, borderTop: "1px solid var(--lg-border)", paddingTop: 10 }}>
-					<div className="pixel" style={{ fontSize: 8, color: "var(--lg-ink-mute)", letterSpacing: "0.1em", marginBottom: 6 }}>
+				<div
+					onClick={(e) => e.stopPropagation()}
+					style={{ marginTop: 10, borderTop: '1px solid var(--lg-border)', paddingTop: 10 }}
+				>
+					<div
+						className="pixel"
+						style={{
+							fontSize: 8,
+							color: 'var(--lg-ink-mute)',
+							letterSpacing: '0.1em',
+							marginBottom: 6,
+						}}
+					>
 						OUTPUT FILES
 					</div>
-					{outputFiles.length === 0 ? (
-						<div className="mono" style={{ fontSize: 10, color: "var(--lg-ink-dim)" }}>
+					{filesError ? (
+						<div className="mono" style={{ fontSize: 10, color: 'var(--lg-coral)' }}>
+							! {filesError}
+						</div>
+					) : outputFiles.length === 0 ? (
+						<div className="mono" style={{ fontSize: 10, color: 'var(--lg-ink-dim)' }}>
 							No output files yet. Open project and run export.
 						</div>
 					) : (
-						<div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+						<div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
 							{outputFiles.map((file) => (
-								<div key={file} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+								<div key={file} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
 									<IDisk size={8} />
-									<span className="mono" style={{ flex: 1, fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+									<span
+										className="mono"
+										style={{
+											flex: 1,
+											fontSize: 10,
+											overflow: 'hidden',
+											textOverflow: 'ellipsis',
+											whiteSpace: 'nowrap',
+										}}
+									>
 										{file}
 									</span>
 									<a
 										href={`/api/projects/${p.id}/download/${file}`}
 										download
 										className="btn btn-ghost"
-										style={{ padding: "2px 8px", fontSize: 8 }}
+										style={{ padding: '2px 8px', fontSize: 8 }}
 									>
 										GET
 									</a>
@@ -477,35 +571,76 @@ function RlProjectCard({
 	);
 }
 
-function DeleteConfirmModal({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
+function DeleteConfirmModal({
+	onCancel,
+	onConfirm,
+}: {
+	onCancel: () => void;
+	onConfirm: () => void;
+}) {
 	return (
 		<div
 			style={{
-				position: "fixed", inset: 0, zIndex: 9999,
-				background: "rgba(0,0,0,0.75)",
-				display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
+				position: 'fixed',
+				inset: 0,
+				zIndex: 9999,
+				background: 'rgba(0,0,0,0.75)',
+				display: 'flex',
+				alignItems: 'center',
+				justifyContent: 'center',
+				padding: 24,
 			}}
 			onClick={onCancel}
 		>
 			<div
-				style={{ background: "var(--lg-bg)", border: "2px solid var(--lg-coral)", width: 400, maxWidth: "90vw" }}
+				style={{
+					background: 'var(--lg-bg)',
+					border: '2px solid var(--lg-coral)',
+					width: 400,
+					maxWidth: '90vw',
+				}}
 				onClick={(e) => e.stopPropagation()}
 			>
-				<div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid var(--lg-border)", background: "var(--lg-bg-2)" }}>
-					<span className="pixel" style={{ fontSize: 11, color: "var(--lg-coral)", letterSpacing: "0.1em" }}>
+				<div
+					style={{
+						display: 'flex',
+						alignItems: 'center',
+						justifyContent: 'space-between',
+						padding: '10px 14px',
+						borderBottom: '1px solid var(--lg-border)',
+						background: 'var(--lg-bg-2)',
+					}}
+				>
+					<span
+						className="pixel"
+						style={{ fontSize: 11, color: 'var(--lg-coral)', letterSpacing: '0.1em' }}
+					>
 						DELETE PROJECT
 					</span>
 				</div>
-				<div style={{ padding: "20px 14px" }}>
-					<div className="pixel" style={{ fontSize: 10, color: "var(--lg-ink)", marginBottom: 12, lineHeight: 1.6 }}>
+				<div style={{ padding: '20px 14px' }}>
+					<div
+						className="pixel"
+						style={{ fontSize: 10, color: 'var(--lg-ink)', marginBottom: 12, lineHeight: 1.6 }}
+					>
 						Delete this project? This cannot be undone.
 					</div>
 				</div>
-				<div style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "0 14px 14px" }}>
-					<button className="btn btn-ghost" style={{ padding: "6px 14px", fontSize: 10 }} onClick={onCancel}>
+				<div
+					style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '0 14px 14px' }}
+				>
+					<button
+						className="btn btn-ghost"
+						style={{ padding: '6px 14px', fontSize: 10 }}
+						onClick={onCancel}
+					>
 						CANCEL
 					</button>
-					<button className="btn btn-coral" style={{ padding: "6px 14px", fontSize: 10 }} onClick={onConfirm}>
+					<button
+						className="btn btn-coral"
+						style={{ padding: '6px 14px', fontSize: 10 }}
+						onClick={onConfirm}
+					>
 						DELETE
 					</button>
 				</div>

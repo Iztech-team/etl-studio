@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from 'react';
 
 // Skip keyboard shortcuts when the user is typing into a text field — no
 // one wants their `j` to jump cards while they're naming a project.
 function isTypingTarget(target: EventTarget | null): boolean {
 	if (!(target instanceof HTMLElement)) return false;
 	const tag = target.tagName;
-	if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+	if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
 	if (target.isContentEditable) return true;
 	return false;
 }
@@ -53,28 +53,28 @@ export function useKeyboardGrid({
 			let next = focused;
 
 			switch (e.key) {
-				case "ArrowLeft":
-				case "h":
+				case 'ArrowLeft':
+				case 'h':
 					next = Math.max(0, focused - 1);
 					break;
-				case "ArrowRight":
-				case "l":
+				case 'ArrowRight':
+				case 'l':
 					next = Math.min(count - 1, focused + 1);
 					break;
-				case "ArrowUp":
-				case "k":
+				case 'ArrowUp':
+				case 'k':
 					if (row > 0) next = Math.min(count - 1, focused - cols);
 					break;
-				case "ArrowDown":
-				case "j":
+				case 'ArrowDown':
+				case 'j':
 					if (row < rows - 1) next = Math.min(count - 1, focused + cols);
 					break;
-				case "Enter":
-				case " ": {
+				case 'Enter':
+				case ' ': {
 					// Skip if focus is on a real button/link — let its native
 					// activation handle it instead of double-firing.
 					const t = e.target as HTMLElement | null;
-					if (t && (t.tagName === "BUTTON" || t.tagName === "A")) return;
+					if (t && (t.tagName === 'BUTTON' || t.tagName === 'A')) return;
 					if (onActivate && focused >= 0 && focused < count) {
 						e.preventDefault();
 						onActivate(focused);
@@ -89,15 +89,15 @@ export function useKeyboardGrid({
 				setFocused(next);
 			}
 		};
-		window.addEventListener("keydown", onKey);
-		return () => window.removeEventListener("keydown", onKey);
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
 	}, [count, columns, focused, onActivate, enabled]);
 
 	// Spread onto each item: gives it the focus marker + lets mouse hover
 	// re-sync so keyboard and mouse don't fight each other.
 	const getItemProps = useCallback(
 		(i: number) => ({
-			className: focused === i ? "kb-focus" : "",
+			className: focused === i ? 'kb-focus' : '',
 			onMouseEnter: () => setFocused(i),
 		}),
 		[focused],
@@ -143,8 +143,8 @@ export function useKeyboardLayout(rows: LayoutRow[], opts: LayoutOptions = {}) {
 			const rowLen = (r: number) => rows[r]?.length ?? 0;
 
 			switch (e.key) {
-				case "ArrowLeft":
-				case "h":
+				case 'ArrowLeft':
+				case 'h':
 					if (col > 0) {
 						col -= 1;
 					} else if (row > 0) {
@@ -152,8 +152,8 @@ export function useKeyboardLayout(rows: LayoutRow[], opts: LayoutOptions = {}) {
 						col = Math.max(0, rowLen(row) - 1);
 					} else return;
 					break;
-				case "ArrowRight":
-				case "l":
+				case 'ArrowRight':
+				case 'l':
 					if (col < rowLen(row) - 1) {
 						col += 1;
 					} else if (row < rows.length - 1) {
@@ -161,24 +161,24 @@ export function useKeyboardLayout(rows: LayoutRow[], opts: LayoutOptions = {}) {
 						col = 0;
 					} else return;
 					break;
-				case "ArrowUp":
-				case "k":
+				case 'ArrowUp':
+				case 'k':
 					if (row > 0) {
 						row -= 1;
 						col = Math.min(col, Math.max(0, rowLen(row) - 1));
 					} else return;
 					break;
-				case "ArrowDown":
-				case "j":
+				case 'ArrowDown':
+				case 'j':
 					if (row < rows.length - 1) {
 						row += 1;
 						col = Math.min(col, Math.max(0, rowLen(row) - 1));
 					} else return;
 					break;
-				case "Enter":
-				case " ": {
+				case 'Enter':
+				case ' ': {
 					const t = e.target as HTMLElement | null;
-					if (t && (t.tagName === "BUTTON" || t.tagName === "A")) return;
+					if (t && (t.tagName === 'BUTTON' || t.tagName === 'A')) return;
 					const item = rows[row]?.[col];
 					if (item?.onActivate) {
 						e.preventDefault();
@@ -192,8 +192,8 @@ export function useKeyboardLayout(rows: LayoutRow[], opts: LayoutOptions = {}) {
 			e.preventDefault();
 			setPos({ row, col });
 		};
-		window.addEventListener("keydown", onKey);
-		return () => window.removeEventListener("keydown", onKey);
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
 	}, [enabled, rows, pos]);
 
 	const focusedId = rows[pos.row]?.[pos.col]?.id ?? null;
@@ -204,11 +204,15 @@ export function useKeyboardLayout(rows: LayoutRow[], opts: LayoutOptions = {}) {
 			let c = -1;
 			for (let i = 0; i < rows.length && r < 0; i++) {
 				for (let j = 0; j < rows[i].length; j++) {
-					if (rows[i][j].id === id) { r = i; c = j; break; }
+					if (rows[i][j].id === id) {
+						r = i;
+						c = j;
+						break;
+					}
 				}
 			}
 			return {
-				className: focusedId === id ? "kb-focus" : "",
+				className: focusedId === id ? 'kb-focus' : '',
 				onMouseEnter: r >= 0 ? () => setPos({ row: r, col: c }) : undefined,
 			};
 		},
@@ -245,7 +249,7 @@ export function useGlobalKeys({
 		const onKey = (e: KeyboardEvent) => {
 			if (isTypingTarget(e.target)) return;
 
-			if (e.key === "Escape") {
+			if (e.key === 'Escape') {
 				if (onBack) {
 					e.preventDefault();
 					onBack();
@@ -253,7 +257,7 @@ export function useGlobalKeys({
 				return;
 			}
 
-			if (onTab && e.key === "Tab") {
+			if (onTab && e.key === 'Tab') {
 				e.preventDefault();
 				onTab(e.shiftKey ? -1 : 1);
 				return;
@@ -267,7 +271,7 @@ export function useGlobalKeys({
 				}
 			}
 		};
-		window.addEventListener("keydown", onKey);
-		return () => window.removeEventListener("keydown", onKey);
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
 	}, [enabled, onBack, onTab, onStageNumber, stageCount]);
 }
